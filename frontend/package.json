@@ -1,0 +1,52 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "tsx --test src/utils/dashboard.test.ts src/utils/piroBankMap.test.ts src/tests/merchants/merchant-index.test.tsx src/tests/loan.test.tsx src/tests/settlement-adjust.test.tsx src/utils/datetime.test.ts"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.4",
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.7",
+    "@radix-ui/react-slot": "^1.2.3",
+    "axios": "^1.11.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.23.12",
+    "jsencrypt": "^3.5.4",
+    "lucide-react": "^0.518.0",
+    "next": "^15.3.4",
+    "dayjs": "^1.11.10",
+    "react": "^19.1.0",
+    "react-datepicker": "^8.4.0",
+    "react-day-picker": "^9.8.0",
+    "react-dom": "^19.1.0",
+    "react-select": "^5.10.2",
+    "recharts": "^3.1.2",
+    "tailwind-merge": "^3.3.1",
+    "tailwind-variants": "^2.1.0",
+    "tailwindcss-animate": "^1.0.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.10",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^20.19.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
+    "jsdom": "^27.0.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3"
+  }
+}

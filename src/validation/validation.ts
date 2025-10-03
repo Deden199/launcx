@@ -1,0 +1,316 @@
+import { body, param, validationResult } from 'express-validator';
+
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+  next();
+};
+
+// Validation rules for initiating a payment (non-card legacy)
+const initiatePaymentValidation = [
+  body('amount')
+    .isInt({ gt: 0 })
+    .withMessage('Amount must be a numeric value'),
+
+  body('merchant_id')
+    .isAlphanumeric()
+    .withMessage('Merchant ID must only contain letters and numbers'),
+
+  body('currency')
+    .isLength({ min: 3, max: 3 })
+    .withMessage('Currency must be a 3-letter code'),
+
+  body('payer_id')
+    .optional()
+    .isAlphanumeric()
+    .withMessage('Payer ID must only contain letters and numbers'),
+
+  body('payment_method')
+    .isIn(['qris', 'virtual_account'])
+    .withMessage('Invalid payment method'),
+
+  body('description')
+    .optional()
+    .isAlphanumeric()
+    .withMessage('Description must only contain letters and numbers'),
+
+  body('request_id')
+    .isUUID()
+    .withMessage('request_id must be a valid UUID'),
+];
+
+// Validation for Initiate Disbursement Request
+const initiateDisbursementValidation = [
+  body('amount')
+    .isInt({ gt: 0 })
+    .withMessage('Amount must be a positive integer.'),
+
+  body('account_no')
+    .isString()
+    .isLength({ min: 1 })
+    .withMessage('Recipient account is required and must be a valid string.'),
+
+  body('bank_code')
+    .isString()
+    .matches(/^\d{3}$/)
+    .withMessage('Bank code must be a three-digit numeric code.'),
+
+  body('currency')
+    .isString()
+    .isLength({ min: 3, max: 3 })
+    .withMessage('Currency must be a 3-character ISO currency code.'),
+
+  body('description')
+    .optional()
+    .isString()
+    .withMessage('Description must be a valid string if provided.'),
+
+  body('request_id')
+    .isUUID()
+    .withMessage('request_id must be a valid UUID'),
+];
+
+// Validation rules for checking payment status
+const getStatusValidation = [
+  param('payment_id')
+    .isAlphanumeric()
+    .withMessage('Payment ID must be alphanumeric'),
+];
+
+/**
+ * === V2: Create Card Session (Sesuai Dok) ===
+ * amount: { value:number>0, currency:string(3) }
+ * customer: object (opsional)
+ * orderInformation: object (opsional)
+ * statementDescriptor: string (opsional)
+ * expiryAt: ISO timestamp (opsional)
+ * metadata: object (opsional)
+ * paymentType: 'SINGLE' | 'RECURRING' (opsional)
+ */
+const createCardSessionValidation = [
+  body('amount')
+    .isObject()
+    .withMessage('amount must be an object')
+    .custom((val) => {
+      if (typeof val?.value !== 'number' || val.value <= 0) {
+        throw new Error('amount.value must be a positive number');
+      }
+      if (typeof val?.currency !== 'string' || val.currency.length !== 3) {
+        throw new Error('amount.currency must be a 3-letter code');
+      }
+      return true;
+    }),
+
+  body('buyerId')
+    .isString()
+    .notEmpty()
+    .withMessage('buyerId is required and must be a string'),
+
+  body('subMerchantId')
+    .optional()
+    .isString()
+    .withMessage('subMerchantId must be a string'),
+
+  body('customer')
+    .optional()
+    .isObject()
+    .withMessage('customer must be an object'),
+
+  body('orderInformation')
+    .optional()
+    .isObject()
+    .withMessage('orderInformation must be an object'),
+
+  body('statementDescriptor')
+    .optional()
+    .isString()
+    .withMessage('statementDescriptor must be a string'),
+
+  body('expiryAt')
+    .optional()
+    .isISO8601()
+    .withMessage('expiryAt must be a valid ISO8601 timestamp'),
+
+  body('metadata')
+    .optional()
+    .isObject()
+    .withMessage('metadata must be an object'),
+
+  body('paymentType')
+    .optional()
+    .isIn(['SINGLE', 'RECURRING'])
+    .withMessage('paymentType must be SINGLE or RECURRING'),
+];
+
+// Validation for Get Disbursement Status Request
+const getDisbursementStatusValidation = [
+  param('disbursement_id')
+    .isString()
+    .isLength({ min: 1 })
+    .withMessage('Disbursement ID is required and must be a valid string.'),
+];
+
+// Validation for Check Account Request
+const checkAccountValidation = [
+  param('bank_code')
+    .isAlphanumeric()
+    .matches(/^\d{3}$/)
+    .withMessage('Bank code must be a three-digit numeric code.'),
+
+  param('account_number')
+    .isAlphanumeric()
+    .isLength({ min: 1 })
+    .withMessage('Account number is required and must be a valid number.'),
+];
+
+/**
+ * === V2: Confirm Card Session (Sesuai Dok) ===
+ * id: string (param)
+ * encryptedCard: string (body)
+ * paymentMethodOptions.card.captureMethod: 'automatic' | 'manual' (opsional)
+ * paymentMethodOptions.card.threeDsMethod: 'CHALLENGE' | 'AUTO' (opsional)
+ * paymentMethodOptions.card.processingConfig: { bankMerchantId?: string|null, merchantIdTag?: string|null } (opsional)
+ */
+const confirmCardSessionValidation = [
+  param('id')
+    .isString()
+    .withMessage('Payment ID must be a string'),
+
+  body('encryptedCard')
+    .isString()
+    .isLength({ min: 1 })
+    .withMessage('encryptedCard is required and must be a non-empty string'),
+
+  body('paymentMethodOptions')
+    .optional()
+    .isObject()
+    .withMessage('paymentMethodOptions must be an object')
+    .custom((value) => {
+      if (value.card && typeof value.card !== 'object') {
+        throw new Error('paymentMethodOptions.card must be an object');
+      }
+      if (value.card) {
+        const { captureMethod, threeDsMethod, processingConfig } = value.card;
+
+        if (captureMethod !== undefined) {
+          if (typeof captureMethod !== 'string') {
+            throw new Error('paymentMethodOptions.card.captureMethod must be a string');
+          }
+          const allowed = ['automatic', 'manual'];
+          if (!allowed.includes(captureMethod)) {
+            throw new Error(`paymentMethodOptions.card.captureMethod must be one of: ${allowed.join(', ')}`);
+          }
+        }
+
+        if (threeDsMethod !== undefined) {
+          if (typeof threeDsMethod !== 'string') {
+            throw new Error('paymentMethodOptions.card.threeDsMethod must be a string');
+          }
+          const allowed = ['CHALLENGE', 'AUTO'];
+          if (!allowed.includes(threeDsMethod)) {
+            throw new Error(`paymentMethodOptions.card.threeDsMethod must be one of: ${allowed.join(', ')}`);
+          }
+        }
+
+        if (processingConfig !== undefined) {
+          if (typeof processingConfig !== 'object' || Array.isArray(processingConfig)) {
+            throw new Error('paymentMethodOptions.card.processingConfig must be an object');
+          }
+          const { bankMerchantId, merchantIdTag } = processingConfig;
+          const okStrOrNull = (v: any) =>
+            v === null || v === undefined || typeof v === 'string';
+
+          if (!okStrOrNull(bankMerchantId)) {
+            throw new Error('paymentMethodOptions.card.processingConfig.bankMerchantId must be a string or null');
+          }
+          if (!okStrOrNull(merchantIdTag)) {
+            throw new Error('paymentMethodOptions.card.processingConfig.merchantIdTag must be a string or null');
+          }
+        }
+      }
+      return true;
+    }),
+];
+
+const adjustClientBalanceValidation = [
+  body('newBalance')
+    .optional()
+    .isNumeric()
+    .withMessage('newBalance must be a number'),
+  body('delta')
+    .optional()
+    .isNumeric()
+    .withMessage('delta must be a number'),
+  body().custom((value) => {
+    if (value.newBalance == null && value.delta == null) {
+      throw new Error('newBalance or delta required');
+    }
+    if (value.newBalance != null && value.delta != null) {
+      throw new Error('Provide either newBalance or delta, not both');
+    }
+    return true;
+  }),
+];
+
+const manualClientWithdrawValidation = [
+  body('subMerchantId')
+    .isString()
+    .notEmpty()
+    .withMessage('subMerchantId is required'),
+  body('amount')
+    .isFloat({ min: 0 })
+    .withMessage('Amount must be a non-negative number'),
+  body('accountName')
+    .isString()
+    .notEmpty()
+    .withMessage('accountName is required'),
+  body('accountNumber')
+    .isString()
+    .notEmpty()
+    .withMessage('accountNumber is required'),
+  body('bankCode')
+    .isString()
+    .notEmpty()
+    .withMessage('bankCode is required'),
+  body('bankName')
+    .isString()
+    .notEmpty()
+    .withMessage('bankName is required'),
+  body('accountNameAlias')
+    .optional()
+    .isString()
+    .withMessage('accountNameAlias must be a string'),
+  body('branchName')
+    .optional()
+    .isString()
+    .withMessage('branchName must be a string'),
+  body('withdrawFeePercent')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('withdrawFeePercent must be a non-negative number'),
+  body('withdrawFeeFlat')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('withdrawFeeFlat must be a non-negative number'),
+  body('pgFee')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('pgFee must be a non-negative number'),
+];
+
+const validation = {
+  handleValidationErrors,
+  initiatePaymentValidation,
+  getStatusValidation,
+  initiateDisbursementValidation,
+  getDisbursementStatusValidation,
+  checkAccountValidation,
+  createCardSessionValidation,
+  confirmCardSessionValidation,
+  adjustClientBalanceValidation,
+  manualClientWithdrawValidation,
+};
+
+export default validation;

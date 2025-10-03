@@ -1,0 +1,616 @@
+// gidi-full.service.ts
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
+
+export interface GidiConfig {
+  baseUrl: string;
+  merchantId: string;        // numeric string per doc
+  subMerchantId: string;     // numeric string
+  requestId?: string;        // unique per request; auto-generated if omitted
+  transactionId?: string;    // unique per request; auto-generated if omitted
+  credentialKey: string;     // secret used in signature layering
+}
+
+export interface GenerateDynamicQrisParams {
+  amount: number;
+  datetimeExpired?: string; // "yyyy-MM-dd HH:mm:ss" per doc
+}
+
+export interface GidiQrisResult {
+  qrPayload: string;
+  expiredTs?: string;
+  checkoutUrl?: string;
+  raw?: any;
+}
+
+export type GenerateDynamicQrisOutcome =
+  | { status: 'ready'; result: GidiQrisResult }
+  | {
+      status: 'pending';
+      pendingInfo: {
+        requestId: string;
+        transactionId: string;
+        datetimeExpired?: string;
+        raw: any;
+      };
+    };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const clean = (s: string) => String(s).trim();
+
+export function generateRequestId(): string {
+  // combine timestamp with random digits to ensure a numeric-only id
+  const ts = Date.now().toString();
+  const rand = Math.floor(Math.random() * 1_000_000)
+    .toString()
+    .padStart(6, '0');
+  return ts + rand;
+}
+
+function normalizeGidiResponse(rawResponse: any): {
+  qrPayload: string;
+  expiredTs?: string;
+  checkoutUrl?: string;
+} {
+  const data: any = rawResponse?.data || rawResponse || {};
+
+  let expiredTs =
+    data.expiredTs || data.expired_ts || data.expiration_time || undefined;
+
+  if (!expiredTs) {
+    const candidate =
+      rawResponse?.responseDetail?.datetimeExpired ||
+      data?.responseDetail?.datetimeExpired ||
+      rawResponse?.data?.responseDetail?.datetimeExpired ||
+      data?.data?.responseDetail?.datetimeExpired;
+
+    if (candidate) {
+      const parsed = new Date(candidate);
+      if (!isNaN(parsed.getTime())) {
+        expiredTs = parsed.toISOString();
+      }
+    }
+  }
+
+  const detail =
+    rawResponse?.responseDetail ||
+    data?.responseDetail ||
+    rawResponse?.data?.responseDetail ||
+    data?.data?.responseDetail ||
+    {};
+
+  let qrPayload =
+    detail?.rawData ||
+    data?.qrString ||
+    data?.qr_string ||
+    data?.qr_payload ||
+    data?.qrPayload ||
+    '';
+
+  if (!qrPayload) {
+    const altDetail =
+      rawResponse?.data?.responseDetail ||
+      data?.data?.responseDetail ||
+      undefined;
+    if (altDetail) {
+      qrPayload = altDetail.rawData || '';
+    }
+  }
+
+  const checkoutUrl = data.checkoutUrl || data.checkout_url || undefined;
+
+  return {
+    qrPayload: String(qrPayload || '').trim(),
+    expiredTs: expiredTs ? String(expiredTs) : undefined,
+    checkoutUrl: checkoutUrl ? String(checkoutUrl) : undefined,
+  };
+}
+
+export async function generateDynamicQris(
+  config: GidiConfig,
+  params: GenerateDynamicQrisParams
+): Promise<GenerateDynamicQrisOutcome> {
+  const client: AxiosInstance = axios.create({
+    baseURL: config.baseUrl,
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 7000,
+  });
+
+  if (isNaN(parseInt(config.merchantId, 10))) {
+    throw new Error(`Invalid Gidi merchantId, must be integer-like: ${config.merchantId}`);
+  }
+  if (isNaN(parseInt(config.subMerchantId, 10))) {
+    throw new Error(`Invalid Gidi subMerchantId, must be integer-like: ${config.subMerchantId}`);
+  }
+
+  let requestId = config.requestId?.trim() || generateRequestId();
+  let transactionId = config.transactionId?.trim() || generateRequestId();
+  if (requestId === transactionId) {
+    const original = { requestId, transactionId };
+    transactionId = generateRequestId();
+    console.warn(
+      '[Gidi][generateDynamicQris] requestId and transactionId were identical; regenerated transactionId to avoid DOUBLE_REQUEST_ID.',
+      { ...original, newTransactionId: transactionId }
+    );
+  }
+
+  const m = clean(config.merchantId);
+  const s = clean(config.subMerchantId);
+  let r = clean(requestId);
+  let t = clean(transactionId);
+  const k = clean(config.credentialKey);
+  const amt = String(params.amount);
+
+  if (!/^[0-9]+$/.test(r)) {
+    r = clean(generateRequestId());
+  }
+
+  if (!/^[0-9]+$/.test(t) || t === r) {
+    const origT = t;
+    do {
+      t = clean(generateRequestId());
+    } while (t === r);
+    console.warn(
+      '[Gidi][generateDynamicQris] sanitized transactionId matched requestId or was invalid; regenerated to avoid DOUBLE_REQUEST_ID.',
+      { requestId: r, oldTransactionId: origT, newTransactionId: t }
+    );
+  }
+  const maxRetries = 2;
+  let attempt = 0;
+  let lastErr: any = null;
+
+  while (attempt <= maxRetries) {
+    if (attempt >= maxRetries - 1) {
+      console.warn('[Gidi][generateDynamicQris] approaching retry limit', {
+        requestId: r,
+        transactionId: t,
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+      });
+    }
+    const innerRaw = `${s}${r}${t}${amt}${k}`;
+    const innerHash = crypto.createHash('sha256').update(innerRaw, 'utf8').digest('hex');
+    const outerRaw = `${m}${innerHash}`;
+    const signature = crypto.createHash('sha256').update(outerRaw, 'utf8').digest('hex');
+
+    console.debug('[Gidi][generateDynamicQris] signature components', {
+      merchantId: m,
+      subMerchantId: s,
+      requestId: r,
+      transactionId: t,
+      amount: amt,
+      credentialKeySnippet: k.slice(0, 6) + '…',
+      innerRaw,
+      innerHash,
+      outerRaw,
+      signature,
+    });
+
+    const body: Record<string, any> = {
+      merchantId: parseInt(m, 10),
+      subMerchantId: parseInt(s, 10),
+      requestId: r,
+      transactionId: t,
+      amount: params.amount,
+      signature,
+    };
+    if (params.datetimeExpired) {
+      body.datetimeExpired = params.datetimeExpired;
+    }
+
+    console.debug('[Gidi][generateDynamicQris] sending request', {
+      body: { ...body, signature: '[redacted]' },
+    });
+
+    try {
+      const res = await client.post('/QrisMpm/generateDynamic', body);
+      const rawResponse = res.data || {};
+
+      const respCodeRaw = rawResponse.responseCode || '';
+      const respCode = String(respCodeRaw).toUpperCase();
+      const respMsg = rawResponse.responseMessage || rawResponse.message || '';
+
+      const statusGenerate =
+        rawResponse?.responseDetail?.statusGenerate ||
+        rawResponse?.responseDetail?.status_generate ||
+        '';
+
+      if (respCode === 'SUCCESS' && statusGenerate && statusGenerate.toLowerCase() === 'pending') {
+        console.info('[Gidi][generateDynamicQris] success pending', {
+          requestId: r,
+          transactionId: t,
+        });
+        return {
+          status: 'pending',
+          pendingInfo: {
+            requestId: r,
+            transactionId: t,
+            datetimeExpired:
+              rawResponse?.responseDetail?.datetimeExpired ||
+              rawResponse?.responseDetail?.datetime_expired,
+            raw: rawResponse,
+          },
+        };
+      }
+
+      if (respCode === 'SERVICE_NOT_ALLOWED') {
+        console.error('[Gidi][generateDynamicQris] SERVICE_NOT_ALLOWED', {
+          requestId: r,
+          transactionId: t,
+          respMsg,
+        });
+        throw new Error(`Gidi terminal error SERVICE_NOT_ALLOWED: ${respMsg}`);
+      }
+
+      if (respCode && respCode !== 'SUCCESS' && respCode !== '00') {
+        if (respCode === 'INVALID_SIGNATURE') {
+          console.error('[Gidi][generateDynamicQris] invalid signature', {
+            requestId: r,
+            transactionId: t,
+            respMsg,
+          });
+          throw new Error(`Gidi invalid signature: ${respMsg}`);
+        }
+        if (respCode === 'DOUBLE_REQUEST_ID') {
+          const cleanedMsg = String(respMsg || 'Double Request Id').replace(
+            /^Gidi DOUBLE_REQUEST_ID:\s*/i,
+            ''
+          );
+          console.error('[Gidi][generateDynamicQris] DOUBLE_REQUEST_ID', {
+            requestId: r,
+            transactionId: t,
+            respMsg: cleanedMsg,
+          });
+          throw new Error(`Gidi DOUBLE_REQUEST_ID: ${cleanedMsg}`);
+        }
+        console.error(`[Gidi][generateDynamicQris] non-success response ${respCode}`, {
+          requestId: r,
+          transactionId: t,
+          respMsg,
+        });
+        throw new Error(`Gidi non-success response ${respCode}: ${respMsg}`);
+      }
+
+      const normalized = normalizeGidiResponse(rawResponse);
+      if (!normalized.qrPayload) {
+        console.error('[Gidi][generateDynamicQris] missing qrPayload/rawData', {
+          requestId: r,
+          transactionId: t,
+        });
+        throw new Error(
+          `Gidi response missing qrPayload/rawData. response was: ${JSON.stringify(rawResponse)}`
+        );
+      }
+
+      console.info('[Gidi][generateDynamicQris] success ready', {
+        requestId: r,
+        transactionId: t,
+      });
+      return {
+        status: 'ready',
+        result: {
+          qrPayload: normalized.qrPayload,
+          expiredTs: normalized.expiredTs,
+          checkoutUrl: normalized.checkoutUrl,
+          raw: rawResponse,
+        },
+      };
+    } catch (err) {
+      lastErr = err as AxiosError;
+
+      const responseData: any = lastErr.response?.data || {};
+      const respCodeCheck = String(responseData?.responseCode || '').toUpperCase();
+      if (
+        respCodeCheck === 'DOUBLE_REQUEST_ID' ||
+        /DOUBLE_REQUEST_ID/i.test(lastErr.message || '')
+      ) {
+        console.error('[Gidi][generateDynamicQris] abort due to DOUBLE_REQUEST_ID', {
+          requestId: r,
+          transactionId: t,
+        });
+        const rawMsg = responseData?.responseMessage || lastErr.message || 'Double Request Id';
+        const cleanedMsg = String(rawMsg).replace(/^Gidi DOUBLE_REQUEST_ID:\s*/i, '');
+        throw new Error(`Gidi DOUBLE_REQUEST_ID: ${cleanedMsg}`);
+      }
+
+      let respMsg = '';
+      let respCode = '';
+      if (lastErr.response?.data) {
+        const d: any = lastErr.response.data;
+        respCode = String(d.responseCode || '');
+        if (d.responseMessage) {
+          respMsg =
+            typeof d.responseMessage === 'object'
+              ? JSON.stringify(d.responseMessage)
+              : d.responseMessage;
+        } else if (d.message) {
+          respMsg = d.message;
+        } else {
+          respMsg = JSON.stringify(d);
+        }
+      } else {
+        respMsg = lastErr.message;
+      }
+
+      console.error('[Gidi][generateDynamicQris] attempt failed', {
+        attempt: attempt + 1,
+        requestId: r,
+        transactionId: t,
+        responseCode: respCode,
+        responseMessage: respMsg,
+      });
+
+      if (attempt >= maxRetries) break;
+
+      const oldRequestId = r;
+      const oldTransactionId = t;
+      r = clean(generateRequestId());
+      do {
+        t = clean(generateRequestId());
+      } while (t === r);
+      if (attempt >= maxRetries - 1) {
+        console.warn('[Gidi][generateDynamicQris] nearing retry limit while regenerating ids', {
+          oldRequestId,
+          oldTransactionId,
+          newRequestId: r,
+          newTransactionId: t,
+          attempt: attempt + 1,
+          maxAttempts: maxRetries + 1,
+        });
+      }
+      console.info(
+        `[Gidi][generateDynamicQris] regenerating ids for retry requestId ${oldRequestId} -> ${r}, transactionId ${oldTransactionId} -> ${t}`
+      );
+
+      await sleep(200 * Math.pow(2, attempt));
+      attempt += 1;
+    }
+  }
+
+  const fallbackMsg =
+    lastErr?.response?.data || lastErr?.message || 'unknown error from GIDI';
+  console.error('[Gidi][generateDynamicQris] exhausted retries', {
+    requestId: r,
+    transactionId: t,
+    error: fallbackMsg,
+  });
+  throw new Error(`generateDynamicQris failed for ${t}: ${JSON.stringify(fallbackMsg)}`);
+}
+
+export async function generateDynamicQrisWithAutoPoll(
+  config: GidiConfig,
+  params: GenerateDynamicQrisParams,
+  opts?: { maxTotalMs?: number; baseDelayMs?: number }
+): Promise<GidiQrisResult> {
+  const maxTotalMs = opts?.maxTotalMs ?? 3000;
+  const baseDelayMs = opts?.baseDelayMs ?? 300;
+  const start = Date.now();
+
+  let outcome = await generateDynamicQris(config, params);
+  if (outcome.status === 'ready') {
+    console.info('[Gidi][generateDynamicQrisWithAutoPoll] success', {
+      requestId: config.requestId,
+      transactionId: config.transactionId,
+    });
+    return outcome.result;
+  }
+  if (outcome.status === 'pending') {
+    let attempt = 0;
+    while (Date.now() - start < maxTotalMs) {
+      attempt += 1;
+      await sleep(baseDelayMs * attempt);
+      outcome = await generateDynamicQris(
+        {
+          ...config,
+          requestId: outcome.pendingInfo.requestId,
+          transactionId: outcome.pendingInfo.transactionId,
+        },
+        params
+      );
+      if (outcome.status === 'ready') {
+        console.info('[Gidi][generateDynamicQrisWithAutoPoll] success after polling', {
+          requestId: config.requestId,
+          transactionId: config.transactionId,
+        });
+        return outcome.result;
+      }
+    }
+    console.error('[Gidi][generateDynamicQrisWithAutoPoll] timeout waiting for QR', {
+      requestId: config.requestId,
+      transactionId: config.transactionId,
+    });
+    throw new Error('Timeout waiting for Gidi QR to become ready (still pending).');
+  }
+  console.error('[Gidi][generateDynamicQrisWithAutoPoll] unexpected outcome', {
+    requestId: config.requestId,
+    transactionId: config.transactionId,
+  });
+  throw new Error('Unexpected outcome from generateDynamicQris');
+}
+
+/**
+ * Generate a QR with automatic fallback handling.
+ *
+ * @param baseConfig Base configuration without identifiers.
+ * @param params     Request parameters for Gidi.
+ * @param opts.maxFallbacks Number of additional attempts after the first try.
+ *                          Each retry regenerates request and transaction IDs.
+ *                          Defaults to 5.
+ * @param opts.autoPoll Whether to poll until the QR is ready.
+ */
+export async function generateDynamicQrisFinal(
+  baseConfig: Omit<GidiConfig, 'requestId' | 'transactionId'>,
+  params: GenerateDynamicQrisParams,
+  opts?: {
+    /** Number of extra attempts after the initial call (default 5). */
+    maxFallbacks?: number;
+    autoPoll?: boolean;
+  }
+): Promise<GidiQrisResult> {
+  const maxFallbacks = opts?.maxFallbacks ?? 5;
+
+  for (let fallbackCount = 0; fallbackCount <= maxFallbacks; fallbackCount++) {
+    const requestId = generateRequestId();
+    let transactionId = generateRequestId();
+    if (requestId === transactionId) {
+      transactionId = generateRequestId();
+      console.warn('[Gidi][generateDynamicQrisFinal] requestId and transactionId were identical; regenerated transactionId', {
+        requestId,
+        transactionId,
+      });
+    }
+    const config: GidiConfig = {
+      ...baseConfig,
+      requestId,
+      transactionId,
+    };
+    if (fallbackCount >= maxFallbacks - 1) {
+      console.warn('[Gidi][generateDynamicQrisFinal] approaching retry limit', {
+        requestId,
+        transactionId,
+        fallback: fallbackCount + 1,
+        maxAttempts: maxFallbacks + 1,
+      });
+    }
+
+    try {
+      const result = opts?.autoPoll
+        ? await generateDynamicQrisWithAutoPoll(config, params)
+        : await (async () => {
+            const outcome = await generateDynamicQris(config, params);
+            if (outcome.status === 'ready') return outcome.result;
+            if (outcome.status === 'pending') {
+              throw new Error('Gidi returned pending (no autoPoll).');
+            }
+            throw new Error('Unexpected outcome.');
+          })();
+
+      console.info('[Gidi][generateDynamicQrisFinal] success', {
+        requestId,
+        transactionId,
+      });
+      return result;
+    } catch (e: any) {
+      const msg = String(e.message || '');
+      if (/DOUBLE_REQUEST_ID/i.test(msg)) {
+        console.warn(
+          `[Gidi][generateDynamicQrisFinal] got DOUBLE_REQUEST_ID, regenerating ids and retrying fallback #${fallbackCount + 1}`,
+          { requestId, transactionId }
+        );
+      } else {
+        console.warn(
+          `[Gidi][generateDynamicQrisFinal] attempt #${fallbackCount + 1} failed: ${msg}; regenerating ids and retrying`,
+          { requestId, transactionId }
+        );
+      }
+      if (fallbackCount >= maxFallbacks) {
+        console.error('[Gidi][generateDynamicQrisFinal] exhausted retries', {
+          requestId,
+          transactionId,
+        });
+        throw e;
+      }
+      // Otherwise loop to next iteration with new IDs
+    }
+  }
+  // Should be unreachable
+  throw new Error('generateDynamicQrisFinal exhausted retries');
+}
+
+/**
+ * Tunggu sampai qrPayload tersedia, kalau timeout fallback ke checkoutUrl.
+ */
+export async function fetchReadyQr(
+  baseConfig: Omit<GidiConfig, 'requestId' | 'transactionId'>,
+  params: GenerateDynamicQrisParams,
+  opts?: {
+    totalTimeoutMs?: number;
+    baseDelayMs?: number;
+  }
+): Promise<{
+  qrContent: string;
+  usedCheckoutUrl: boolean;
+  raw: any;
+}> {
+  const totalTimeoutMs = opts?.totalTimeoutMs ?? 3000;
+  const baseDelayMs = opts?.baseDelayMs ?? 300;
+  const start = Date.now();
+
+  const requestId = generateRequestId();
+  let transactionId = generateRequestId();
+  if (requestId === transactionId) {
+    transactionId = generateRequestId();
+    console.warn('[Gidi][fetchReadyQr] requestId and transactionId were identical; regenerated transactionId', {
+      requestId,
+      transactionId,
+    });
+  }
+  const config: GidiConfig = {
+    ...baseConfig,
+    requestId,
+    transactionId,
+  };
+
+  let outcome = await generateDynamicQris(config, params);
+  if (outcome.status === 'ready') {
+    const result = outcome.result;
+    console.info('[Gidi][fetchReadyQr] success', { requestId, transactionId });
+    return {
+      qrContent: result.qrPayload || result.checkoutUrl || '',
+      usedCheckoutUrl: !Boolean(result.qrPayload),
+      raw: result.raw,
+    };
+  }
+
+  while (Date.now() - start < totalTimeoutMs) {
+    await sleep(baseDelayMs * (Math.floor((Date.now() - start) / baseDelayMs) + 1));
+    outcome = await generateDynamicQris(
+      {
+        ...config,
+        requestId,
+        transactionId,
+      },
+      params
+    );
+    if (outcome.status === 'ready') {
+      const result = outcome.result;
+      console.info('[Gidi][fetchReadyQr] success after polling', { requestId, transactionId });
+      return {
+        qrContent: result.qrPayload || result.checkoutUrl || '',
+        usedCheckoutUrl: !Boolean(result.qrPayload),
+        raw: result.raw,
+      };
+    }
+  }
+
+  // fallback
+  console.warn('[Gidi][fetchReadyQr] timeout waiting for QR, falling back', {
+    requestId,
+    transactionId,
+  });
+  const finalResult = await generateDynamicQrisFinal(baseConfig, params, {
+    autoPoll: false,
+    maxFallbacks: 1,
+  });
+  console.info('[Gidi][fetchReadyQr] fallback success', {
+    requestId,
+    transactionId,
+  });
+  return {
+    qrContent: finalResult.qrPayload || finalResult.checkoutUrl || '',
+    usedCheckoutUrl: !Boolean(finalResult.qrPayload),
+    raw: finalResult.raw,
+  };
+}
+
+/**
+ * QR helpers
+ */
+export async function makeQrSvg(content: string): Promise<string> {
+  return QRCode.toString(content, { type: 'svg' });
+}
+
+export async function makeQrDataUrl(content: string): Promise<string> {
+  return QRCode.toDataURL(content);
+}
