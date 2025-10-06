@@ -41,6 +41,10 @@ model merchant {
   transactionRequests   transaction_request[]  @relation("MerchantTransactionRequests")
   disbursements         disbursement[]         @relation("MerchantDisbursements")
   disbursement_accounts disbursement_account[] @relation("MerchantDisbursementAccount")
+
+  @@index([email])
+  @@index([phoneNumber])
+  @@index([createdAt])
 }
 
 /// Koneksi PG per merchant, dengan fee
@@ -65,8 +69,9 @@ model sub_merchant {
   balanceRecords  SubMerchantBalance[] @relation("SubMerchantBalanceSubMerchant")
   loanSettlementJobs LoanSettlementJob[] @relation("SubMerchantLoanSettlementJobs")
 
-
-
+  @@index([merchantId])
+  @@index([provider])
+  @@index([createdAt])
 }
 
 /// Transaksi
@@ -117,6 +122,8 @@ model transaction_callback {
   settlementTime       DateTime?
   trxExpirationTime    DateTime?
 
+  @@index([referenceId])
+  @@index([createdAt])
 }
 
 /// Callback disbursement
@@ -125,6 +132,9 @@ model disbursement_callback {
   referenceId String?  @db.ObjectId
   requestBody Json
   createdAt   DateTime @default(now())
+
+  @@index([referenceId])
+  @@index([createdAt])
 }
 
 /// Beneficiary untuk disbursement
@@ -147,6 +157,10 @@ model disbursement {
 
   merchant merchant @relation("MerchantDisbursements", fields: [merchantId], references: [id])
 
+  @@index([merchantId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([merchantId, status, createdAt])
   @@map("disbursement")
 }
 
@@ -157,6 +171,8 @@ model settlement {
   settlementTime DateTime
   settlementObj  Json
 
+  @@index([transactionId])
+  @@index([settlementTime])
   @@map("settlement")
 }
 
@@ -170,6 +186,7 @@ model disbursement_account {
 
   merchant merchant @relation("MerchantDisbursementAccount", fields: [merchantId], references: [id])
 
+  @@index([merchantId])
   @@map("disbursement_account")
 }
 
@@ -204,6 +221,9 @@ model PartnerClient {
   callbackJobs       CallbackJob[]
   callbackJobDeadLetters CallbackJobDeadLetter[]
   clientApiRequestLogs ClientApiRequestLog[]
+
+  @@index([isActive])
+  @@index([createdAt])
 }
 
 model Order {
@@ -249,6 +269,9 @@ model Order {
   @@index([createdAt])
   @@index([status])
   @@index([subMerchantId, status, createdAt])
+  @@index([userId])
+  @@index([pgRefId])
+  @@index([partnerClientId, status, createdAt])
 }
 
 model LoanEntry {
@@ -350,6 +373,8 @@ model AdminWithdraw {
   subMerchant sub_merchant @relation("SubMerchantAdminWithdraws", fields: [subMerchantId], references: [id])
 
   @@index([subMerchantId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 
@@ -382,6 +407,8 @@ model WithdrawRequest {
   @@index([partnerClientId])
   @@index([createdAt])
   @@index([status])
+  @@index([subMerchantId])
+  @@index([subMerchantId, status, createdAt])
 
 }
 
@@ -413,6 +440,8 @@ model CallbackJob {
 
   @@index([delivered])
   @@index([partnerClientId])
+  @@index([delivered, createdAt])
+  @@index([partnerClientId, delivered])
 }
 
 enum AdminRole {
@@ -453,6 +482,10 @@ model HilogateCallbackWatcher {
   attemptCount Int      @default(0)
   processed    Boolean  @default(false)
   nextRetryAt  DateTime
+
+  @@index([processed])
+  @@index([nextRetryAt])
+  @@index([processed, nextRetryAt])
 }
 
 model ClientApiRequestLog {

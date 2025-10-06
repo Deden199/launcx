@@ -2,6 +2,8 @@
 import { Router } from 'express'
 import paymentController from '../controller/payment'
 import apiKeyAuth from '../middleware/apiKeyAuth'
+import { redisRateLimit } from '../middleware/cache'
+import { preventDuplicateOrder } from '../middleware/paymentCache'
 
 /**
  * @openapi
@@ -93,7 +95,9 @@ const paymentRouter = Router()
 // Aggregator flow: create an aggregated order
 paymentRouter.post(
   '/create-order',
+  redisRateLimit({ windowMs: 60000, max: 15000 }), // Rate limit: 15000 req/min
   apiKeyAuth,
+  preventDuplicateOrder(), // Prevent duplicate orders
   paymentController.createOrder
 )
 /**
@@ -121,7 +125,9 @@ paymentRouter.post(
 // Direct transaction: QR payload or redirect URL
 paymentRouter.post(
   '/',
+  redisRateLimit({ windowMs: 60000, max: 1000 }), // Rate limit: 1000 req/min
   apiKeyAuth,
+  preventDuplicateOrder(), // Prevent duplicate orders
   paymentController.createTransaction
 )
 /**
