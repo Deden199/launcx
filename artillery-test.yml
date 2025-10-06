@@ -1,0 +1,40 @@
+config:
+  target: "http://localhost:5000"
+  phases:
+    # Warm-up phase
+    - duration: 30
+      arrivalRate: 10
+      name: "Warm-up"
+    # Ramp-up phase
+    - duration: 60
+      arrivalRate: 100
+      rampTo: 1000
+      name: "Ramp-up"
+    # Peak load - 500k callbacks simulation
+    - duration: 600
+      arrivalRate: 1000
+      name: "Peak load (simulate 500k callbacks)"
+  processor: "./artillery-processor.js"
+  http:
+    timeout: 30
+
+scenarios:
+  - name: "Create Payment Transaction"
+    weight: 100
+    flow:
+      - function: "generateTimestamp"
+      - post:
+          url: "/api/v1/payments"
+          headers:
+            Content-Type: "application/json"
+            x-api-key: "9be3380f-8189-4232-ba1f-78e21ce60948"
+            x-timestamp: "{{ timestamp }}"
+          json:
+            price: 50000
+            playerId: "player_{{ $randomString() }}"
+            flow: "embed"
+          capture:
+            - json: "$.data.orderId"
+              as: "orderId"
+          expect:
+            - statusCode: 201

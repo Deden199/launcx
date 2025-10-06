@@ -1,0 +1,22 @@
+Metric,Value,Status,Recommendation
+Total Requests,10000,Completed,N/A
+Successful Requests,6469,64.69%,Target: >95%
+Failed Requests,3531,35.31%,CRITICAL: Exceeds 20% threshold
+Average Response Time,1573.40ms,WARNING,Target: <500ms
+P95 Response Time,2738.78ms,CRITICAL,Target: <1000ms
+Requests Per Second,3.72 RPS,CRITICAL,Target: >100 RPS
+Error Type - ECONNABORTED,~95%,CRITICAL,Increase timeout & add connection pooling
+Error Type - 500 Internal,~5%,WARNING,Fix application errors
+Database Queries,Unoptimized,CRITICAL,Apply indexes from schema.prisma
+Connection Pool,Default (10),WARNING,Increase to 50-100
+HiloGate Polling,Excessive,WARNING,Implement rate limiting
+MongoDB Connection,Remote Atlas,WARNING,Add read replicas or use local cache
+
+Recommendations:
+1. Apply database indexes immediately (already added to schema)
+2. Increase MongoDB connection pool size
+3. Add Redis caching for frequent queries
+4. Implement request queuing with Bull/BullMQ
+5. Add database connection pooling
+6. Optimize HiloGate fallback polling
+7. Deploy to production with proper infrastructure
