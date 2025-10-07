@@ -4,14 +4,39 @@ import logger from '../logger'
 import { config } from '../config'
 
 export async function processCallbackJobs() {
-  const jobs = await prisma.callbackJob.findMany({
-    where: {
-      delivered: false,
-      attempts: { lt: config.api.callbackQueue.maxAttempts },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: config.api.callbackQueue.batchSize,
-  })
+  let jobs
+
+  try {
+    jobs = await prisma.callbackJob.findMany({
+      where: {
+        delivered: false,
+        attempts: { lt: config.api.callbackQueue.maxAttempts },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: config.api.callbackQueue.batchSize,
+    })
+  } catch (err: any) {
+    // Handle legacy records with null partnerClientId
+    if (err.code === 'P2032' && err.meta?.field === 'partnerClientId') {
+      logger.error('[callbackQueue] Found legacy jobs with null partnerClientId. Cleaning up...')
+
+      // Delete invalid jobs using raw query to bypass validation
+      try {
+        await prisma.$runCommandRaw({
+          delete: 'CallbackJob',
+          deletes: [{
+            q: { partnerClientId: null },
+            limit: 0
+          }]
+        })
+        logger.info('[callbackQueue] Cleaned up legacy jobs with null partnerClientId')
+      } catch (cleanupErr) {
+        logger.error('[callbackQueue] Failed to cleanup legacy jobs:', cleanupErr)
+      }
+      return
+    }
+    throw err
+  }
 
   for (const job of jobs) {
     try {
