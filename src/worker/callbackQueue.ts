@@ -79,22 +79,22 @@ export async function processCallbackJobs() {
   const jobs = await prisma.callbackJob.findMany({
     where: {
       delivered: false,
-      // Guard against legacy rows that were created without a partnerClientId.
-      // If you ever spot these in production, remove them with a one-off
-      // `prisma.callbackJob.deleteMany({ where: { partnerClientId: null } })`
-      // or backfill the missing partnerClientId manually to keep the queue
-      // healthy.
-      partnerClientId: { not: null },
+      // Note: partnerClientId is required in schema, so we don't need to filter it
+      // If you have legacy records without partnerClientId, clean them up with:
+      // prisma.callbackJob.deleteMany({ where: { partnerClientId: { equals: null } } })
       attempts: { lt: config.api.callbackQueue.maxAttempts },
     },
     orderBy: { createdAt: 'asc' },
     take: config.api.callbackQueue.batchSize,
   })
 
+  // Filter out any jobs without partnerClientId (legacy safety check)
+  const validJobs = jobs.filter(job => job.partnerClientId != null && job.partnerClientId !== '')
+
   const concurrency = Math.max(1, config.api.callbackQueue.concurrency)
   const executing: Promise<void>[] = []
 
-  for (const job of jobs) {
+  for (const job of validJobs) {
     const task = handleCallbackJob(job).finally(() => {
       const index = executing.indexOf(task)
       if (index !== -1) {
