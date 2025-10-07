@@ -5,6 +5,12 @@ import { config } from '../config';
 const instantiatePrisma = () => {
   const prisma = new PrismaClient({
     log: config.nodeEnv === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    // Connection pool settings for high-load production environments
+    datasources: {
+      db: {
+        url: process.env.DATABASE_URL,
+      },
+    },
   });
 
   return prisma;

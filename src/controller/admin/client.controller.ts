@@ -4,10 +4,9 @@ import crypto from 'crypto'
 import bcrypt from 'bcrypt'
 import { AuthRequest } from '../../middleware/auth'
 import { parseDateSafely } from '../../util/time'
-import { PrismaClient, DisbursementStatus } from '@prisma/client'
+import { DisbursementStatus } from '@prisma/client'
 import { logAdminAction } from '../../util/adminLog'
-
-const prisma = new PrismaClient()
+import { prisma } from '../../core/prisma'
 
 // 1) List all clients with withdraw fee settings
 export const getAllClients = async (_: Request, res: Response) => {

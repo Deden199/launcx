@@ -1,8 +1,7 @@
 // src/route/web.routes.ts
 import { Router, Request, Response } from 'express'
 import * as paymentService from '../service/payment'
-import { PrismaClient } from '@prisma/client'
-const prisma = new PrismaClient()
+import { prisma } from '../core/prisma'
 
 const router = Router()
 

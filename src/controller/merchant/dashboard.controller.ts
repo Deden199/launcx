@@ -1,11 +1,9 @@
 // src/controller/merchant/dashboard.controller.ts
 import { Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import ExcelJS from 'exceljs'
 import { AuthRequest } from '../../middleware/auth'
 import { parseDateSafely } from '../../util/time'
-
-const prisma = new PrismaClient()
+import { prisma } from '../../core/prisma'
 
 /* ─── util ─── */
 function resolveMerchantId(req: AuthRequest): string | undefined {
