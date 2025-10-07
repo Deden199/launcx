@@ -442,9 +442,6 @@ model CallbackJob {
   @@index([partnerClientId])
   @@index([delivered, createdAt])
   @@index([partnerClientId, delivered])
-  @@index([delivered, nextRetryAt]) // For processing ready jobs
-  @@index([delivered, priority, createdAt]) // For priority-based processing
-  @@index([scheduledAt]) // For scheduled jobs
 }
 
 enum AdminRole {
