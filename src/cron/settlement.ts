@@ -3,30 +3,23 @@ import axios from 'axios'
 import https from 'https'
 import os from 'os'
 import pLimit from 'p-limit'
-import { toZonedTime } from 'date-fns-tz'
-import type { Prisma } from '@prisma/client'
 import { prisma } from '../core/prisma'
 import { config } from '../config'
 import crypto from 'crypto'
 import logger from '../logger'
 import { sendTelegramMessage } from '../core/telegram.axios'
-import { tryAdvisoryLock, releaseAdvisoryLock } from '../util/dbLock'
-import { computeSettlement } from '../service/feeSettlement'
-import { postBalanceMovement } from '../service/billing'
-import type { ManualSettlementFilters } from '../types/manualSettlement'
 
 // ————————— CONFIG —————————
-const BATCH_SIZE = 1500                          // jumlah order PAID diproses per batch
-export const MANUAL_SETTLEMENT_BATCH_SIZE = BATCH_SIZE
+const BATCH_SIZE = 1500                          // jumlah order PAID/LN_SETTLED diproses per batch
 const HTTP_CONCURRENCY = Math.max(10, os.cpus().length * 2)
 const DB_CONCURRENCY   = Number(process.env.DB_CONCURRENCY ?? os.cpus().length) // parallel DB transactions
 const WORKER_CONCURRENCY = Number(process.env.SETTLEMENT_WORKERS ?? 1)
 const DB_TX_TIMEOUT_MS = Number(process.env.SETTLEMENT_DB_TX_TIMEOUT_MS ?? 15_000)
 const PARTNER_TX_CHUNK_SIZE = 50
-const SETTLEMENT_LOCK_KEY = 1_234_567_890
-const JAKARTA_TZ = 'Asia/Jakarta'
 
 type Cursor = { createdAt: Date; id: string } | null
+// Status kandidat yang diperlakukan sama untuk proses settlement
+const INPUT_SETTLEMENT_STATUSES: string[] = ['PAID', 'LN_SETTLED']
 
 // HTTPS agent dengan keep-alive
 const httpsAgent = new https.Agent({
@@ -43,10 +36,8 @@ async function retryTx(fn: () => Promise<any>, attempts = 5, baseDelayMs = 100) 
     } catch (err: any) {
       lastErr = err;
       const msg = (err.message ?? '').toLowerCase();
-      const code = String(err.code || '').toUpperCase();
-      const retryableMsgs = ['write conflict', 'transaction already closed', 'transaction timeout', 'deadlock detected'];
-      const retryableCodes = ['40P01', '40001', '55P03'];
-      const reason = retryableMsgs.find(r => msg.includes(r)) || (retryableCodes.includes(code) ? code : undefined);
+      const retryable = ['write conflict', 'transaction already closed', 'transaction timeout'];
+      const reason = retryable.find(r => msg.includes(r));
       if (i < attempts - 1 && reason) {
         const delay = baseDelayMs * 2 ** i;
         logger.warn(
@@ -80,45 +71,6 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 type SettlementResult = { netAmt: number; rrn: string; st: string; tmt?: Date; fee?: number };
 
-type LedgerMovement = { orderId: string; partnerClientId: string; amount: number };
-
-type ManualSettlementOrder = {
-  pendingAmount?: number | null
-  amount?: number | null
-  rrn?: string | null
-  partnerClient?: { feePercent?: number | null; feeFlat?: number | null } | null
-};
-
-function deriveManualSettlement(order: ManualSettlementOrder): SettlementResult | null {
-  const now = new Date()
-  let netAmt = Number(order.pendingAmount ?? 0)
-  let fee: number | undefined
-
-  if (!Number.isFinite(netAmt) || netAmt <= 0) {
-    const gross = Number(order.amount ?? 0)
-    if (!Number.isFinite(gross) || gross <= 0) {
-      return null
-    }
-    const percent = order.partnerClient?.feePercent ?? 0
-    const flat = order.partnerClient?.feeFlat ?? 0
-    const computed = computeSettlement(gross, { percent, flat })
-    netAmt = computed.settlement
-    fee = computed.fee
-  }
-
-  if (!Number.isFinite(netAmt) || netAmt <= 0) {
-    return null
-  }
-
-  return {
-    netAmt,
-    fee,
-    rrn: order.rrn ?? 'MANUAL',
-    st: 'MANUAL',
-    tmt: now,
-  }
-}
-
 type BatchResult = {
   hasMore: boolean;
   settledCount: number;
@@ -126,68 +78,15 @@ type BatchResult = {
   lastCursor: Cursor;
 };
 
-const ensureSortedCursor = (orders: { createdAt: Date; id: string }[]): Cursor => {
-  if (!orders.length) {
-    return null
-  }
-  const last = orders[orders.length - 1]
-  return { createdAt: last.createdAt, id: last.id }
-}
-
-const isWithinDayHour = (date: Date, filters: ManualSettlementFilters) => {
-  const local = toZonedTime(date, filters.timezone)
-  const day = local.getDay()
-  if (!filters.daysOfWeek.includes(day)) {
-    return false
-  }
-  const hour = local.getHours()
-  return hour >= filters.hourStart && hour <= filters.hourEnd
-}
-
-const amountInRange = (amount: number, filters: ManualSettlementFilters) => {
-  if (!Number.isFinite(amount)) {
-    return false
-  }
-  if (filters.minAmount != null && Number.isFinite(filters.minAmount) && amount < (filters.minAmount ?? 0)) {
-    return false
-  }
-  if (filters.maxAmount != null && Number.isFinite(filters.maxAmount) && amount > (filters.maxAmount ?? 0)) {
-    return false
-  }
-  if (!filters.includeZeroAmount && amount <= 0) {
-    return false
-  }
-  return true
-}
-
 // core worker: proses satu batch; return object with stats
-async function processBatch(
-  cursor: Cursor,
-  opts: { manual?: boolean; filters?: ManualSettlementFilters; shouldCancel?: () => boolean } = {},
-): Promise<BatchResult> {
-  const manual = !!opts.manual
-  const filters = opts.filters
-  const shouldCancel = opts.shouldCancel
+async function processBatch(cursor: Cursor): Promise<BatchResult> {
   // cursor-based pagination
-  const where: Prisma.OrderWhereInput = {
-    status: 'PAID',
-    partnerClientId:
-      filters && filters.clientIds.length
-        ? filters.clientMode === 'exclude'
-          ? { notIn: filters.clientIds, not: null }
-          : { in: filters.clientIds }
-        : { not: null },
+  const where: any = {
+    status: { in: INPUT_SETTLEMENT_STATUSES },
+    partnerClientId: { not: null },
 
-    ...(filters
-      ? {
-          createdAt: {
-            gte: filters.startDate,
-            lte: filters.endDate,
-          },
-        }
-      : cutoffTime
-      ? { createdAt: { lte: cutoffTime } }
-      : {}),
+    // hanya sampai cut-off
+    ...(cutoffTime && { createdAt: { lte: cutoffTime } }),
 
     ...(cursor
       ? {
@@ -197,24 +96,9 @@ async function processBatch(
           ]
         }
       : {})
-  }
+  };
 
-  if (filters) {
-    if (filters.subMerchantIds.length) {
-      where.subMerchantId =
-        filters.subMerchantMode === 'exclude'
-          ? { notIn: filters.subMerchantIds }
-          : { in: filters.subMerchantIds }
-    }
-    if (filters.paymentMethods.length) {
-      where.channel =
-        filters.paymentMode === 'exclude'
-          ? { notIn: filters.paymentMethods }
-          : { in: filters.paymentMethods }
-    }
-  }
-
-  const fetchedOrders = await prisma.order.findMany({
+  const pendingOrders = await prisma.order.findMany({
     where,
     orderBy: [
       { createdAt: 'asc' },
@@ -225,79 +109,28 @@ async function processBatch(
       id: true,
       partnerClientId: true,
       pendingAmount: true,
-      amount: true,
       channel: true,
       createdAt: true,
-      rrn: true,
-      subMerchant: { select: { credentials: true } },
-      partnerClient: { select: { id: true, feePercent: true, feeFlat: true } }
+      subMerchant: { select: { credentials: true } }
     }
   });
 
-  if (!fetchedOrders.length) {
+  if (!pendingOrders.length) {
     return { hasMore: false, settledCount: 0, netAmount: 0, lastCursor: cursor };
   }
 
-  const lastCursor: Cursor = ensureSortedCursor(fetchedOrders);
-
-  if (shouldCancel?.()) {
-    return { hasMore: fetchedOrders.length === BATCH_SIZE, settledCount: 0, netAmount: 0, lastCursor }
-  }
-
-  const derived = new Map<string, SettlementResult>()
-
-  const candidateOrders = fetchedOrders.filter(order => {
-    if (filters) {
-      if (!isWithinDayHour(order.createdAt, filters)) {
-        return false
-      }
-    }
-    if (manual) {
-      const settlement = deriveManualSettlement(order)
-      if (!settlement) {
-        return false
-      }
-      if (filters && !amountInRange(settlement.netAmt, filters)) {
-        return false
-      }
-      derived.set(order.id, settlement)
-    }
-    return true
-  })
-
-  // Claim orders by marking them as PROCESSING so other workers skip them
-  const claimLimit = pLimit(DB_CONCURRENCY);
-  type PendingOrder = (typeof fetchedOrders)[number];
-  const claimedOrders: PendingOrder[] = [];
-  await Promise.all(
-    candidateOrders.map(o =>
-      claimLimit(async () => {
-        const upd = await prisma.order.updateMany({
-          where: { id: o.id, status: 'PAID' },
-          data: { status: 'PROCESSING', updatedAt: new Date() }
-        });
-        if (upd.count > 0) {
-          claimedOrders.push(o);
-        }
-      })
-    )
-  );
-
-  const pendingOrders = claimedOrders;
-
-  if (!pendingOrders.length) {
-    return { hasMore: fetchedOrders.length === BATCH_SIZE, settledCount: 0, netAmount: 0, lastCursor };
-  }
+  const last = pendingOrders[pendingOrders.length - 1];
+  const lastCursor: Cursor = { createdAt: last.createdAt, id: last.id };
 
   logger.info(`[SettlementCron] processing ${pendingOrders.length} orders`);
 
-  const unsettledIds = new Set(pendingOrders.map(o => o.id));
-  const httpLimit = manual ? null : pLimit(HTTP_CONCURRENCY);
+  const httpLimit = pLimit(HTTP_CONCURRENCY);
+  type PendingOrder = (typeof pendingOrders)[number];
   const groups = new Map<string, { order: PendingOrder; settlement: SettlementResult }[]>();
 
   await Promise.all(
     pendingOrders.map(o =>
-      (httpLimit ? httpLimit(async () => {
+      httpLimit(async () => {
         try {
           const creds =
             o.subMerchant?.credentials as { merchantId: string; secretKey: string } | undefined;
@@ -308,12 +141,7 @@ async function processBatch(
           let settlementResult: SettlementResult | null = null;
           const { merchantId, secretKey } = creds;
 
-          if (manual) {
-            settlementResult = derived.get(o.id) ?? deriveManualSettlement(o);
-            if (filters && settlementResult && !amountInRange(settlementResult.netAmt, filters)) {
-              settlementResult = null
-            }
-          } else if (o.channel === 'hilogate') {
+          if (o.channel === 'hilogate') {
             const path = `/api/v1/transactions/${o.id}`;
             const url = `${config.api.hilogate.baseUrl}${path}`;
             const sig = generateSignature(path, secretKey);
@@ -378,23 +206,7 @@ async function processBatch(
         } catch (err) {
           logger.error(`[SettlementCron] order ${o.id} failed:`, err);
         }
-      }) : (async () => {
-        try {
-          const settlementResult = derived.get(o.id) ?? deriveManualSettlement(o);
-          if (!settlementResult) {
-            return
-          }
-          if (filters && !amountInRange(settlementResult.netAmt, filters)) {
-            return
-          }
-          const key = o.partnerClientId!;
-          const arr = groups.get(key) ?? [];
-          arr.push({ order: o, settlement: settlementResult });
-          groups.set(key, arr);
-        } catch (err) {
-          logger.error(`[SettlementCron] order ${o.id} failed:`, err)
-        }
-      })())
+      })
     )
   );
 
@@ -410,10 +222,9 @@ async function processBatch(
             prisma.$transaction(async tx => {
               let sc = 0;
               let na = 0;
-              const txLedger: LedgerMovement[] = []
               for (const { order, settlement } of chunkItems) {
                 const upd = await tx.order.updateMany({
-                  where: { id: order.id, status: 'PROCESSING' },
+                  where: { id: order.id, status: { in: INPUT_SETTLEMENT_STATUSES } },
                   data: {
                     status: 'SETTLED',
                     settlementAmount: settlement.netAmt,
@@ -428,38 +239,19 @@ async function processBatch(
                 if (upd.count > 0) {
                   sc++;
                   na += settlement.netAmt;
-                  unsettledIds.delete(order.id);
-                  txLedger.push({
-                    orderId: order.id,
-                    partnerClientId: pcId,
-                    amount: settlement.netAmt
-                  })
                 }
               }
-              return { settledCount: sc, netAmount: na, ledgerMovements: txLedger };
+              if (na > 0) {
+                await tx.partnerClient.update({
+                  where: { id: pcId },
+                  data: { balance: { increment: na } }
+                });
+              }
+              return { settledCount: sc, netAmount: na };
             }, { timeout: DB_TX_TIMEOUT_MS })
           );
           settledCount += res.settledCount;
           netAmount += res.netAmount;
-          if (res.ledgerMovements?.length) {
-            await Promise.all(
-              res.ledgerMovements.map(movement =>
-                postBalanceMovement({
-                  partnerClientId: movement.partnerClientId,
-                  amount: movement.amount,
-                  reference: `SETTLE:${movement.orderId}`,
-                  description: manual
-                    ? `Manual settlement for order ${movement.orderId}`
-                    : `Settlement for order ${movement.orderId}`
-                }).catch(err => {
-                  logger.error(
-                    `[SettlementCron] Failed to post ledger movement for order ${movement.orderId}`,
-                    err
-                  )
-                })
-              )
-            )
-          }
         } catch (err) {
           logger.error(`[SettlementCron] partnerClient ${pcId} failed:`, err);
         }
@@ -478,18 +270,7 @@ async function processBatch(
     }
   }
 
-  if (unsettledIds.size > 0) {
-    try {
-      await prisma.order.updateMany({
-        where: { id: { in: Array.from(unsettledIds) }, status: 'PROCESSING' },
-        data: { status: 'PAID', updatedAt: new Date() }
-      });
-    } catch (err) {
-      logger.error('[SettlementCron] failed to revert orders', err);
-    }
-  }
-
-  const hasMore = fetchedOrders.length === BATCH_SIZE;
+  const hasMore = pendingOrders.length === BATCH_SIZE;
   return { hasMore, settledCount, netAmount, lastCursor };
 }
 
@@ -498,13 +279,9 @@ let settlementTask: ScheduledTask | null = null;
 let settlementCronExpr = '0 16 * * *';
 
 async function runSettlementJob() {
-  if (!(await tryAdvisoryLock(SETTLEMENT_LOCK_KEY))) {
-    logger.info('[SettlementCron] Another settlement job is running, skipping');
-    return;
-  }
   try {
     cutoffTime = new Date();
-    logger.info('[SettlementCron] 🔄 Set cut‑off at ' + cutoffTime.toISOString());
+    logger.info('[SettlementCron] 🔄 Set cut-off at ' + cutoffTime.toISOString());
     try {
       await sendTelegramMessage(
         config.api.telegram.adminChannel,
@@ -539,7 +316,7 @@ async function runSettlementJob() {
       while (true) {
         const rows = await prisma.order.findMany({
           where: {
-            status: 'PAID',
+            status: { in: INPUT_SETTLEMENT_STATUSES },
             partnerClientId: { not: null },
             ...(cutoffTime && { createdAt: { lte: cutoffTime } }),
             ...(cursor
@@ -595,8 +372,6 @@ async function runSettlementJob() {
     } catch (telegramErr) {
       logger.error('[SettlementCron] Failed to send Telegram alert:', telegramErr);
     }
-  } finally {
-    await releaseAdvisoryLock(SETTLEMENT_LOCK_KEY)
   }
 }
 
@@ -634,94 +409,33 @@ export function resetSettlementState() {
   cutoffTime = null;
 }
 
-type ManualSettlementProgress = {
-  settledOrders: number
-  netAmount: number
-  batchSettled: number
-  batchAmount: number
-  batchesProcessed: number
-}
-
-export type ManualSettlementRunOptions = {
-  filters?: ManualSettlementFilters
-  onProgress?: (p: ManualSettlementProgress) => void
-  shouldCancel?: () => boolean
-}
-
-export type ManualSettlementRunResult = {
-  settledOrders: number
-  netAmount: number
-  batches: number
-  cancelled: boolean
-}
-
 export async function runManualSettlement(
-  optionsOrProgress?: ManualSettlementRunOptions | ((p: ManualSettlementProgress) => void),
-  maybeProgress?: (p: ManualSettlementProgress) => void,
-): Promise<ManualSettlementRunResult> {
-  const resolvedOptions: ManualSettlementRunOptions =
-    typeof optionsOrProgress === 'function'
-      ? { onProgress: optionsOrProgress }
-      : optionsOrProgress ?? {}
-  const onProgress = maybeProgress ?? resolvedOptions.onProgress
-  const filters = resolvedOptions.filters
-  const shouldCancel = resolvedOptions.shouldCancel
+  onProgress?: (p: {
+    settledOrders: number
+    netAmount: number
+    batchSettled: number
+    batchAmount: number
+  }) => void
+) {
+  cutoffTime = new Date()
 
-  if (!(await tryAdvisoryLock(SETTLEMENT_LOCK_KEY))) {
-    logger.info('[SettlementCron] Manual settlement already running, skipping')
-    return { settledOrders: 0, netAmount: 0, batches: 0, cancelled: false }
+  let settledOrders = 0
+  let netAmount = 0
+  let cursor: Cursor = null
+
+  while (true) {
+    const { settledCount, netAmount: na, lastCursor } = await processBatch(cursor)
+    if (!settledCount) break
+    settledOrders += settledCount
+    netAmount += na
+    cursor = lastCursor
+    onProgress?.({
+      settledOrders,
+      netAmount,
+      batchSettled: settledCount,
+      batchAmount: na,
+    })
   }
-  try {
-    cutoffTime = filters?.endDate ?? new Date()
 
-    let settledOrders = 0
-    let netAmount = 0
-    let cursor: Cursor = null
-    let batches = 0
-    let cancelled = false
-
-    while (true) {
-      if (shouldCancel?.()) {
-        cancelled = true
-        break
-      }
-
-      const { settledCount, netAmount: na, lastCursor, hasMore } = await processBatch(cursor, {
-        manual: true,
-        filters,
-        shouldCancel,
-      })
-      batches += 1
-
-      if (settledCount > 0) {
-        settledOrders += settledCount
-        netAmount += na
-        onProgress?.({
-          settledOrders,
-          netAmount,
-          batchSettled: settledCount,
-          batchAmount: na,
-          batchesProcessed: batches,
-        })
-      } else {
-        onProgress?.({
-          settledOrders,
-          netAmount,
-          batchSettled: 0,
-          batchAmount: 0,
-          batchesProcessed: batches,
-        })
-      }
-
-      if (!hasMore || !lastCursor) {
-        break
-      }
-
-      cursor = lastCursor
-    }
-
-    return { settledOrders, netAmount, batches, cancelled }
-  } finally {
-    await releaseAdvisoryLock(SETTLEMENT_LOCK_KEY)
-  }
+  return { settledOrders, netAmount }
 }
