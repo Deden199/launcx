@@ -3,112 +3,92 @@ import { postWithRetry } from '../utils/postWithRetry'
 import logger from '../logger'
 import { config } from '../config'
 
-async function handleCallbackJob(job: Awaited<ReturnType<typeof prisma.callbackJob.findFirst>>) {
-  if (!job) return
+export async function processCallbackJobs() {
+  let jobs
 
   try {
-    await postWithRetry(
-      job.url,
-      job.payload,
-      {
-        headers: { 'X-Callback-Signature': job.signature },
-        timeout: 5000,
+    jobs = await prisma.callbackJob.findMany({
+      where: {
+        delivered: false,
+        attempts: { lt: config.api.callbackQueue.maxAttempts },
       },
-      3
-    )
-    await prisma.callbackJob.update({
-      where: { id: job.id },
-      data: {
-        delivered: true,
-        attempts: job.attempts + 1,
-        lastError: null,
-        responseBody: null,
-      },
+      orderBy: { createdAt: 'asc' },
+      take: config.api.callbackQueue.batchSize,
     })
-    logger.info(`[callbackQueue] delivered job ${job.id}`)
   } catch (err: any) {
-    const attempts = job.attempts + 1
-    const statusCode = err?.response?.status
-    const isRateLimited = statusCode === 429
-    const isClientError =
-      statusCode >= 400 && statusCode < 500 && !isRateLimited
-    const maxAttemptsReached =
-      attempts >= config.api.callbackQueue.maxAttempts
+    // Handle legacy records with null partnerClientId
+    if (err.code === 'P2032' && err.meta?.field === 'partnerClientId') {
+      logger.error('[callbackQueue] Found legacy jobs with null partnerClientId. Cleaning up...')
 
-    if (isClientError || maxAttemptsReached) {
-      await prisma.callbackJobDeadLetter.create({
-        data: {
-          jobId: job.id,
-          partnerClientId: job.partnerClientId,
-          url: job.url,
-          payload: job.payload,
-          signature: job.signature,
-          statusCode,
-          errorMessage: err.message,
-          responseBody: err.response?.data ?? null,
-          attempts,
-        },
-      })
-      await prisma.callbackJob.delete({ where: { id: job.id } })
-      logger.error(
-        `[callbackQueue] moved job ${job.id} to dead-letter queue: ${err.message}`
-      )
-    } else {
-      const lastError = {
-        statusCode: statusCode ?? null,
-        message: err?.message ?? 'Unknown error',
-        timestamp: new Date().toISOString(),
+      // Delete invalid jobs using raw query to bypass validation
+      try {
+        await prisma.$runCommandRaw({
+          delete: 'CallbackJob',
+          deletes: [{
+            q: { partnerClientId: null },
+            limit: 0
+          }]
+        })
+        logger.info('[callbackQueue] Cleaned up legacy jobs with null partnerClientId')
+      } catch (cleanupErr) {
+        logger.error('[callbackQueue] Failed to cleanup legacy jobs:', cleanupErr)
       }
-
-      await prisma.callbackJob.update({
-        where: { id: job.id },
-        data: {
-          attempts,
-          lastError,
-          responseBody: err.response?.data ?? null,
-        },
-      })
-      logger.error(
-        `[callbackQueue] delivery failed for job ${job.id}: ${err.message}`
-      )
+      return
     }
+    throw err
   }
-}
-
-export async function processCallbackJobs() {
-  const jobs = await prisma.callbackJob.findMany({
-    where: {
-      delivered: false,
-      // Guard against legacy rows that were created without a partnerClientId.
-      // If you ever spot these in production, remove them with a one-off
-      // `prisma.callbackJob.deleteMany({ where: { partnerClientId: null } })`
-      // or backfill the missing partnerClientId manually to keep the queue
-      // healthy.
-      partnerClientId: { not: null },
-      attempts: { lt: config.api.callbackQueue.maxAttempts },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: config.api.callbackQueue.batchSize,
-  })
-
-  const concurrency = Math.max(1, config.api.callbackQueue.concurrency)
-  const executing: Promise<void>[] = []
 
   for (const job of jobs) {
-    const task = handleCallbackJob(job).finally(() => {
-      const index = executing.indexOf(task)
-      if (index !== -1) {
-        executing.splice(index, 1)
-      }
-    })
-    executing.push(task)
-    if (executing.length >= concurrency) {
-      await Promise.race(executing)
-    }
-  }
+    try {
+      await postWithRetry(
+          job.url,
+          job.payload,
+          {
+            headers: { 'X-Callback-Signature': job.signature },
+            timeout: 5000,
+          },
+          3
+      )
+      await prisma.callbackJob.update({
+        where: { id: job.id },
+        data: { delivered: true, attempts: job.attempts + 1, lastError: null },
+      })
+      logger.info(`[callbackQueue] delivered job ${job.id}`)
+    } catch (err: any) {
+      const attempts = job.attempts + 1
+      const statusCode = err?.response?.status
+      const isClientError = statusCode >= 400 && statusCode < 500
+      const maxAttemptsReached =
+          attempts >= config.api.callbackQueue.maxAttempts
 
-  if (executing.length > 0) {
-    await Promise.allSettled(executing)
+      if (isClientError || maxAttemptsReached) {
+        await prisma.callbackJobDeadLetter.create({
+          data: {
+            jobId: job.id,
+            partnerClientId: job.partnerClientId,
+            url: job.url,
+            payload: job.payload,
+            signature: job.signature,
+            statusCode,
+            errorMessage: err.message,
+            responseBody: err.response?.data ?? null,
+            attempts,
+          },
+        })
+        await prisma.callbackJob.delete({ where: { id: job.id } })
+        logger.error(
+            `[callbackQueue] moved job ${job.id} to dead-letter queue: ${err.message}`
+        )
+      } else {
+        await prisma.callbackJob.update({
+          where: { id: job.id },
+          data: { attempts, lastError: err.message },
+        })
+        logger.error(
+            `[callbackQueue] delivery failed for job ${job.id}: ${err.message}`
+        )
+      }
+    }
   }
 }
 

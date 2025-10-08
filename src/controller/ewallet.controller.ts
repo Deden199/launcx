@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { EwalletService, CreateEwalletParams } from '../service/ewallet.service';
+import { prisma } from '../core/prisma';
 
 const svc = new EwalletService();
-const prisma = new PrismaClient();
 
 /**
  * POST /api/v1/ewallet/transaction

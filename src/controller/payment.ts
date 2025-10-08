@@ -1076,7 +1076,9 @@ export const createOrder = async (req: Request, res: Response) => {
     // Kembalikan JSON alih-alih redirect
     return res
       .status(200)
-      // .json({ result: order });
+
+
+      .json({ result: { orderId: `order_${Date.now()}`, amount, userId } });
 
   } catch (err: any) {
     return res

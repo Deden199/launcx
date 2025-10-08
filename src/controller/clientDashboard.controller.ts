@@ -13,6 +13,7 @@ import pLimit from 'p-limit' // optional kalau mau throttle paralel, tapi tidak 
 import { retry } from '../utils/retry';
 import { CALLBACK_ALLOWED_STATUSES, isCallbackStatusAllowed } from '../utils/callbackStatus';
 import { ORDER_STATUS } from '../types/orderStatus';
+import { cacheGet, cacheSet, cacheDelPattern } from '../core/redis';
 
 const DASHBOARD_STATUSES = [
   ORDER_STATUS.SUCCESS,
@@ -98,7 +99,16 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
 }
 export async function getClientDashboard(req: ClientAuthRequest, res: Response) {
   try {
-    // (1) ambil user + partnerClient + children (termasuk balance)
+    // (1) Build cache key
+    const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}`;
+
+    // (2) Check cache first (30 second TTL)
+    const cached = await cacheGet<any>(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // (3) Fetch user data with partnerClient and children in a single query
     const user = await prisma.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
@@ -121,44 +131,59 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
     const pc = user.partnerClient!;
 
-    // (2) parse tanggal
-    const dateFrom = req.query.date_from ? new Date(String(req.query.date_from)) : undefined;
-    const dateTo   = req.query.date_to   ? new Date(String(req.query.date_to))   : undefined;
+    // (2) Parse date params - DEFAULT to last 7 days for better performance
+    let dateFrom: Date | undefined;
+    let dateTo: Date | undefined;
+
+    if (req.query.date_from) {
+      dateFrom = new Date(String(req.query.date_from));
+    } else {
+      dateFrom = new Date();
+      dateFrom.setDate(dateFrom.getDate() - 7);
+      dateFrom.setHours(0, 0, 0, 0);
+    }
+
+    if (req.query.date_to) {
+      dateTo = new Date(String(req.query.date_to));
+    } else {
+      dateTo = new Date();
+    }
+
     const createdAtFilter: { gte?: Date; lte?: Date } = {};
     if (dateFrom) createdAtFilter.gte = dateFrom;
     if (dateTo)   createdAtFilter.lte = dateTo;
 
-// (2b) parse status filter (dipakai untuk totalTransaksi)
-const rawStatus = (req.query as any).status;
-const allowed = DASHBOARD_STATUSES as readonly string[];
-let statuses: string[] = [];
+    // (2b) Parse status filter
+    const rawStatus = (req.query as any).status;
+    const allowed = DASHBOARD_STATUSES as readonly string[];
+    let statuses: string[] = [];
 
-if (Array.isArray(rawStatus)) {
-  statuses = rawStatus
-    .map(String)
-    .flatMap(s =>
-      s === ORDER_STATUS.SUCCESS
-        ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-        : [s],
-    )
-    .filter(s => allowed.includes(s));
-} else if (typeof rawStatus === 'string' && rawStatus.trim() !== '') {
-  statuses = rawStatus
-    .split(',')
-    .map(s => s.trim())
-    .flatMap(s =>
-      s === ORDER_STATUS.SUCCESS
-        ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-        : [s],
-    )
-    .filter(s => allowed.includes(s));
-}
+    if (Array.isArray(rawStatus)) {
+      statuses = rawStatus
+        .map(String)
+        .flatMap(s =>
+          s === ORDER_STATUS.SUCCESS
+            ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
+            : [s],
+        )
+        .filter(s => allowed.includes(s));
+    } else if (typeof rawStatus === 'string' && rawStatus.trim() !== '') {
+      statuses = rawStatus
+        .split(',')
+        .map(s => s.trim())
+        .flatMap(s =>
+          s === ORDER_STATUS.SUCCESS
+            ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
+            : [s],
+        )
+        .filter(s => allowed.includes(s));
+    }
 
-if (statuses.includes(ORDER_STATUS.PAID) && !statuses.includes(ORDER_STATUS.LN_SETTLED)) {
-  statuses.push(ORDER_STATUS.LN_SETTLED);
-}
+    if (statuses.includes(ORDER_STATUS.PAID) && !statuses.includes(ORDER_STATUS.LN_SETTLED)) {
+      statuses.push(ORDER_STATUS.LN_SETTLED);
+    }
 
-if (statuses.length === 0) statuses = [...allowed];
+    if (statuses.length === 0) statuses = [...allowed];
 
     // (2c) pagination params
     const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
@@ -181,52 +206,13 @@ if (statuses.length === 0) statuses = [...allowed];
       clientIds = [pc.id];
     }
 
-    // (4a) total pending seperti sebelumnya
-    const pendingAgg = await prisma.order.aggregate({
-      _sum: { pendingAmount: true },
-      where: {
-        partnerClientId: { in: clientIds },
-        status: ORDER_STATUS.PAID,
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      }
-    })
-    const totalPending = pendingAgg._sum.pendingAmount ?? 0
-
-    // total nominal transaksi berstatus PAID
-    const paidAgg = await prisma.order.aggregate({
-      _sum: { amount: true },
-      where: {
-        partnerClientId: { in: clientIds },
-        status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED] },
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      }
-    })
-    const totalPaid = paidAgg._sum.amount ?? 0
-
-    // total nominal settlement sukses
-    const settleAgg = await prisma.order.aggregate({
-      _sum: { settlementAmount: true },
-      where: {
-        partnerClientId: { in: clientIds },
-        status: { in: [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED] },
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      }
-    })
-    const totalSettlement = settleAgg._sum.settlementAmount ?? 0
-
-    // (4b) HITUNG TOTAL ACTIVE BALANCE BERDASARKAN clientIds
-    const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
-    const childrenBal = pc.children
-      .filter(c => clientIds.includes(c.id))
-      .reduce((sum, c) => sum + (c.balance ?? 0), 0);
-    const totalActive = parentBal + childrenBal;
-
-    // (4c) ambil transaksi + total untuk pagination + search
+    // (4) Build base where clause
     const whereOrders: any = {
       partnerClientId: { in: clientIds },
       status: { in: statuses },
       ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
     };
+
     if (searchStr) {
       whereOrders.OR = [
         { id:       { contains: searchStr, mode: 'insensitive' } },
@@ -235,75 +221,119 @@ if (statuses.length === 0) statuses = [...allowed];
       ]
     }
 
-    const [orders, totalRows] = await Promise.all([
+    // (5) Execute all queries in parallel
+    const [
+      pendingAgg,
+      paidAgg,
+      settleAgg,
+      totalAgg,
+      orders,
+      totalRows
+    ] = await Promise.all([
+      // Pending amount
+      prisma.order.aggregate({
+        _sum: { pendingAmount: true },
+        where: {
+          partnerClientId: { in: clientIds },
+          status: ORDER_STATUS.PAID,
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        }
+      }),
+      // Paid total
+      prisma.order.aggregate({
+        _sum: { amount: true },
+        where: {
+          partnerClientId: { in: clientIds },
+          status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED] },
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        }
+      }),
+      // Settlement total
+      prisma.order.aggregate({
+        _sum: { settlementAmount: true },
+        where: {
+          partnerClientId: { in: clientIds },
+          status: { in: [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED] },
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        }
+      }),
+      // Total amount for filtered status
+      prisma.order.aggregate({
+        _sum: { amount: true },
+        where: whereOrders
+      }),
+      // Transactions
       prisma.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
-        ...(searchStr ? {} : {
-          skip: (pageNum - 1) * pageSize,
-          take: pageSize,
-        }),
+        skip: searchStr ? 0 : (pageNum - 1) * pageSize,
+        take: searchStr ? undefined : pageSize,
         select: {
           id: true, qrPayload: true, rrn: true, playerId: true,
           amount: true, feeLauncx: true, settlementAmount: true,
           pendingAmount: true, status: true, settlementStatus: true, createdAt: true,
           paymentReceivedTime: true,
-          settlementTime:      true,
-          trxExpirationTime:   true,
+          settlementTime: true,
+          trxExpirationTime: true,
         }
       }),
+      // Count
       prisma.order.count({ where: whereOrders })
     ]);
-/// (5) totalTransaksi -> hitung langsung di DB dengan status filter user
-const totalAgg = await prisma.order.aggregate({
-  _sum: { amount: true },
-  where: {
-    partnerClientId: { in: clientIds },
-    status: { in: statuses },
-    ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-  }
-});
-const totalAmount = totalAgg._sum.amount ?? 0; // sum of amounts
 
-// totalRows sudah dihitung sebelumnya sebagai count
-const totalCount = totalRows; // jumlah order matching filter
+    const totalPending = pendingAgg._sum.pendingAmount ?? 0;
+    const totalPaid = paidAgg._sum.amount ?? 0;
+    const totalSettlement = settleAgg._sum.settlementAmount ?? 0;
+    const totalAmount = totalAgg._sum.amount ?? 0;
+    const totalCount = totalRows;
 
-// (6) map ke response
-const transactions = orders.map(o => {
-  const netSettle = o.status === ORDER_STATUS.PAID
-    ? (o.pendingAmount ?? 0)
-    : (o.settlementAmount ?? 0);
-  return {
-    id: o.id,
-    date: o.createdAt.toISOString(),
-    reference: o.qrPayload ?? '',
-    rrn: o.rrn ?? '',
-    playerId: o.playerId,
-    amount: o.amount,
-    feeLauncx: o.feeLauncx ?? 0,
-    netSettle,
-    settlementStatus: o.settlementStatus ?? '',
-    status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
-    paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
-    settlementTime:      o.settlementTime?.toISOString()      ?? '',
-    trxExpirationTime:   o.trxExpirationTime?.toISOString()   ?? '',
-  };
-});
+    // (6) Calculate balance
+    const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
+    const childrenBal = pc.children
+      .filter(c => clientIds.includes(c.id))
+      .reduce((sum, c) => sum + (c.balance ?? 0), 0);
+    const totalActive = parentBal + childrenBal;
 
-return res.json({
-  balance: totalActive,
-  totalPending,
-  totalAmount,      // baru: sum of amount
-  totalCount,       // baru: jumlah transaksi (dipakai di summary)
-  totalSettlement,
-  totalPaid,
-  // backward compatibility jika frontend lama masih pakai:
-  totalTransaksi: totalCount, // kalau summary mau count, biarkan ini jadi count
-  total: totalCount,          // pagination logic masih bisa pakai ini
-  transactions,
-  children: pc.children
-});
-} catch (err: any) {
+    // (7) Map transactions
+    const transactions = orders.map(o => {
+      const netSettle = o.status === ORDER_STATUS.PAID
+        ? (o.pendingAmount ?? 0)
+        : (o.settlementAmount ?? 0);
+      return {
+        id: o.id,
+        date: o.createdAt.toISOString(),
+        reference: o.qrPayload ?? '',
+        rrn: o.rrn ?? '',
+        playerId: o.playerId,
+        amount: o.amount,
+        feeLauncx: o.feeLauncx ?? 0,
+        netSettle,
+        settlementStatus: o.settlementStatus ?? '',
+        status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
+        paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
+        settlementTime: o.settlementTime?.toISOString() ?? '',
+        trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
+      };
+    });
+
+    const result = {
+      balance: totalActive,
+      totalPending,
+      totalAmount,
+      totalCount,
+      totalSettlement,
+      totalPaid,
+      totalTransaksi: totalCount,
+      total: totalCount,
+      transactions,
+      children: pc.children
+    };
+
+    // (8) Cache the result for 30 seconds
+    await cacheSet(cacheKey, result, 30);
+
+    return res.json(result);
+  } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Internal Server Error' });
   }
 }
