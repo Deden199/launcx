@@ -223,6 +223,8 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 app.use(errorHandler);
 
 app.listen(config.api.port, () => {});
+/* ========== 6. SCHEDULED TASKS ========== */
+scheduleSettlementChecker().catch(err => logger.error('[SettlementCron] init failed', err))
 // scheduleSettlementChecker().catch(err => logger.error(err));
 // scheduleDashboardSummary();
 // scheduleLoanSettlementCron();
