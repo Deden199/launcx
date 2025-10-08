@@ -9,7 +9,7 @@ import { Ing1Client, Ing1Config } from '../service/ing1Client'
 import crypto from 'crypto'
 import { config } from '../config'
 import logger from '../logger'
-import { DisbursementStatus } from '@prisma/client'
+import { DisbursementStatus, Prisma } from '@prisma/client'
 import { getActiveProviders } from '../service/provider';
 import {OyClient,OyConfig}          from '../service/oyClient'    // sesuaikan path
 import { PiroClient, PiroConfig } from '../service/piroClient'
@@ -54,7 +54,6 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
       partnerClientId: true,
       partnerClient: {
         select: { defaultProvider: true }
-        
       }
     }
   })
@@ -63,7 +62,7 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
   const { partnerClientId } = userWithDp
   const defaultProvider = userWithDp.partnerClient.defaultProvider
   if (!defaultProvider) return res.status(400).json({ error: 'defaultProvider tidak diset' })
-  // Optional query.clientId untuk filter child
+
   const { clientId: qClientId } = req.query
   const clientIds = typeof qClientId === 'string' && qClientId !== 'all'
     ? [qClientId]
@@ -75,38 +74,50 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
     select: { id: true, name: true, provider: true }
   })
 
-  // 3) Hitung balance tiap sub-merchant dari Order, bukan transaction_request
-  const result = await Promise.all(subs.map(async s => {
-    // settled in dari Order.settlementTime
-    const inAgg = await prisma.order.aggregate({
-      _sum: { settlementAmount: true },
+  if (subs.length === 0) {
+    return res.json([])
+  }
+
+  const subIds = subs.map(s => s.id)
+
+  // 3) Batch calculate all balances in parallel (2 queries instead of 2N)
+  const [inAggs, outAggs] = await Promise.all([
+    // Get all settlement amounts grouped by subMerchantId
+    prisma.order.groupBy({
+      by: ['subMerchantId'],
       where: {
-        subMerchantId:  s.id,
+        subMerchantId: { in: subIds },
         partnerClientId: { in: clientIds },
         settlementTime: { not: null }
-      }
-    })
-    const totalIn = inAgg._sum.settlementAmount ?? 0
-
-    // pending/completed out dari WithdrawRequest
-    const outAgg = await prisma.withdrawRequest.aggregate({
-      _sum: { amount: true },
+      },
+      _sum: { settlementAmount: true }
+    }),
+    // Get all withdrawal amounts grouped by subMerchantId
+    prisma.withdrawRequest.groupBy({
+      by: ['subMerchantId'],
       where: {
-        subMerchantId: s.id,
+        subMerchantId: { in: subIds },
         partnerClientId: { in: clientIds },
-
-        status:        { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
-      }
+        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+      },
+      _sum: { amount: true }
     })
-    const totalOut = outAgg._sum.amount ?? 0
+  ])
 
-    return {
-      id:       s.id,
-            name:     s.name,
+  // 4) Create lookup maps
+  const inMap = new Map(
+    inAggs.map(agg => [agg.subMerchantId!, agg._sum.settlementAmount ?? 0])
+  )
+  const outMap = new Map(
+    outAggs.map(agg => [agg.subMerchantId!, agg._sum.amount ?? 0])
+  )
 
-      provider: s.provider,
-      balance:  totalIn - totalOut
-    }
+  // 5) Build result
+  const result = subs.map(s => ({
+    id: s.id,
+    name: s.name,
+    provider: s.provider,
+    balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
   }))
 
   return res.json(result)
@@ -781,10 +792,10 @@ export const piroWithdrawalCallback = async (req: Request, res: Response) => {
       }
     }
 
-    return res.json({ ok: true })
+    return res.status(200).json({ message: 'OK' })
   } catch (err: any) {
-    logger.error('[piroWithdrawalCallback] error', err)
-    return res.status(500).json({ error: err.message || 'Internal server error' })
+    console.error('[withdrawalCallback] error:', err)
+    return res.status(500).json({ error: err.message })
   }
 }
 
@@ -1348,18 +1359,27 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       const totalIn = inAgg._sum.settlementAmount ?? 0
 
       // c) Hitung total keluar (withdraw) dari WithdrawRequest
+      // Use netAmount + pgFee because that's what actually leaves the wallet
       const outAgg = await tx.withdrawRequest.aggregate({
-        _sum: { amount: true },
+        _sum: { netAmount: true, pgFee: true },
         where: {
           subMerchantId,
           partnerClientId,
           status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
         }
       })
-      const totalOut = outAgg._sum.amount ?? 0
+      const totalOutNet = outAgg._sum.netAmount ?? 0
+      const totalOutFee = outAgg._sum.pgFee ?? 0
+      const totalOut = totalOutNet + totalOutFee
 
       // d) Validasi available balance
       const available = totalIn - totalOut
+
+      // Additional safety check: prevent withdrawals if wallet balance is negative
+      if (available < 0) {
+        throw new Error('WalletNegativeBalance')
+      }
+
       if (amount > available) throw new Error('InsufficientBalance')
 
       // e) Hitung fee dan net amount
@@ -1624,6 +1644,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       return res.status(status).json({ error: err.message || 'Internal server error' })
     }
   } catch (err: any) {
+    if (err.message === 'WalletNegativeBalance')
+      return res.status(400).json({ error: 'Wallet has negative balance. Please contact support.' })
     if (err.message === 'InsufficientBalance')
       return res.status(400).json({ error: 'Saldo tidak mencukupi' })
     if (err instanceof GidiError)
@@ -1835,6 +1857,12 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       const totalOut = outAgg._sum.amount ?? 0
 
       const available = totalIn - totalOut
+
+      // Additional safety check: prevent withdrawals if wallet balance is negative
+      if (available < 0) {
+        throw new Error('WalletNegativeBalance')
+      }
+
       if (amount > available) throw new Error('InsufficientBalance')
 
       const feePctAmt = (pc.withdrawFeePercent / 100) * amount

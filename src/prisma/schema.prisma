@@ -408,6 +408,8 @@ model WithdrawRequest {
   @@index([status])
   @@index([subMerchantId])
   @@index([subMerchantId, status, createdAt])
+  @@index([partnerClientId, status, createdAt])
+  @@index([partnerClientId, createdAt])
 }
 
 model SubMerchantBalance {
