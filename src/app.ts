@@ -163,7 +163,23 @@ app.use(rateLimit({
   message: 'Too many requests, try again later.',
   skip: (req) => rateLimitExemptPaths.has(req.path),
 }));
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-API-Key',
+    'X-Timestamp',
+    'X-Signature',
+    'Accept',
+    'User-Agent',
+    'Referer',
+    'Origin'
+  ],
+  exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Per-Page'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
+}));
 app.use(requestLogger);
 
 // (hapus duplikat parser global yang kedua)
