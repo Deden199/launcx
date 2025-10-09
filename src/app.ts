@@ -1,13 +1,14 @@
+// src/app.ts
 import 'express-async-errors';
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cors from 'cors';
-import cron from 'node-cron';
-import { errorHandler } from './middleware/errorHandler'
-import { scheduleSettlementChecker } from './cron/settlement'
-import { scheduleDashboardSummary } from './cron/dashboardSummary'
-import { scheduleLoanSettlementCron } from './cron/loanSettlement'
+// import cron from 'node-cron'; // ❌ tidak dipakai di file ini, biar tidak bikin bingung
+import { errorHandler } from './middleware/errorHandler';
+import { scheduleSettlementChecker, getSettlementCronStatus } from './cron/settlement'; // ⬅️ tambah getSettlementCronStatus
+import { scheduleDashboardSummary } from './cron/dashboardSummary';
+import { scheduleLoanSettlementCron } from './cron/loanSettlement';
 
 import subMerchantRoutes from './route/admin/subMerchant.routes';
 import pgProviderRoutes from './route/admin/pgProvider.routes';
@@ -22,10 +23,10 @@ import adminSettlementRoutes from './route/admin/settlement.routes';
 
 import usersRoutes from './route/users.routes';
 
-import settingsRoutes   from './route/settings.routes';
-import { loadWeekendOverrideDates } from './util/time'
+import settingsRoutes from './route/settings.routes';
+import { loadWeekendOverrideDates } from './util/time';
 
-import { withdrawalCallback, ing1WithdrawalCallback, piroWithdrawalCallback } from './controller/withdrawals.controller'
+import { withdrawalCallback, ing1WithdrawalCallback, piroWithdrawalCallback } from './controller/withdrawals.controller';
 import pivotCallbackRouter from './route/payment.callback.routes';
 
 import webRoutes from './route/web.routes';
@@ -36,8 +37,8 @@ import authRoutes from './route/auth.routes';
 import paymentRouter from './route/payment.routes';
 import paymentRouterV2 from './route/payment.v2.routes';
 
-import bankRoutes from './route/bank.routes'
-import { proxyOyQris } from './controller/qr.controller'
+import bankRoutes from './route/bank.routes';
+import { proxyOyQris } from './controller/qr.controller';
 
 // import disbursementRouter from './route/disbursement.routes';
 import paymentController, {
@@ -45,11 +46,11 @@ import paymentController, {
   oyTransactionCallback,
   gidiTransactionCallback,
   ing1TransactionCallback,
-} from './controller/payment'
+} from './controller/payment';
 
 import merchantDashRoutes from './route/merchant/dashboard.routes';
-import clientWebRoutes from './route/client/web.routes';    // partner-client routes
-import withdrawalRoutes from './route/withdrawals.routes';  // add withdrawal routes
+import clientWebRoutes from './route/client/web.routes'; // partner-client routes
+import withdrawalRoutes from './route/withdrawals.routes'; // add withdrawal routes
 import withdrawalS2SRoutes from './route/withdrawals.s2s.routes';
 
 import apiKeyAuth from './middleware/apiKeyAuth';
@@ -112,13 +113,13 @@ app.post(
 app.post(
   '/api/v1/withdrawals/callback',
   express.raw({
-    type : '*/*',              // terima JSON / octet-stream apa saja
-    limit: '2mb',              // payload WD aman
+    type: '*/*', // terima JSON / octet-stream apa saja
+    limit: '2mb', // payload WD aman
     verify: (req, _res, buf) => {
-      (req as any).rawBody = buf.toString('utf8');      // simpan mentah
+      (req as any).rawBody = buf.toString('utf8'); // simpan mentah
     },
   }),
-  withdrawalCallback           // ⛔ TANPA express.json()
+  withdrawalCallback // ⛔ TANPA express.json()
 );
 
 app.post(
@@ -127,7 +128,7 @@ app.post(
     type: '*/*',
     limit: '2mb',
     verify: (req, _res, buf) => {
-      (req as any).rawBody = buf.toString('utf8')
+      (req as any).rawBody = buf.toString('utf8');
     },
   }),
   piroWithdrawalCallback,
@@ -166,11 +167,14 @@ app.use(rateLimit({
 app.use(cors({ origin: true, credentials: true }));
 app.use(requestLogger);
 
-// (hapus duplikat parser global yang kedua)
-
 // Ops endpoint: pantau status IFP (berguna lihat di prod)
 app.get('/ops/ifp-status', (_req, res) => {
   res.json({ ifpEnabled: IFP_ENABLED });
+});
+
+// Endpoint cek status cron (BIAR GAK NEBAK)
+app.get('/ops/cron-status', (_req, res) => {
+  res.json({ settlement: getSettlementCronStatus() });
 });
 
 // Routes ringan lain
@@ -222,11 +226,22 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
-app.listen(config.api.port, () => {});
-/* ========== 6. SCHEDULED TASKS ========== */
-scheduleSettlementChecker().catch(err => logger.error('[SettlementCron] init failed', err))
-// scheduleSettlementChecker().catch(err => logger.error(err));
-// scheduleDashboardSummary();
-// scheduleLoanSettlementCron();
+// 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen
+(async () => {
+  try {
+    await scheduleSettlementChecker();
+    logger.info('[SettlementCron] bootstrapped & scheduled');
+  } catch (err) {
+    logger.error('[SettlementCron] init failed', err);
+  }
+
+  // Jika ingin aktifkan yang lain:
+  // try { scheduleDashboardSummary(); logger.info('[DashboardSummary] scheduled'); } catch (e) { logger.error('[DashboardSummary] init failed', e); }
+  // try { scheduleLoanSettlementCron(); logger.info('[LoanSettlementCron] scheduled'); } catch (e) { logger.error('[LoanSettlementCron] init failed', e); }
+
+  app.listen(config.api.port, () => {
+    logger.info(`[HTTP] listening on ${config.api.port}`);
+  });
+})();
 
 export default app;
