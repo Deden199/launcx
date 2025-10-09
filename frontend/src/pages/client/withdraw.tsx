@@ -27,7 +27,7 @@ interface Withdrawal {
   status: string
   createdAt: string
   completedAt?: string
-  sourceProvider?: string
+  // sourceProvider?: string
 }
 interface SubMerchant {
   id: string
@@ -209,7 +209,7 @@ export default function WithdrawPage() {
       const body: Record<string, any> = {
         bank_code: provider === 'piro' ? piroMeta?.bankCode ?? form.bankCode : form.bankCode,
         account_number: form.accountNumber,
-        sourceProvider: provider,
+        // sourceProvider: provider,
         subMerchantId: selectedSub,
       }
 
@@ -266,7 +266,7 @@ export default function WithdrawPage() {
 
       const body: any = {
         subMerchantId: selectedSub,
-        sourceProvider: provider,
+        // sourceProvider: provider,
         account_number: form.accountNumber,
         bank_code: payloadBankCode,
         account_name_alias: form.accountNameAlias,
@@ -312,13 +312,13 @@ export default function WithdrawPage() {
 
   const exportToExcel = () => {
     const rows = [
-      ['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Source','Amount','Fee','Net Amount','Status'],
+      ['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Amount','Fee','Net Amount','Status'],
       ...withdrawals.map(w => [
         new Date(w.createdAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }),
         w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }) : '-',
         w.refId, w.bankName, w.accountNumber, w.accountName, w.wallet,
-        w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet,
-        w.sourceProvider ?? '',
+        // w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet,
+        // w.sourceProvider ?? '',
         w.amount, w.amount - (w.netAmount ?? 0), w.netAmount ?? 0, w.status
       ])
     ]
@@ -505,7 +505,7 @@ export default function WithdrawPage() {
               <table className="min-w-[1100px] w-full text-sm">
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b border-neutral-800 bg-neutral-900/80 backdrop-blur">
-                    {['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Source','Amount','Fee','Net Amount','Status'].map(h => (
+                    {['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Amount','Fee','Net Amount','Status'].map(h => (
                       <th key={h} className="px-3 py-2 text-left font-medium text-neutral-300">
                         <span className="inline-flex items-center gap-1">{h}<ArrowUpDown size={14} className="opacity-50" /></span>
                       </th>
@@ -525,8 +525,8 @@ export default function WithdrawPage() {
                       <td className="px-3 py-2">{w.bankName}</td>
                       <td className="px-3 py-2">{w.accountNumber}</td>
                       <td className="px-3 py-2">{w.accountName}</td>
-                      <td className="px-3 py-2">{w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet}</td>
-                      <td className="px-3 py-2">{w.sourceProvider ?? '-'}</td>
+                      {/* <td className="px-3 py-2">{w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet}</td> */}
+                      {/* <td className="px-3 py-2">{w.sourceProvider ?? '-'}</td> */}
                       <td className="px-3 py-2 whitespace-nowrap">Rp {w.amount.toLocaleString()}</td>
                       <td className="px-3 py-2 whitespace-nowrap">Rp {(w.amount - (w.netAmount ?? 0)).toLocaleString()}</td>
                       <td className="px-3 py-2 whitespace-nowrap font-semibold">Rp {(w.netAmount ?? 0).toLocaleString()}</td>
