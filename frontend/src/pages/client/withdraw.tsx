@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import apiClient from '@/lib/apiClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -27,8 +27,8 @@ interface Withdrawal {
   status: string
   createdAt: string
   completedAt?: string
-  // sourceProvider?: string
 }
+
 interface SubMerchant {
   id: string
   name: string
@@ -40,6 +40,24 @@ function deriveAlias(fullName: string) {
   const parts = fullName.trim().split(' ')
   if (parts.length === 1) return parts[0]
   return `${parts[0]} ${parts[parts.length - 1][0]}.`
+}
+
+const HEADERS = [
+  'Created At',
+  'Completed At',
+  'Ref ID',
+  'Bank',
+  'Account',
+  'Account Name',
+  'Wallet',
+  'Amount',
+  'Fee',
+  'Net Amount',
+  'Status',
+] as const
+
+function fmtRp(n: number) {
+  return `Rp ${Number(n || 0).toLocaleString('id-ID')}`
 }
 
 export default function WithdrawPage() {
@@ -209,7 +227,6 @@ export default function WithdrawPage() {
       const body: Record<string, any> = {
         bank_code: provider === 'piro' ? piroMeta?.bankCode ?? form.bankCode : form.bankCode,
         account_number: form.accountNumber,
-        // sourceProvider: provider,
         subMerchantId: selectedSub,
       }
 
@@ -226,12 +243,12 @@ export default function WithdrawPage() {
       )
       if (res.status === 200 && res.data.status === 'valid') {
         const holder = res.data.account_holder as string
-        const bankObj = banks.find(b => b.code === form.bankCode)
+        const bankObj2 = banks.find(b => b.code === form.bankCode)
         setForm(f => ({
           ...f,
           accountName: holder,
           accountNameAlias: deriveAlias(holder),
-          bankName: res.data.bank_name || bankObj?.name || '',
+          bankName: res.data.bank_name || bankObj2?.name || '',
           branchName: res.data.branch_code || res.data.internal_bank_code || piroMeta?.branchCode || '',
         }))
         setIsValid(true)
@@ -266,7 +283,6 @@ export default function WithdrawPage() {
 
       const body: any = {
         subMerchantId: selectedSub,
-        // sourceProvider: provider,
         account_number: form.accountNumber,
         bank_code: payloadBankCode,
         account_name_alias: form.accountNameAlias,
@@ -310,17 +326,34 @@ export default function WithdrawPage() {
     }
   }
 
+  const tableRows = useMemo(() => withdrawals.map(w => {
+    const amount = w.amount ?? 0
+    const net = w.netAmount ?? 0
+    const fee = amount - net
+    return [
+      new Date(w.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }),
+      w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-',
+      w.refId,
+      w.bankName,
+      w.accountNumber,
+      w.accountName,
+      w.wallet ?? '-',
+      fmtRp(amount),
+      fmtRp(fee),
+      fmtRp(net),
+      w.status,
+    ]
+  }), [withdrawals])
+
   const exportToExcel = () => {
     const rows = [
-      ['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Amount','Fee','Net Amount','Status'],
+      [...HEADERS],
       ...withdrawals.map(w => [
-        new Date(w.createdAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }),
-        w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }) : '-',
-        w.refId, w.bankName, w.accountNumber, w.accountName, w.wallet,
-        // w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet,
-        // w.sourceProvider ?? '',
-        w.amount, w.amount - (w.netAmount ?? 0), w.netAmount ?? 0, w.status
-      ])
+        new Date(w.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }),
+        w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-',
+        w.refId, w.bankName, w.accountNumber, w.accountName, w.wallet ?? '-',
+        w.amount, (w.amount ?? 0) - (w.netAmount ?? 0), w.netAmount ?? 0, w.status
+      ]),
     ]
     const ws = XLSX.utils.aoa_to_sheet(rows)
     const wb = XLSX.utils.book_new()
@@ -328,11 +361,13 @@ export default function WithdrawPage() {
     XLSX.writeFile(wb, 'withdrawals.xlsx')
   }
 
-  // ── Pagination
   const totalPages = Math.max(1, Math.ceil(total / perPage))
 
   return (
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100">
+      {/* Portal container for DatePicker (avoid portalId not found) */}
+      <div id="datepicker-portal" />
+
       <div className="mx-auto max-w-7xl p-4 sm:p-6">
         {pageError && (
           <p className="mb-4 rounded-xl border border-rose-900/40 bg-rose-950/40 p-3 text-rose-300">
@@ -373,7 +408,7 @@ export default function WithdrawPage() {
                   <div className="text-sm font-medium">
                     {s.name || (s.provider ? s.provider[0].toUpperCase()+s.provider.slice(1) : `Sub ${s.id.slice(0,6)}`)}
                   </div>
-                  <div className="text-xs text-neutral-400">Rp {s.balance.toLocaleString()}</div>
+                  <div className="text-xs text-neutral-400">{fmtRp(s.balance)}</div>
                 </button>
               )) : <div className="text-sm text-neutral-500">Tidak ada sub-wallet.</div>}
             </div>
@@ -384,7 +419,7 @@ export default function WithdrawPage() {
             <Clock className="opacity-70" />
             <div>
               <div className="text-sm text-neutral-400">Pending Balance</div>
-              <div className="text-lg font-semibold">Rp {pending.toLocaleString()}</div>
+              <div className="text-lg font-semibold">{fmtRp(pending)}</div>
             </div>
           </div>
         </div>
@@ -430,71 +465,71 @@ export default function WithdrawPage() {
               <option>COMPLETED</option>
               <option>FAILED</option>
             </select>
-<div className="relative md:col-span-2">
-  <DatePicker
-    selectsRange
-    startDate={startDate}
-    endDate={endDate}
-    onChange={(upd: [Date | null, Date | null]) => {
-      setDateRange(upd)
-      if (upd[0] && upd[1]) setPage(1)
-    }}
-    isClearable
-    placeholderText="Select Date Range…"
-    maxDate={new Date()}
-    dateFormat="dd-MM-yyyy"
-    // input
-    className="h-10 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 text-sm text-neutral-100 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-    // calendar panel
-    calendarClassName="!bg-neutral-900 !text-neutral-100 !border !border-neutral-800 !rounded-xl !shadow-2xl !overflow-hidden"
-    weekDayClassName={() => '!text-neutral-400 !font-semibold'}
-    dayClassName={() =>
-      'rounded-md !text-neutral-100 hover:!bg-neutral-800 focus:!bg-neutral-800'
-    }
-    // keep popper above everything, avoid clipping—no custom modifiers
-    withPortal
-    portalId="datepicker-portal"
-    popperPlacement="bottom-start"
-    showPopperArrow={false}
-    // custom header
-    renderCustomHeader={({ date, decreaseMonth, increaseMonth, prevMonthButtonDisabled, nextMonthButtonDisabled }) => (
-      <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-900 px-2.5 py-2">
-        <button
-          type="button"
-          onClick={decreaseMonth}
-          disabled={prevMonthButtonDisabled}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          aria-label="Previous month"
-        >
-          ‹
-        </button>
-        <div className="text-sm font-semibold">
-          {date.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
-        </div>
-        <button
-          type="button"
-          onClick={increaseMonth}
-          disabled={nextMonthButtonDisabled}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          aria-label="Next month"
-        >
-          ›
-        </button>
-      </div>
-    )}
-  />
 
-  {(startDate || endDate) && (
-    <button
-      type="button"
-      onClick={() => setDateRange([null, null])}
-      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800/60"
-    >
-      Clear
-    </button>
-  )}
-</div>
+            <div className="relative md:col-span-2">
+              <DatePicker
+                selectsRange
+                startDate={startDate}
+                endDate={endDate}
+                onChange={(upd: [Date | null, Date | null]) => {
+                  setDateRange(upd)
+                  if (upd[0] && upd[1]) setPage(1)
+                }}
+                isClearable
+                placeholderText="Select Date Range…"
+                maxDate={new Date()}
+                dateFormat="dd-MM-yyyy"
+                // input
+                className="h-10 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 text-sm text-neutral-100 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                // calendar panel
+                calendarClassName="!bg-neutral-900 !text-neutral-100 !border !border-neutral-800 !rounded-xl !shadow-2xl !overflow-hidden"
+                weekDayClassName={() => '!text-neutral-400 !font-semibold'}
+                dayClassName={() =>
+                  'rounded-md !text-neutral-100 hover:!bg-neutral-800 focus:!bg-neutral-800'
+                }
+                // keep popper above everything, avoid clipping—no custom modifiers
+                withPortal
+                portalId="datepicker-portal"
+                popperPlacement="bottom-start"
+                showPopperArrow={false}
+                // custom header
+                renderCustomHeader={({ date, decreaseMonth, increaseMonth, prevMonthButtonDisabled, nextMonthButtonDisabled }) => (
+                  <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-900 px-2.5 py-2">
+                    <button
+                      type="button"
+                      onClick={decreaseMonth}
+                      disabled={prevMonthButtonDisabled}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+                      aria-label="Previous month"
+                    >
+                      ‹
+                    </button>
+                    <div className="text-sm font-semibold">
+                      {date.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={increaseMonth}
+                      disabled={nextMonthButtonDisabled}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+                      aria-label="Next month"
+                    >
+                      ›
+                    </button>
+                  </div>
+                )}
+              />
 
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => setDateRange([null, null])}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800/60"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Table */}
@@ -505,47 +540,53 @@ export default function WithdrawPage() {
               <table className="min-w-[1100px] w-full text-sm">
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b border-neutral-800 bg-neutral-900/80 backdrop-blur">
-                    {['Created At','Completed At','Ref ID','Bank','Account','Account Name','Wallet','Amount','Fee','Net Amount','Status'].map(h => (
+                    {HEADERS.map(h => (
                       <th key={h} className="px-3 py-2 text-left font-medium text-neutral-300">
-                        <span className="inline-flex items-center gap-1">{h}<ArrowUpDown size={14} className="opacity-50" /></span>
+                        <span className="inline-flex items-center gap-1">
+                          {h}<ArrowUpDown size={14} className="opacity-50" />
+                        </span>
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {withdrawals.length ? withdrawals.map(w => (
-                    <tr key={w.id} className="border-b border-neutral-800 last:border-0 hover:bg-neutral-900/60">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {new Date(w.createdAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }) : '-'}
-                      </td>
-                      <td className="px-3 py-2">{w.refId}</td>
-                      <td className="px-3 py-2">{w.bankName}</td>
-                      <td className="px-3 py-2">{w.accountNumber}</td>
-                      <td className="px-3 py-2">{w.accountName}</td>
-                      {/* <td className="px-3 py-2">{w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet}</td> */}
-                      {/* <td className="px-3 py-2">{w.sourceProvider ?? '-'}</td> */}
-                      <td className="px-3 py-2 whitespace-nowrap">Rp {w.amount.toLocaleString()}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">Rp {(w.amount - (w.netAmount ?? 0)).toLocaleString()}</td>
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold">Rp {(w.netAmount ?? 0).toLocaleString()}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium
-                          ${w.status === 'COMPLETED'
-                            ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
-                            : w.status === 'PENDING'
-                            ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
-                            : w.status === 'FAILED'
-                            ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                            : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'}`}>
-                          {w.status}
-                        </span>
-                      </td>
-                    </tr>
-                  )) : (
+                  {withdrawals.length ? withdrawals.map((w) => {
+                    const amount = w.amount ?? 0
+                    const net = w.netAmount ?? 0
+                    const fee = amount - net
+                    return (
+                      <tr key={w.id} className="border-b border-neutral-800 last:border-0 hover:bg-neutral-900/60">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {new Date(w.createdAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' })}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID',{ dateStyle:'short', timeStyle:'short' }) : '-'}
+                        </td>
+                        <td className="px-3 py-2">{w.refId}</td>
+                        <td className="px-3 py-2">{w.bankName}</td>
+                        <td className="px-3 py-2">{w.accountNumber}</td>
+                        <td className="px-3 py-2">{w.accountName}</td>
+                        <td className="px-3 py-2">{w.wallet ?? '-'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmtRp(amount)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmtRp(fee)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{fmtRp(net)}</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium
+                            ${w.status === 'COMPLETED'
+                              ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
+                              : w.status === 'PENDING'
+                              ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
+                              : w.status === 'FAILED'
+                              ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
+                              : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'}`}>
+                            {w.status}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  }) : (
                     <tr>
-                      <td colSpan={12} className="px-3 py-10 text-center text-neutral-400">No data</td>
+                      <td colSpan={HEADERS.length} className="px-3 py-10 text-center text-neutral-400">No data</td>
                     </tr>
                   )}
                 </tbody>
