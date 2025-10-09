@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs'
 import { AuthRequest } from '../../middleware/auth'
 import { parseDateSafely } from '../../util/time'
 import { prisma } from '../../core/prisma'
+import logger from '../../logger'
 
 /* ─── util ─── */
 function resolveMerchantId(req: AuthRequest): string | undefined {
@@ -23,23 +24,50 @@ async function fetchOrders(opts: {
   dateTo?: Date
 }) {
   const where: any = {}
-  if (opts.merchantId) where.merchantId = opts.merchantId
+
+  if (opts.merchantId) {
+    where.merchantId = opts.merchantId
+  }
+  
   if (opts.dateFrom || opts.dateTo) {
     where.createdAt = {}
     if (opts.dateFrom) where.createdAt.gte = opts.dateFrom
-    if (opts.dateTo)   where.createdAt.lte = opts.dateTo
+    if (opts.dateTo) where.createdAt.lte = opts.dateTo
   }
-  return prisma.order.findMany({
+  
+  const startTime = Date.now()
+  
+  const orders = await prisma.order.findMany({
     where,
     orderBy: { createdAt: 'desc' },
     select: {
-      id: true, merchantId: true, userId: true, qrPayload: true,
-      amount: true, status: true, pendingAmount: true, settlementAmount: true,
-      feeLauncx: true, createdAt: true,     paymentReceivedTime:  true,
-      settlementTime:       true,
-      trxExpirationTime:    true,
+      id: true, 
+      merchantId: true, 
+      userId: true, 
+      qrPayload: true,
+      amount: true, 
+      status: true, 
+      pendingAmount: true, 
+      settlementAmount: true,
+      feeLauncx: true, 
+      createdAt: true, 
+      paymentReceivedTime: true,
+      settlementTime: true,
+      trxExpirationTime: true,
     }
   })
+  
+  const endTime = Date.now()
+  logger.info({
+    message: '[Fetched orders]',
+    opts,
+    startTime: startTime ? new Date(startTime).toISOString() : '',
+    endTime: endTime ? new Date(endTime).toISOString() : '',
+    duration: `${endTime - startTime}ms`,
+    orderCount: orders.length,
+  })
+  
+  return orders
 }
 
 /* ─── 1) Summary stats ─── */
