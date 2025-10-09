@@ -67,11 +67,11 @@ export async function processCallbackJobs() {
           3
       )
 
-      // Mark as delivered
+      // Mark as delivered - use the already incremented attempts value
       try {
         await prisma.callbackJob.update({
           where: { id: job.id },
-          data: { delivered: true, attempts: job.attempts + 1, lastError: null },
+          data: { delivered: true, lastError: null },
         })
         logger.info(`[callbackQueue] delivered job ${job.id}`)
       } catch (updateErr: any) {
@@ -90,8 +90,8 @@ export async function processCallbackJobs() {
       const maxAttemptsReached = attempts >= config.api.callbackQueue.maxAttempts
 
       if (isClientError || maxAttemptsReached) {
+        // Use a transaction to ensure atomicity and handle race conditions
         try {
-          // Use a transaction to ensure atomicity
           await prisma.$transaction(async (tx) => {
             // Check if job still exists before moving to dead letter
             const existingJob = await tx.callbackJob.findUnique({
@@ -125,10 +125,13 @@ export async function processCallbackJobs() {
           )
         } catch (txErr: any) {
           // If the delete fails because record doesn't exist, another worker handled it
-          if (txErr.code === 'P2025' || txErr instanceof Prisma.PrismaClientKnownRequestError) {
+          if (txErr.code === 'P2025') {
+            logger.warn(`[callbackQueue] job ${job.id} already moved to dead-letter by another worker`)
+          } else if (txErr instanceof Prisma.PrismaClientKnownRequestError && txErr.code === 'P2025') {
             logger.warn(`[callbackQueue] job ${job.id} already moved to dead-letter by another worker`)
           } else {
             logger.error(`[callbackQueue] failed to move job ${job.id} to dead-letter:`, txErr)
+            // Don't throw - log and continue to next job
           }
         }
       } else {
@@ -145,7 +148,8 @@ export async function processCallbackJobs() {
           if (updateErr.code === 'P2025') {
             logger.warn(`[callbackQueue] job ${job.id} already handled by another worker`)
           } else {
-            throw updateErr
+            logger.error(`[callbackQueue] failed to update job ${job.id}:`, updateErr)
+            // Don't throw - log and continue to next job
           }
         }
       }
@@ -154,10 +158,20 @@ export async function processCallbackJobs() {
 }
 
 export function startCallbackWorker() {
-  setInterval(processCallbackJobs, config.api.callbackQueue.intervalMs)
+  // Wrap processCallbackJobs to catch any unhandled errors
+  setInterval(() => {
+    processCallbackJobs().catch((err) => {
+      logger.error('[callbackQueue] Unhandled error in processCallbackJobs:', err)
+    })
+  }, config.api.callbackQueue.intervalMs)
   logger.info('Callback worker started')
 }
 
 if (require.main === module) {
+  // Handle unhandled promise rejections globally
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('[callbackQueue] Unhandled Promise Rejection:', reason)
+  })
+
   startCallbackWorker()
 }
