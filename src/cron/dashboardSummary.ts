@@ -22,57 +22,70 @@ export async function buildSummaryMessage(): Promise<string[]> {
 
   const successStatuses = ['PAID', 'DONE', 'SETTLED', 'SUCCESS'] as const
 
-  const tpvAgg = await prisma.order.aggregate({
-    _sum: { amount: true },
-    where: { createdAt: { gte: startOfDay, lte: now }, status: { in: successStatuses as any } }
-  })
+  // OPTIMIZED: Use groupBy to reduce queries from 4 to 1 for order metrics
+  const [orderMetrics, pendingAgg, wdAgg, inAgg, outAgg] = await Promise.all([
+    // Group orders by status and date range in a single query
+    prisma.order.groupBy({
+      by: ['status'],
+      where: {
+        createdAt: { gte: startOfDay, lte: now },
+        status: { in: [...successStatuses, 'PAID', 'SUCCESS', 'DONE', 'SETTLED'] }
+      },
+      _sum: {
+        amount: true,
+        settlementAmount: true,
+        pendingAmount: true
+      }
+    }),
+    // Pending from previous days - separate query needed due to different date range
+    prisma.order.aggregate({
+      _sum: { pendingAmount: true },
+      where: {
+        createdAt: { gte: startOfMonth, lt: startOfDay },
+        status: 'PAID'
+      }
+    }),
+    // Withdrawals
+    prisma.withdrawRequest.aggregate({
+      _sum: { amount: true },
+      where: {
+        createdAt: { gte: startOfDay, lte: now },
+        status: DisbursementStatus.COMPLETED
+      }
+    }),
+    // Total settled orders
+    prisma.order.aggregate({
+      _sum: { settlementAmount: true },
+      where: { settlementTime: { not: null } }
+    }),
+    // Total withdrawals
+    prisma.withdrawRequest.aggregate({
+      _sum: { amount: true },
+      where: { status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] } }
+    })
+  ])
 
-  const settleAgg = await prisma.order.aggregate({
-    _sum: { settlementAmount: true },
-    where: {
-      createdAt: { gte: startOfDay, lte: now },
-      status: { in: ['SUCCESS', 'DONE', 'SETTLED'] }
-    }
-  })
+  // Extract metrics from grouped results
+  const tpvAmount = orderMetrics
+    .filter(g => successStatuses.includes(g.status as any))
+    .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
 
-  const paidAgg = await prisma.order.aggregate({
-    _sum: { amount: true },
-    where: { createdAt: { gte: startOfDay, lte: now }, status: 'PAID' }
-  })
+  const settleAmount = orderMetrics
+    .filter(g => ['SUCCESS', 'DONE', 'SETTLED'].includes(g.status))
+    .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0)
 
-  const pendingAgg = await prisma.order.aggregate({
-    _sum: { pendingAmount: true },
-    where: {
-      createdAt: { gte: startOfMonth, lt: startOfDay },
-      status: 'PAID'
-    }
-  })
-
-  const wdAgg = await prisma.withdrawRequest.aggregate({
-    _sum: { amount: true },
-    where: {
-      createdAt: { gte: startOfDay, lte: now },
-      status: DisbursementStatus.COMPLETED
-    }
-  })
-  const inAgg = await prisma.order.aggregate({
-    _sum: { settlementAmount: true },
-    where: { settlementTime: { not: null } }
-  })
-
-  const outAgg = await prisma.withdrawRequest.aggregate({
-    _sum: { amount: true },
-    where: { status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] } }
-  })
+  const paidAmount = orderMetrics
+    .filter(g => g.status === 'PAID')
+    .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
 
   const totalClientBalance =
     (inAgg._sum.settlementAmount ?? 0) - (outAgg._sum.amount ?? 0)
 
   const msgLines = [
     `[Dashboard Summary] ${formatDateJakarta(now)}`,
-    `Total Payment Volume : ${formatIdr(tpvAgg._sum.amount ?? 0)}`,
-    `Total Paid           : ${formatIdr(paidAgg._sum.amount ?? 0)}`,
-    `Total Settlement     : ${formatIdr(settleAgg._sum.settlementAmount ?? 0)}`,
+    `Total Payment Volume : ${formatIdr(tpvAmount)}`,
+    `Total Paid           : ${formatIdr(paidAmount)}`,
+    `Total Settlement     : ${formatIdr(settleAmount)}`,
     `Pending Settlement (Month to Yesterday) : ${formatIdr(pendingAgg._sum.pendingAmount ?? 0)}`,
     `Successful Withdraw  : ${formatIdr(wdAgg._sum.amount ?? 0)}`,
     `Available Client Withdraw : ${formatIdr(totalClientBalance)}`
@@ -86,72 +99,70 @@ export async function buildSummaryMessage(): Promise<string[]> {
     if (parent.children.length === 0) continue
     const ids = [parent.id, ...parent.children.map(c => c.id)]
 
-    const gTpvAgg = await prisma.order.aggregate({
-      _sum: { amount: true },
-      where: {
-        createdAt: { gte: startOfDay, lte: now },
-        status: { in: successStatuses as any },
-        partnerClientId: { in: ids }
-      }
-    })
+    // OPTIMIZED: Use groupBy for per-group metrics to reduce queries from 4 to 1
+    const [gOrderMetrics, gPendingAgg, gWdAgg, gInAgg, gOutAgg] = await Promise.all([
+      prisma.order.groupBy({
+        by: ['status'],
+        where: {
+          createdAt: { gte: startOfDay, lte: now },
+          status: { in: [...successStatuses, 'PAID', 'SUCCESS', 'DONE', 'SETTLED'] },
+          partnerClientId: { in: ids }
+        },
+        _sum: {
+          amount: true,
+          settlementAmount: true,
+          pendingAmount: true
+        }
+      }),
+      prisma.order.aggregate({
+        _sum: { pendingAmount: true },
+        where: {
+          createdAt: { gte: startOfMonth, lt: startOfDay },
+          status: 'PAID',
+          partnerClientId: { in: ids }
+        }
+      }),
+      prisma.withdrawRequest.aggregate({
+        _sum: { amount: true },
+        where: {
+          createdAt: { gte: startOfDay, lte: now },
+          status: DisbursementStatus.COMPLETED,
+          partnerClientId: { in: ids }
+        }
+      }),
+      prisma.order.aggregate({
+        _sum: { settlementAmount: true },
+        where: { settlementTime: { not: null }, partnerClientId: { in: ids } }
+      }),
+      prisma.withdrawRequest.aggregate({
+        _sum: { amount: true },
+        where: {
+          status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] },
+          partnerClientId: { in: ids }
+        }
+      })
+    ])
 
-    const gSettleAgg = await prisma.order.aggregate({
-      _sum: { settlementAmount: true },
-      where: {
-        createdAt: { gte: startOfDay, lte: now },
-        status: { in: ['SUCCESS', 'DONE', 'SETTLED'] },
-        partnerClientId: { in: ids }
-      }
-    })
+    const gTpvAmount = gOrderMetrics
+      .filter(g => successStatuses.includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
 
-    const gPaidAgg = await prisma.order.aggregate({
-      _sum: { amount: true },
-      where: {
-        createdAt: { gte: startOfDay, lte: now },
-        status: 'PAID',
-        partnerClientId: { in: ids }
-      }
-    })
+    const gPaidAmount = gOrderMetrics
+      .filter(g => g.status === 'PAID')
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
 
-    const gPendingAgg = await prisma.order.aggregate({
-      _sum: { pendingAmount: true },
-      where: {
-        createdAt: { gte: startOfMonth, lt: startOfDay },
-        status: 'PAID',
-        partnerClientId: { in: ids }
-      }
-    })
-
-    const gWdAgg = await prisma.withdrawRequest.aggregate({
-      _sum: { amount: true },
-      where: {
-        createdAt: { gte: startOfDay, lte: now },
-        status: DisbursementStatus.COMPLETED,
-        partnerClientId: { in: ids }
-      }
-    })
-
-    const gInAgg = await prisma.order.aggregate({
-      _sum: { settlementAmount: true },
-      where: { settlementTime: { not: null }, partnerClientId: { in: ids } }
-    })
-
-    const gOutAgg = await prisma.withdrawRequest.aggregate({
-      _sum: { amount: true },
-      where: {
-        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] },
-        partnerClientId: { in: ids }
-      }
-    })
+    const gSettleAmount = gOrderMetrics
+      .filter(g => ['SUCCESS', 'DONE', 'SETTLED'].includes(g.status))
+      .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0)
 
     const gTotalClientBalance =
       (gInAgg._sum.settlementAmount ?? 0) - (gOutAgg._sum.amount ?? 0)
 
     const groupLines = [
       `[Dashboard Summary - ${parent.name}] ${formatDateJakarta(now)}`,
-      `Total Payment Volume : ${formatIdr(gTpvAgg._sum.amount ?? 0)}`,
-      `Total Paid           : ${formatIdr(gPaidAgg._sum.amount ?? 0)}`,
-      `Total Settlement     : ${formatIdr(gSettleAgg._sum.settlementAmount ?? 0)}`,
+      `Total Payment Volume : ${formatIdr(gTpvAmount)}`,
+      `Total Paid           : ${formatIdr(gPaidAmount)}`,
+      `Total Settlement     : ${formatIdr(gSettleAmount)}`,
       `Pending Settlement (Month to Yesterday) : ${formatIdr(gPendingAgg._sum.pendingAmount ?? 0)}`,
       `Successful Withdraw  : ${formatIdr(gWdAgg._sum.amount ?? 0)}`,
       `Available Client Withdraw : ${formatIdr(gTotalClientBalance)}`

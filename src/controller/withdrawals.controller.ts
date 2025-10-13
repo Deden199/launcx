@@ -47,6 +47,7 @@ const isPiroVariant = (provider?: string | null): provider is 'piro' | 'genesis'
 
 export const listSubMerchants = async (req: ClientAuthRequest, res: Response) => {
   const clientUserId = req.clientUserId!
+
   // 1) Ambil partnerClientId + defaultProvider dari user
   const userWithDp = await prisma.clientUser.findUnique({
     where: { id: clientUserId },
@@ -68,82 +69,75 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
     ? [qClientId]
     : [partnerClientId, ...(req.childrenIds ?? [])]
 
-  // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
-  const subs = await prisma.sub_merchant.findMany({
-    where: { provider: defaultProvider },
-    select: { id: true, name: true, provider: true }
-  })
+  // Build cache key
+  const cacheKey = `submerchants:${partnerClientId}:${qClientId || 'all'}:${defaultProvider}`
 
-  if (subs.length === 0) {
-    return res.json([])
-  }
+  try {
+    // Use Redis caching with TTL from env
+    const { cacheWrapper } = await import('../core/redis')
+    const result = await cacheWrapper(cacheKey, 'submerchants', async () => {
+      // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
+      const subs = await prisma.sub_merchant.findMany({
+        where: { provider: defaultProvider },
+        select: { id: true, name: true, provider: true }
+      })
 
-  const subIds = subs.map(s => s.id)
+      if (subs.length === 0) {
+        return []
+      }
 
-  // 3) Batch calculate all balances in parallel (2 queries instead of 2N)
-  const [inAggs, outAggs] = await Promise.all([
-    // Get all settlement amounts grouped by subMerchantId
-    prisma.order.groupBy({
-      by: ['subMerchantId'],
-      where: {
-        subMerchantId: { in: subIds },
-        partnerClientId: { in: clientIds },
-        settlementTime: { not: null }
-      },
-      _sum: { settlementAmount: true }
-    }),
-    // Get all withdrawal amounts grouped by subMerchantId
-    prisma.withdrawRequest.groupBy({
-      by: ['subMerchantId'],
-      where: {
-        subMerchantId: { in: subIds },
-        partnerClientId: { in: clientIds },
-        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
-      },
-      _sum: { amount: true }
+      const subIds = subs.map(s => s.id)
+
+      // 3) Batch calculate all balances in parallel (2 queries instead of 2N)
+      const [inAggs, outAggs] = await Promise.all([
+        // Get all settlement amounts grouped by subMerchantId
+        prisma.order.groupBy({
+          by: ['subMerchantId'],
+          where: {
+            subMerchantId: { in: subIds },
+            partnerClientId: { in: clientIds },
+            settlementTime: { not: null }
+          },
+          _sum: { settlementAmount: true }
+        }),
+        // Get all withdrawal amounts grouped by subMerchantId
+        prisma.withdrawRequest.groupBy({
+          by: ['subMerchantId'],
+          where: {
+            subMerchantId: { in: subIds },
+            partnerClientId: { in: clientIds },
+            status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+          },
+          _sum: { amount: true }
+        })
+      ])
+
+      // 4) Create lookup maps
+      const inMap = new Map(
+        inAggs.map(agg => [agg.subMerchantId!, agg._sum.settlementAmount ?? 0])
+      )
+      const outMap = new Map(
+        outAggs.map(agg => [agg.subMerchantId!, agg._sum.amount ?? 0])
+      )
+
+      // 5) Build result
+      return subs.map(s => ({
+        id: s.id,
+        name: s.name,
+        provider: s.provider,
+        balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
+      }))
     })
-  ])
 
-  // 4) Create lookup maps
-  const inMap = new Map(
-    inAggs.map(agg => [agg.subMerchantId!, agg._sum.settlementAmount ?? 0])
-  )
-  const outMap = new Map(
-    outAggs.map(agg => [agg.subMerchantId!, agg._sum.amount ?? 0])
-  )
-
-  // 5) Build result
-  const result = subs.map(s => ({
-    id: s.id,
-    name: s.name,
-    provider: s.provider,
-    balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
-  }))
-
-  return res.json(result)
+    return res.json(result)
+  } catch (err: any) {
+    logger.error('[listSubMerchants]', err)
+    return res.status(500).json({ error: err.message || 'Internal server error' })
+  }
 }
 
 export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
-  // 1) Ambil partnerClientId + daftarnya children
-  const user = await prisma.clientUser.findUnique({
-    where: { id: req.clientUserId! },
-    select: {
-      partnerClientId: true,
-      partnerClient: {
-        select: {
-          children: { select: { id: true } }
-        }
-      }
-    }
-  });
-  if (!user) {
-    return res.status(404).json({ error: 'User tidak ditemukan' });
-  }
-
-  const parentId = user.partnerClientId;
-  const childIds = user.partnerClient?.children.map(c => c.id) ?? [];
-
-  // 2) Baca query.clientId (optional) untuk override single-child
+  // Build cache key from query params
   const {
     clientId: qClientId,
     status,
@@ -153,87 +147,116 @@ export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
     page = '1',
     limit = '20',
   } = req.query;
-  const fromDate = parseDateSafely(date_from);
-  const toDate   = parseDateSafely(date_to);
-  let clientIds: string[];
-  if (typeof qClientId === 'string' && qClientId !== 'all') {
-    // child-only view
-    clientIds = [qClientId];
-  } else {
-    // parent view: include parent + semua children
-    clientIds = [parentId, ...childIds];
-  }
 
-  // 3) Build filter
-  const where: any = {
-    partnerClientId: { in: clientIds }
-  };
-  if (status) where.status = status as string;
-  if (ref)    where.refId = { contains: ref as string, mode: 'insensitive' };
-  if (fromDate || toDate) {
-    where.createdAt = {};
-    if (fromDate) where.createdAt.gte = fromDate;
-    if (toDate)   where.createdAt.lte = toDate;
-  }
+  const cacheKey = `withdrawals:${req.clientUserId}:${qClientId || 'all'}:${status || ''}:${date_from || ''}:${date_to || ''}:${ref || ''}:${page}:${limit}`;
 
-  // 4) Pagination
-  const pageNum  = Math.max(1, parseInt(page as string, 10));
-  const pageSize = Math.min(100, parseInt(limit as string, 10));
+  try {
+    // Use Redis caching with 30 second TTL
+    const { cacheWrapper } = await import('../core/redis');
+    const result = await cacheWrapper(cacheKey, 'withdrawals', async () => {
+      // 1) Ambil partnerClientId + daftarnya children
+      const user = await prisma.clientUser.findUnique({
+        where: { id: req.clientUserId! },
+        select: {
+          partnerClientId: true,
+          partnerClient: {
+            select: {
+              children: { select: { id: true } }
+            }
+          }
+        }
+      });
+      if (!user) {
+        throw new Error('User tidak ditemukan');
+      }
 
-  // 5) Query
-  const [rows, total] = await Promise.all([
-    prisma.withdrawRequest.findMany({
-      where,
-      skip:  (pageNum - 1) * pageSize,
-      take:  pageSize,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        refId:         true,
-        bankName:      true,
-       accountName:     true,   // ← tambahkan ini
+      const parentId = user.partnerClientId;
+      const childIds = user.partnerClient?.children.map(c => c.id) ?? [];
 
-        accountNumber: true,
-        amount:        true,
-        netAmount:     true,
-        pgFee:         true,
-        withdrawFeePercent: true,
-        withdrawFeeFlat:    true,
-        status:        true,
-        createdAt:     true,
-        completedAt:   true,
-        sourceProvider: true,
-        subMerchant: { select: { name: true, provider: true } },
+      const fromDate = parseDateSafely(date_from);
+      const toDate   = parseDateSafely(date_to);
+      let clientIds: string[];
+      if (typeof qClientId === 'string' && qClientId !== 'all') {
+        clientIds = [qClientId];
+      } else {
+        clientIds = [parentId, ...childIds];
+      }
 
-      },
-    }),
-    prisma.withdrawRequest.count({ where }),
-  ]);
+      // 3) Build filter
+      const where: any = {
+        partnerClientId: { in: clientIds }
+      };
+      if (status) where.status = status as string;
+      if (ref)    where.refId = { contains: ref as string, mode: 'insensitive' };
+      if (fromDate || toDate) {
+        where.createdAt = {};
+        if (fromDate) where.createdAt.gte = fromDate;
+        if (toDate)   where.createdAt.lte = toDate;
+      }
 
-  // 6) Format dan kirim
-  const data = rows.map(w => ({
-    refId:         w.refId,
-    bankName:      w.bankName,
-   accountName:   w.accountName,  // ← dan ini
+      // 4) Pagination
+      const pageNum  = Math.max(1, parseInt(page as string, 10));
+      const pageSize = Math.min(100, parseInt(limit as string, 10));
 
-    accountNumber: w.accountNumber,
-    amount:        w.amount,
+      // 5) Query - OPTIMIZED: Only select fields we need
+      const [rows, total] = await Promise.all([
+        prisma.withdrawRequest.findMany({
+          where,
+          skip:  (pageNum - 1) * pageSize,
+          take:  pageSize,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            refId:         true,
+            bankName:      true,
+            accountName:   true,
+            accountNumber: true,
+            amount:        true,
+            netAmount:     true,
+            pgFee:         true,
+            withdrawFeePercent: true,
+            withdrawFeeFlat:    true,
+            status:        true,
+            createdAt:     true,
+            completedAt:   true,
+            sourceProvider: true,
+            subMerchant: { select: { name: true, provider: true } },
+          },
+        }),
+        prisma.withdrawRequest.count({ where }),
+      ]);
+
+      // 6) Format
+      const data = rows.map(w => ({
+        refId:         w.refId,
+        bankName:      w.bankName,
+        accountName:   w.accountName,
+        accountNumber: w.accountNumber,
+        amount:        w.amount,
         netAmount:     w.netAmount,
-            pgFee:         w.pgFee ?? null,
+        pgFee:         w.pgFee ?? null,
+        withdrawFeePercent: w.withdrawFeePercent,
+        withdrawFeeFlat:    w.withdrawFeeFlat,
+        status:        w.status,
+        createdAt:     w.createdAt.toISOString(),
+        completedAt:   w.completedAt?.toISOString() ?? null,
+        wallet:
+          w.sourceProvider === 'manual'
+            ? 'Manual Entry'
+            : w.subMerchant?.name ?? w.subMerchant?.provider ?? null,
+        sourceProvider: w.sourceProvider,
+      }));
 
-    withdrawFeePercent: w.withdrawFeePercent,
-    withdrawFeeFlat:    w.withdrawFeeFlat,
-    status:        w.status,
-    createdAt:     w.createdAt.toISOString(),
-    completedAt:   w.completedAt?.toISOString() ?? null,
-    wallet:
-      w.sourceProvider === 'manual'
-        ? 'Manual Entry'
-        : w.subMerchant?.name ?? w.subMerchant?.provider ?? null,
-    sourceProvider: w.sourceProvider,
+      return { data, total };
+    });
 
-  }));
-
-  return res.json({ data, total });
+    return res.json(result);
+  } catch (err: any) {
+    if (err.message === 'User tidak ditemukan') {
+      return res.status(404).json({ error: err.message });
+    }
+    logger.error('[listWithdrawals]', err);
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
 }
 
 export async function listWithdrawalsS2S(req: ApiKeyRequest, res: Response) {
@@ -640,6 +663,14 @@ export const withdrawalCallback = async (req: Request, res: Response) => {
           })
         )
       }
+
+      // Invalidate caches after status change
+      const { cacheDelPattern } = await import('../core/redis')
+      await Promise.all([
+        cacheDelPattern(`withdrawals:*`),
+        cacheDelPattern(`submerchants:*`),
+        cacheDelPattern(`dashboard:*`)
+      ]).catch(err => logger.error('[withdrawalCallback] Cache invalidation failed:', err))
     }
 
     return res.status(200).json({ message: 'OK' })
@@ -1622,6 +1653,14 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
           code: resp.responseCode,
         })
       }
+
+      // Invalidate all related caches after successful withdrawal
+      const { cacheDelPattern } = await import('../core/redis')
+      await Promise.all([
+        cacheDelPattern(`withdrawals:*`),
+        cacheDelPattern(`submerchants:*`),
+        cacheDelPattern(`dashboard:${clientUserId}:*`)
+      ]).catch(err => logger.error('[requestWithdraw] Cache invalidation failed:', err))
 
       return res.status(201).json({ id: wr.id, refId: wr.refId, status: newStatus })
     } catch (err: any) {

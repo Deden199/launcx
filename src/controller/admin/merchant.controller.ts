@@ -410,26 +410,17 @@ export async function getDashboardTransactions(req: Request, res: Response) {
       ]
     }
 
-    const [pendingAgg, settleAgg, paidAgg, partnerClients] = await Promise.all([
-      prisma.order.aggregate({
-        _sum: { pendingAmount: true },
-        where: { ...whereOrders, status: ORDER_STATUS.PAID }
-      }),
-      prisma.order.aggregate({
-        _sum: { settlementAmount: true },
+    // Optimized: Convert 3 separate aggregates to 1 groupBy query
+    const [metricsGrouped, partnerClients] = await Promise.all([
+      prisma.order.groupBy({
+        by: ['status'],
         where: {
           ...whereOrders,
           status: {
-            in: [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED],
-          },
+            in: [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED, ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
+          }
         },
-      }),
-      prisma.order.aggregate({
-        _sum: { amount: true },
-        where: {
-          ...whereOrders,
-          status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED] },
-        },
+        _sum: { pendingAmount: true, settlementAmount: true, amount: true }
       }),
       prisma.partnerClient.findMany({
         where: pcWhere,
@@ -437,9 +428,19 @@ export async function getDashboardTransactions(req: Request, res: Response) {
       })
     ])
 
-    const totalPending = pendingAgg._sum.pendingAmount ?? 0
-    const ordersActiveBalance = settleAgg._sum.settlementAmount ?? 0
-    const totalPaid = paidAgg._sum.amount ?? 0
+    // Extract metrics from grouped results
+    const totalPending = metricsGrouped
+      .filter(g => g.status === ORDER_STATUS.PAID)
+      .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0)
+
+    const ordersActiveBalance = metricsGrouped
+      .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0)
+
+    const totalPaid = metricsGrouped
+      .filter(g => [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
+
     const totalMerchantBalance = partnerClients.reduce((sum, pc) => sum + pc.balance, 0)
 
     // (6) ambil detail orders, termasuk ketiga timestamp

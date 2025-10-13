@@ -13,7 +13,7 @@ import pLimit from 'p-limit' // optional kalau mau throttle paralel, tapi tidak 
 import { retry } from '../utils/retry';
 import { CALLBACK_ALLOWED_STATUSES, isCallbackStatusAllowed } from '../utils/callbackStatus';
 import { ORDER_STATUS } from '../types/orderStatus';
-import { cacheGet, cacheSet, cacheDelPattern } from '../core/redis';
+import { cacheGet, cacheSet, cacheDelPattern, getTTL } from '../core/redis';
 
 const DASHBOARD_STATUSES = [
   ORDER_STATUS.SUCCESS,
@@ -221,46 +221,35 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       ]
     }
 
-    // (5) Execute all queries in parallel
+    // (5) Execute all queries in parallel - OPTIMIZED with groupBy
+    // Build unique status list for metrics (avoid duplicates)
+    const metricsStatuses = Array.from(new Set([
+      ...statuses,
+      ORDER_STATUS.PAID,
+      ORDER_STATUS.LN_SETTLED,
+      ORDER_STATUS.SUCCESS,
+      ORDER_STATUS.DONE,
+      ORDER_STATUS.SETTLED
+    ]));
+
     const [
-      pendingAgg,
-      paidAgg,
-      settleAgg,
-      totalAgg,
+      metricsGrouped,
       orders,
       totalRows
     ] = await Promise.all([
-      // Pending amount
-      prisma.order.aggregate({
-        _sum: { pendingAmount: true },
+      // Use groupBy to calculate all metrics in a single query
+      prisma.order.groupBy({
+        by: ['status'],
         where: {
           partnerClientId: { in: clientIds },
-          status: ORDER_STATUS.PAID,
+          status: { in: metricsStatuses },
           ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        _sum: {
+          amount: true,
+          settlementAmount: true,
+          pendingAmount: true
         }
-      }),
-      // Paid total
-      prisma.order.aggregate({
-        _sum: { amount: true },
-        where: {
-          partnerClientId: { in: clientIds },
-          status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED] },
-          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-        }
-      }),
-      // Settlement total
-      prisma.order.aggregate({
-        _sum: { settlementAmount: true },
-        where: {
-          partnerClientId: { in: clientIds },
-          status: { in: [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED] },
-          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-        }
-      }),
-      // Total amount for filtered status
-      prisma.order.aggregate({
-        _sum: { amount: true },
-        where: whereOrders
       }),
       // Transactions
       prisma.order.findMany({
@@ -281,10 +270,23 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       prisma.order.count({ where: whereOrders })
     ]);
 
-    const totalPending = pendingAgg._sum.pendingAmount ?? 0;
-    const totalPaid = paidAgg._sum.amount ?? 0;
-    const totalSettlement = settleAgg._sum.settlementAmount ?? 0;
-    const totalAmount = totalAgg._sum.amount ?? 0;
+    // Extract metrics from grouped results
+    const totalPending = metricsGrouped
+      .filter(g => g.status === ORDER_STATUS.PAID)
+      .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
+
+    const totalPaid = metricsGrouped
+      .filter(g => [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
+
+    const totalSettlement = metricsGrouped
+      .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0);
+
+    const totalAmount = metricsGrouped
+      .filter(g => statuses.includes(g.status as any))
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
+
     const totalCount = totalRows;
 
     // (6) Calculate balance
@@ -329,8 +331,9 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       children: pc.children
     };
 
-    // (8) Cache the result for 30 seconds
-    await cacheSet(cacheKey, result, 30);
+    // (8) Cache the result using TTL from environment (default 180 seconds)
+    const ttl = getTTL('dashboard', 180);
+    await cacheSet(cacheKey, result, ttl);
 
     return res.json(result);
   } catch (err: any) {

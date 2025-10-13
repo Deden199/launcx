@@ -44,6 +44,39 @@ export async function cacheSet(key: string, value: any, ttlSeconds: number = 60)
   }
 }
 
+/**
+ * Get TTL from environment or use default
+ */
+export function getTTL(key: 'dashboard' | 'submerchants' | 'withdrawals', defaultTTL: number = 60): number {
+  const envKey = `CACHE_${key.toUpperCase()}_TTL`
+  const envValue = process.env[envKey]
+  return envValue ? parseInt(envValue, 10) : defaultTTL
+}
+
+/**
+ * Cache wrapper with automatic TTL from env
+ */
+export async function cacheWrapper<T>(
+  key: string,
+  ttlType: 'dashboard' | 'submerchants' | 'withdrawals',
+  fetchFn: () => Promise<T>
+): Promise<T> {
+  // Try to get from cache
+  const cached = await cacheGet<T>(key)
+  if (cached !== null) {
+    return cached
+  }
+
+  // Fetch fresh data
+  const data = await fetchFn()
+
+  // Store in cache with TTL from env
+  const ttl = getTTL(ttlType)
+  await cacheSet(key, data, ttl)
+
+  return data
+}
+
 export async function cacheDel(key: string): Promise<void> {
   try {
     await redis.del(key)
