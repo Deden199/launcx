@@ -34,4 +34,4 @@ export const disconnectPrisma = async () => {
   }
 };
 
-export default prisma;
+export { prisma, Prisma } ;
