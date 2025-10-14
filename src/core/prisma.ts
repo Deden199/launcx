@@ -34,4 +34,8 @@ export const disconnectPrisma = async () => {
   }
 };
 
-export { prisma, Prisma } ;
+// Export Prisma namespace for raw queries
+export { Prisma };
+
+// Re-export the prisma instance for named imports
+export { prisma };
