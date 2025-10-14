@@ -20,11 +20,9 @@ const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
 };
 
-// Create or reuse the singleton instance
 const prisma = globalForPrisma.prisma ?? instantiatePrisma();
 globalForPrisma.prisma = prisma;
 
-// Graceful disconnect function (no process.exit)
 export const disconnectPrisma = async () => {
   try {
     await prisma.$disconnect();
@@ -34,8 +32,6 @@ export const disconnectPrisma = async () => {
   }
 };
 
-// Export Prisma namespace for raw queries
 export { Prisma };
 
-// Re-export the prisma instance for named imports
 export { prisma };
