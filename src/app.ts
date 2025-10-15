@@ -64,6 +64,7 @@ import requestLogger from './middleware/log';
 
 // ⬇️ Tambahan anti-crash IFP
 import { ensureIfpReady } from './util/ifpSign';
+import { disconnectPrisma } from './core/prisma'; // Import the disconnect function
 
 const app = express();
 
@@ -164,7 +165,23 @@ app.use(rateLimit({
   message: 'Too many requests, try again later.',
   skip: (req) => rateLimitExemptPaths.has(req.path),
 }));
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-API-Key',
+    'X-Timestamp',
+    'X-Signature',
+    'Accept',
+    'User-Agent',
+    'Referer',
+    'Origin'
+  ],
+  exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Per-Page'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
+}));
 app.use(requestLogger);
 
 // Ops endpoint: pantau status IFP (berguna lihat di prod)
@@ -226,6 +243,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
+app.listen(config.api.port, () => {});
+scheduleSettlementChecker().catch(err => logger.error(err));
+// scheduleDashboardSummary();
+// scheduleLoanSettlementCron();
 // 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen
 (async () => {
   try {
@@ -239,9 +260,24 @@ app.use(errorHandler);
   // try { scheduleDashboardSummary(); logger.info('[DashboardSummary] scheduled'); } catch (e) { logger.error('[DashboardSummary] init failed', e); }
   // try { scheduleLoanSettlementCron(); logger.info('[LoanSettlementCron] scheduled'); } catch (e) { logger.error('[LoanSettlementCron] init failed', e); }
 
-  app.listen(config.api.port, () => {
+  const server = app.listen(config.api.port, () => {
     logger.info(`[HTTP] listening on ${config.api.port}`);
   });
+  
+  const gracefulShutdown = async (signal: string) => {
+    logger.info(`${signal} received, shutting down gracefully...`);
+    
+    await disconnectPrisma();
+    
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  };
+  
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 })();
+
 
 export default app;

@@ -355,54 +355,55 @@ export const getClientDashboardAdmin = async (req: Request, res: Response) => {
       ids = [pc.id]
     }
 
-    const pendingAgg = await prisma.order.aggregate({
-      _sum: { pendingAmount: true },
-      where: {
-        partnerClientId: { in: ids },
-        status: 'PAID',
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      }
-    })
-    const totalPending = pendingAgg._sum.pendingAmount ?? 0
+    // Optimized: Run metrics query and orders query in parallel
+    const [metricsGrouped, orders] = await Promise.all([
+      prisma.order.groupBy({
+        by: ['status'],
+        where: {
+          partnerClientId: { in: ids },
+          status: { in: [...DASHBOARD_STATUSES, ...statuses, 'PAID'] },
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        _sum: { pendingAmount: true, amount: true }
+      }),
+      prisma.order.findMany({
+        where: {
+          partnerClientId: { in: ids },
+          status: { in: DASHBOARD_STATUSES },
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          qrPayload: true,
+          rrn: true,
+          playerId: true,
+          amount: true,
+          feeLauncx: true,
+          settlementAmount: true,
+          pendingAmount: true,
+          status: true,
+          settlementStatus: true,
+          createdAt: true,
+          paymentReceivedTime: true,
+          settlementTime: true,
+          trxExpirationTime: true,
+        }
+      })
+    ])
+
+    // Extract metrics from grouped results
+    const totalPending = metricsGrouped
+      .filter(g => g.status === 'PAID')
+      .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0)
+
+    const totalTransaksi = metricsGrouped
+      .filter(g => statuses.includes(g.status))
+      .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0)
 
     const parentBal = ids.includes(pc.id) ? pc.balance ?? 0 : 0
     const childrenBal = pc.children.filter(c => ids.includes(c.id)).reduce((sum, c) => sum + (c.balance ?? 0), 0)
     const totalActive = parentBal + childrenBal
-
-    const orders = await prisma.order.findMany({
-      where: {
-        partnerClientId: { in: ids },
-        status: { in: DASHBOARD_STATUSES },
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        qrPayload: true,
-        rrn: true,
-        playerId: true,
-        amount: true,
-        feeLauncx: true,
-        settlementAmount: true,
-        pendingAmount: true,
-        status: true,
-        settlementStatus: true,
-        createdAt: true,
-        paymentReceivedTime: true,
-        settlementTime: true,
-        trxExpirationTime: true,
-      }
-    })
-
-    const totalAgg = await prisma.order.aggregate({
-      _sum: { amount: true },
-      where: {
-        partnerClientId: { in: ids },
-        status: { in: statuses },
-        ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-      }
-    })
-    const totalTransaksi = totalAgg._sum.amount ?? 0
 
     const transactions = orders.map(o => {
       const netSettle = o.status === 'PAID' ? (o.pendingAmount ?? 0) : (o.settlementAmount ?? 0)
@@ -685,36 +686,40 @@ export const getClientSubWallets = async (req: Request, res: Response) => {
     select: { id: true, name: true, provider: true },
   })
 
-  const result = await Promise.all(
-    subs.map(async (s) => {
-      const inAgg = await prisma.order.aggregate({
-        _sum: { settlementAmount: true },
-        where: {
-          subMerchantId: s.id,
-          partnerClientId: clientId,
-          settlementTime: { not: null },
-        },
-      })
-      const totalIn = inAgg._sum.settlementAmount ?? 0
+  // Optimized: Convert N*2 aggregate queries to 2 groupBy queries
+  const subIds = subs.map(s => s.id)
 
-      const outAgg = await prisma.withdrawRequest.aggregate({
-        _sum: { amount: true },
-        where: {
-          subMerchantId: s.id,
-          partnerClientId: clientId,
-          status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] },
-        },
-      })
-      const totalOut = outAgg._sum.amount ?? 0
-
-      return {
-        id: s.id,
-        name: s.name,
-        provider: s.provider,
-        balance: totalIn - totalOut,
-      }
+  const [inAggs, outAggs] = await Promise.all([
+    prisma.order.groupBy({
+      by: ['subMerchantId'],
+      where: {
+        subMerchantId: { in: subIds },
+        partnerClientId: clientId,
+        settlementTime: { not: null }
+      },
+      _sum: { settlementAmount: true }
+    }),
+    prisma.withdrawRequest.groupBy({
+      by: ['subMerchantId'],
+      where: {
+        subMerchantId: { in: subIds },
+        partnerClientId: clientId,
+        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+      },
+      _sum: { amount: true }
     })
-  )
+  ])
+
+  // Create maps for O(1) lookup
+  const inMap = new Map(inAggs.map(a => [a.subMerchantId, a._sum.settlementAmount ?? 0]))
+  const outMap = new Map(outAggs.map(a => [a.subMerchantId, a._sum.amount ?? 0]))
+
+  const result = subs.map(s => ({
+    id: s.id,
+    name: s.name,
+    provider: s.provider,
+    balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
+  }))
 
   res.json(result)
 }
@@ -723,24 +728,26 @@ export const getClientSubWallets = async (req: Request, res: Response) => {
 export const reconcileClientBalance = async (req: AuthRequest, res: Response) => {
   const { clientId } = req.params as { clientId: string }
 
-  const settlementAgg = await prisma.order.aggregate({
-    _sum: { settlementAmount: true },
-    where: {
-      partnerClientId: clientId,
-      settlementTime: { not: null },
-    },
-  })
+  // Optimized: Run both aggregates in parallel
+  const [settlementAgg, withdrawAgg] = await Promise.all([
+    prisma.order.aggregate({
+      _sum: { settlementAmount: true },
+      where: {
+        partnerClientId: clientId,
+        settlementTime: { not: null },
+      },
+    }),
+    prisma.withdrawRequest.aggregate({
+      _sum: { amount: true },
+      where: {
+        partnerClientId: clientId,
+        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] },
+      },
+    })
+  ])
+
   const totalSettlement = settlementAgg._sum.settlementAmount ?? 0
-
-  const withdrawAgg = await prisma.withdrawRequest.aggregate({
-    _sum: { amount: true },
-    where: {
-      partnerClientId: clientId,
-      status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] },
-    },
-  })
   const totalWithdraw = withdrawAgg._sum.amount ?? 0
-
   const newBalance = totalSettlement - totalWithdraw
 
   await prisma.partnerClient.update({
