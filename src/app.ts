@@ -64,6 +64,7 @@ import requestLogger from './middleware/log';
 
 // ⬇️ Tambahan anti-crash IFP
 import { ensureIfpReady } from './util/ifpSign';
+import { disconnectPrisma } from './core/prisma'; // Import the disconnect function
 
 const app = express();
 
@@ -259,9 +260,23 @@ scheduleSettlementChecker().catch(err => logger.error(err));
   // try { scheduleDashboardSummary(); logger.info('[DashboardSummary] scheduled'); } catch (e) { logger.error('[DashboardSummary] init failed', e); }
   // try { scheduleLoanSettlementCron(); logger.info('[LoanSettlementCron] scheduled'); } catch (e) { logger.error('[LoanSettlementCron] init failed', e); }
 
-  app.listen(config.api.port, () => {
+  const server = app.listen(config.api.port, () => {
     logger.info(`[HTTP] listening on ${config.api.port}`);
   });
+  
+  const gracefulShutdown = async (signal: string) => {
+    logger.info(`${signal} received, shutting down gracefully...`);
+    
+    await disconnectPrisma();
+    
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  };
+  
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 })();
 
 
