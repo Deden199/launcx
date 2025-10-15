@@ -7,7 +7,6 @@ import {
   runManualSettlement,
   resetSettlementState,
   restartSettlementChecker,
-  MANUAL_SETTLEMENT_BATCH_SIZE,
 } from '../../cron/settlement'
 import { AuthRequest } from '../../middleware/auth'
 import { logAdminAction } from '../../util/adminLog'
@@ -23,6 +22,7 @@ import type { ManualSettlementFilters, ManualSettlementPreview, ManualSettlement
 const JAKARTA_TZ = 'Asia/Jakarta'
 const PREVIEW_FETCH_SIZE = 500
 const PREVIEW_SAMPLE_LIMIT = 20
+const DEFAULT_SETTLEMENT_BATCH_SIZE = 1500
 
 const parseStringArray = (input: unknown): string[] => {
   if (Array.isArray(input)) {
@@ -255,8 +255,7 @@ const buildSettlementPreview = async (
 ): Promise<ManualSettlementPreview> => {
   const baseWhere = buildOrderWhere(filters)
   const sample: ManualSettlementPreviewOrder[] = []
-  const batchSize = MANUAL_SETTLEMENT_BATCH_SIZE
-
+  const batchSize = DEFAULT_SETTLEMENT_BATCH_SIZE
   let cursor: { createdAt: Date; id: string } | null = null
   let totalOrders = 0
   let totalNetAmount = 0

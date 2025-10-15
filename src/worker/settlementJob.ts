@@ -3,7 +3,6 @@ import {
   runManualSettlement,
   resetSettlementState,
   restartSettlementChecker,
-  type ManualSettlementRunOptions,
 } from '../cron/settlement'
 import type { ManualSettlementFilters, ManualSettlementPreview } from '../types/manualSettlement'
 import { logAdminAction } from '../util/adminLog'
@@ -92,28 +91,21 @@ function runNext() {
   resetSettlementState()
   void logJobOutcome(job, 'running')
 
-  const options: ManualSettlementRunOptions = {
-    filters: job.filters,
-    shouldCancel: () => job.cancelRequested === true,
-    onProgress: progress => {
-      job.settledOrders = progress.settledOrders
-      job.netAmount = progress.netAmount
-      job.batches = progress.batchesProcessed
-      job.updatedAt = new Date()
-    },
-  }
+  let batchesProcessed = 0
 
-  runManualSettlement(options)
+  runManualSettlement(progress => {
+    batchesProcessed += 1
+    job.settledOrders = progress.settledOrders
+    job.netAmount = progress.netAmount
+    job.batches = batchesProcessed
+    job.updatedAt = new Date()
+  })
     .then(async result => {
       job.settledOrders = result.settledOrders
       job.netAmount = result.netAmount
-      job.batches = result.batches
-      job.cancelled = result.cancelled || job.cancelRequested
-      job.status = job.cancelled ? 'cancelled' : 'completed'
+      job.cancelled = false
+      job.status = 'completed'
       job.updatedAt = new Date()
-      if (job.cancelled && !job.error) {
-        job.error = 'Cancelled'
-      }
       await logJobOutcome(job, job.status)
     })
     .catch(async err => {
@@ -179,9 +171,7 @@ export function cancelSettlementJob(jobId: string) {
   }
 
   if (job.status === 'running') {
-    job.cancelRequested = true
-    job.updatedAt = new Date()
-    return true
+    return false
   }
 
   return false

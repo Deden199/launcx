@@ -272,6 +272,7 @@ model Order {
   @@index([userId])
   @@index([pgRefId])
   @@index([partnerClientId, status, createdAt])
+  @@index([merchantId, createdAt])
 }
 
 model LoanEntry {
