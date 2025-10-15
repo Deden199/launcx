@@ -164,7 +164,23 @@ app.use(rateLimit({
   message: 'Too many requests, try again later.',
   skip: (req) => rateLimitExemptPaths.has(req.path),
 }));
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-API-Key',
+    'X-Timestamp',
+    'X-Signature',
+    'Accept',
+    'User-Agent',
+    'Referer',
+    'Origin'
+  ],
+  exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Per-Page'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
+}));
 app.use(requestLogger);
 
 // Ops endpoint: pantau status IFP (berguna lihat di prod)
@@ -226,6 +242,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
+app.listen(config.api.port, () => {});
+scheduleSettlementChecker().catch(err => logger.error(err));
+// scheduleDashboardSummary();
+// scheduleLoanSettlementCron();
 // 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen
 (async () => {
   try {
@@ -243,5 +263,6 @@ app.use(errorHandler);
     logger.info(`[HTTP] listening on ${config.api.port}`);
   });
 })();
+
 
 export default app;
