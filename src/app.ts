@@ -7,8 +7,6 @@ import cors from 'cors';
 // import cron from 'node-cron'; // ❌ tidak dipakai di file ini, biar tidak bikin bingung
 import { errorHandler } from './middleware/errorHandler';
 import { scheduleSettlementChecker, getSettlementCronStatus } from './cron/settlement'; // ⬅️ tambah getSettlementCronStatus
-import { scheduleDashboardSummary } from './cron/dashboardSummary';
-import { scheduleLoanSettlementCron } from './cron/loanSettlement';
 
 import subMerchantRoutes from './route/admin/subMerchant.routes';
 import pgProviderRoutes from './route/admin/pgProvider.routes';
@@ -41,7 +39,7 @@ import bankRoutes from './route/bank.routes';
 import { proxyOyQris } from './controller/qr.controller';
 
 // import disbursementRouter from './route/disbursement.routes';
-import paymentController, {
+import {
   transactionCallback,
   oyTransactionCallback,
   gidiTransactionCallback,
@@ -52,6 +50,7 @@ import merchantDashRoutes from './route/merchant/dashboard.routes';
 import clientWebRoutes from './route/client/web.routes'; // partner-client routes
 import withdrawalRoutes from './route/withdrawals.routes'; // add withdrawal routes
 import withdrawalS2SRoutes from './route/withdrawals.s2s.routes';
+import internalRoutes from './route/internal.routes'; // internal admin routes
 
 import apiKeyAuth from './middleware/apiKeyAuth';
 import { authMiddleware } from './middleware/auth';
@@ -227,6 +226,9 @@ app.use('/api/v1/admin/logs', adminLogRoutes);
 app.use('/api/v1/admin/ip-whitelist', authMiddleware, adminIpWhitelistRoutes);
 app.use('/api/v1/admin/settlement', authMiddleware, adminSettlementRoutes);
 
+/* ========== 3.5 INTERNAL ROUTES (Manual Resend) ========== */
+app.use('/api/v1/internal', authMiddleware, internalRoutes);
+
 /* ========== 4. PARTNER-CLIENT ========== */
 app.use('/api/v1/client', clientApiLogger, clientWebRoutes);
 
@@ -243,8 +245,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
-app.listen(config.api.port, () => {});
-scheduleSettlementChecker().catch(err => logger.error(err));
+// Removed duplicate immediate listen and duplicate cron bootstrap. The single server
+// start and cron bootstrap happen inside the async IIFE below to ensure graceful
+// shutdown wiring and single initialization.
+// scheduleSettlementChecker().catch(err => logger.error(err));
 // scheduleDashboardSummary();
 // scheduleLoanSettlementCron();
 // 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen
