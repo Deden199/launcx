@@ -21,15 +21,28 @@ const DASHBOARD_STATUSES = [
   ORDER_STATUS.SETTLED,
   ORDER_STATUS.PAID,
   ORDER_STATUS.LN_SETTLED,
-  ORDER_STATUS.PENDING,      // <<< REVISI: tambahkan biar order PENDING ikut ter-fetch
-  ORDER_STATUS.EXPIRED,      // <<< REVISI: tambahkan biar order EXPIRED ikut ter-fetch
-  // …tambahkan status lain jika ada…
+  ORDER_STATUS.PENDING,
+  ORDER_STATUS.EXPIRED,
 ];
 
-
+// Tipe baris untuk export (dinormalisasi → Date, number, string) agar aman dan teruji.
+type OrderExportRow = {
+  partnerClientId: string;
+  id: string;
+  rrn: string | null;
+  playerId: string;
+  amount: number;
+  pendingAmount: number | null;
+  settlementAmount: number | null;
+  feeLauncx: number | null;
+  status: string;
+  createdAt: Date;
+  paymentReceivedTime: Date | null;
+  settlementTime: Date | null;
+  trxExpirationTime: Date | null;
+};
 
 export async function getClientCallbackUrl(req: ClientAuthRequest, res: Response) {
-  // Cari clientUser untuk dapatkan partnerClientId
   const user = await prisma.clientUser.findUnique({
     where: { id: req.clientUserId! },
     select: { partnerClientId: true },
@@ -38,7 +51,6 @@ export async function getClientCallbackUrl(req: ClientAuthRequest, res: Response
     return res.status(404).json({ error: 'User tidak ditemukan' })
   }
 
-  // Ambil data callback dari partnerClient
   const partner = await prisma.partnerClient.findUnique({
     where: { id: user.partnerClientId },
     select: { callbackUrl: true, callbackSecret: true },
@@ -56,17 +68,14 @@ export async function getClientCallbackUrl(req: ClientAuthRequest, res: Response
 /**
  * POST /api/v1/client/callback-url
  * Body: { callbackUrl: string }
- * – Update callbackUrl dan hasilkan callbackSecret jika belum ada
  */
 export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Response) {
   const { callbackUrl } = req.body
 
-  // Validasi format HTTPS
   if (typeof callbackUrl !== 'string' || !/^https:\/\/.+/.test(callbackUrl)) {
     return res.status(400).json({ error: 'Callback URL harus HTTPS' })
   }
 
-  // Dapatkan partnerClientId
   const user = await prisma.clientUser.findUnique({
     where: { id: req.clientUserId! },
     select: { partnerClientId: true },
@@ -75,7 +84,6 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
     return res.status(404).json({ error: 'User tidak ditemukan' })
   }
 
-  // Generate callbackSecret jika terkirim pertama
   const existing = await prisma.partnerClient.findUnique({
     where: { id: user.partnerClientId },
     select: { callbackSecret: true },
@@ -85,7 +93,6 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
     secret = crypto.randomBytes(32).toString('hex')
   }
 
-  // Simpan callbackUrl & callbackSecret
   const updated = await prisma.partnerClient.update({
     where: { id: user.partnerClientId },
     data: { callbackUrl, callbackSecret: secret },
@@ -97,18 +104,19 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
     callbackSecret: updated.callbackSecret,
   })
 }
+
 export async function getClientDashboard(req: ClientAuthRequest, res: Response) {
   try {
     // (1) Build cache key
     const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}`;
 
-    // (2) Check cache first (30 second TTL)
+    // (2) Check cache
     const cached = await cacheGet<any>(cacheKey);
     if (cached) {
       return res.json(cached);
     }
 
-    // (3) Fetch user data with partnerClient and children in a single query
+    // (3) Load user + partnerClient(+children)
     const user = await prisma.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
@@ -131,7 +139,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
     const pc = user.partnerClient!;
 
-    // (2) Parse date params - DEFAULT to last 7 days for better performance
+    // (4) Date params (default last 7 days)
     let dateFrom: Date | undefined;
     let dateTo: Date | undefined;
 
@@ -153,7 +161,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     if (dateFrom) createdAtFilter.gte = dateFrom;
     if (dateTo)   createdAtFilter.lte = dateTo;
 
-    // (2b) Parse status filter
+    // (5) Status filter
     const rawStatus = (req.query as any).status;
     const allowed = DASHBOARD_STATUSES as readonly string[];
     let statuses: string[] = [];
@@ -185,16 +193,15 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     if (statuses.length === 0) statuses = [...allowed];
 
-    // (2c) pagination params
+    // (6) Pagination + search
     const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
     const pageSize = Math.min(100, parseInt(String(req.query.limit || '50'), 10));
 
-    // (2d) search keyword
     const searchStr = typeof req.query.search === 'string'
       ? req.query.search.trim()
       : '';
 
-    // (3) build list of IDs to query
+    // (7) Client IDs
     let clientIds: string[];
     if (typeof req.query.clientId === 'string'
         && req.query.clientId !== 'all'
@@ -206,7 +213,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       clientIds = [pc.id];
     }
 
-    // (4) Build base where clause
+    // (8) where clause for list & count
     const whereOrders: any = {
       partnerClientId: { in: clientIds },
       status: { in: statuses },
@@ -221,8 +228,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       ]
     }
 
-    // (5) Execute all queries in parallel - OPTIMIZED with groupBy
-    // Build unique status list for metrics (avoid duplicates)
+    // (9) Metrics statuses (unique)
     const metricsStatuses = Array.from(new Set([
       ...statuses,
       ORDER_STATUS.PAID,
@@ -232,12 +238,12 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       ORDER_STATUS.SETTLED
     ]));
 
+    // (10) Parallel queries (metrics + list + count)
     const [
       metricsGrouped,
       orders,
       totalRows
     ] = await Promise.all([
-      // Use groupBy to calculate all metrics in a single query
       prisma.order.groupBy({
         by: ['status'],
         where: {
@@ -251,7 +257,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           pendingAmount: true
         }
       }),
-      // Transactions
+      // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
       prisma.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
@@ -262,15 +268,14 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           amount: true, feeLauncx: true, settlementAmount: true,
           pendingAmount: true, status: true, settlementStatus: true, createdAt: true,
           paymentReceivedTime: true,
-          settlementTime: true,
+          // settlementTime sengaja tidak di-select agar tidak crash jika ada dokumen bertipe string
           trxExpirationTime: true,
         }
       }),
-      // Count
       prisma.order.count({ where: whereOrders })
     ]);
 
-    // Extract metrics from grouped results
+    // (11) Metrics extraction
     const totalPending = metricsGrouped
       .filter(g => g.status === ORDER_STATUS.PAID)
       .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
@@ -289,14 +294,14 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     const totalCount = totalRows;
 
-    // (6) Calculate balance
+    // (12) Balance
     const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
     const childrenBal = pc.children
       .filter(c => clientIds.includes(c.id))
       .reduce((sum, c) => sum + (c.balance ?? 0), 0);
     const totalActive = parentBal + childrenBal;
 
-    // (7) Map transactions
+    // (13) Map transactions
     const transactions = orders.map(o => {
       const netSettle = o.status === ORDER_STATUS.PAID
         ? (o.pendingAmount ?? 0)
@@ -313,7 +318,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         settlementStatus: o.settlementStatus ?? '',
         status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
         paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
-        settlementTime: o.settlementTime?.toISOString() ?? '',
+        settlementTime: '', // sementara kosong agar aman dari decode error
         trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
       };
     });
@@ -331,7 +336,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       children: pc.children
     };
 
-    // (8) Cache the result using TTL from environment (default 180 seconds)
+    // (14) Cache
     const ttl = getTTL('dashboard', 180);
     await cacheSet(cacheKey, result, ttl);
 
@@ -358,9 +363,6 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
     // 2) tanggal
     const dateFrom = req.query.date_from ? new Date(String(req.query.date_from)) : undefined
     const dateTo   = req.query.date_to ? new Date(String(req.query.date_to)) : undefined
-    const createdAt: any = {}
-    if (dateFrom) createdAt.gte = dateFrom
-    if (dateTo)   createdAt.lte = dateTo
 
     // 3) clientIds override
     const isParent = pc.children.length > 0
@@ -399,7 +401,6 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
       statuses.push(ORDER_STATUS.LN_SETTLED)
     }
     if (statuses.length === 0) statuses = [...allowed]
-    const statusWhere = { in: statuses }
 
     // 5) id->name map
     const idToName: Record<string,string> = {}
@@ -429,43 +430,92 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
       { header: 'Fee',        key: 'fee',      width: 15 },
       { header: 'Status',     key: 'stat',     width: 16 },
       { header: 'Date',       key: 'date',     width: 20 },
-      { header: 'Update At',    key: 'paidAt',    width: 20 },
+      { header: 'Update At',  key: 'paidAt',   width: 20 },
       { header: 'Settled At', key: 'settledAt', width: 20 },
       { header: 'Expires At', key: 'expiresAt', width: 20 },
     ]
 
-    // 8) offset-based chunked fetch & write
+    // 8) Chunked fetch via aggregateRaw + coercion (robust & aman TypeScript)
     const CHUNK_SIZE = 1000
     let skipped = 0
 
     while (true) {
-      const batch = await prisma.order.findMany({
-        where: {
-          partnerClientId: { in: clientIds },
-          status: statusWhere,
-          ...(dateFrom || dateTo ? { createdAt } : {}),
-        },
-        orderBy: { createdAt: 'desc' as const },
-        take: CHUNK_SIZE,
-        skip: skipped,
-        select: {
-          partnerClientId:  true,
-          id:               true,
-          rrn:              true,
-          playerId:         true,
-          amount:           true,
-          pendingAmount:    true,
-          settlementAmount: true,
-          feeLauncx:        true,
-          status:           true,
-          createdAt:        true,
-          paymentReceivedTime: true,
-          settlementTime:      true,
-          trxExpirationTime:   true,
-        }
-      })
+      const raw = await prisma.order.aggregateRaw({
+        pipeline: [
+          { $match: {
+              partnerClientId: { $in: clientIds },
+              status: { $in: statuses },
+              ...(dateFrom || dateTo ? {
+                createdAt: {
+                  ...(dateFrom ? { $gte: dateFrom } : {}),
+                  ...(dateTo   ? { $lte: dateTo }   : {}),
+                }
+              } : {})
+          }},
+          { $sort: { createdAt: -1 } },
+          { $skip: skipped },
+          { $limit: CHUNK_SIZE },
+          // Coerce string→date bila ada data “nakal”
+          { $addFields: {
+              settlementTime: {
+                $cond: [
+                  { $eq: [ { $type: "$settlementTime" }, "string" ] },
+                  { $dateFromString: { dateString: "$settlementTime", onError: null, onNull: null } },
+                  "$settlementTime"
+                ]
+              },
+              paymentReceivedTime: {
+                $cond: [
+                  { $eq: [ { $type: "$paymentReceivedTime" }, "string" ] },
+                  { $dateFromString: { dateString: "$paymentReceivedTime", onError: null, onNull: null } },
+                  "$paymentReceivedTime"
+                ]
+              },
+              trxExpirationTime: {
+                $cond: [
+                  { $eq: [ { $type: "$trxExpirationTime" }, "string" ] },
+                  { $dateFromString: { dateString: "$trxExpirationTime", onError: null, onNull: null } },
+                  "$trxExpirationTime"
+                ]
+              }
+          }},
+          { $project: {
+              _id: 0,
+              partnerClientId: 1,
+              id: { $toString: "$_id" },
+              rrn: 1,
+              playerId: 1,
+              amount: 1,
+              pendingAmount: 1,
+              settlementAmount: 1,
+              feeLauncx: 1,
+              status: 1,
+              createdAt: 1,
+              paymentReceivedTime: 1,
+              settlementTime: 1,
+              trxExpirationTime: 1
+          }}
+        ]
+      });
 
-      if (batch.length === 0) break
+      // Normalisasi aman: JsonObject -> any[] -> OrderExportRow[], tanpa warning TS
+      const batch: OrderExportRow[] = (raw as unknown as any[]).map((d) => ({
+        partnerClientId: String(d.partnerClientId),
+        id: String(d.id),
+        rrn: d.rrn ?? null,
+        playerId: String(d.playerId),
+        amount: Number(d.amount ?? 0),
+        pendingAmount: d.pendingAmount == null ? null : Number(d.pendingAmount),
+        settlementAmount: d.settlementAmount == null ? null : Number(d.settlementAmount),
+        feeLauncx: d.feeLauncx == null ? null : Number(d.feeLauncx),
+        status: String(d.status),
+        createdAt: new Date(d.createdAt),
+        paymentReceivedTime: d.paymentReceivedTime ? new Date(d.paymentReceivedTime) : null,
+        settlementTime: d.settlementTime ? new Date(d.settlementTime) : null,
+        trxExpirationTime: d.trxExpirationTime ? new Date(d.trxExpirationTime) : null,
+      }));
+
+      if (batch.length === 0) break;
 
       for (const o of batch) {
         all.addRow({
@@ -543,7 +593,7 @@ export async function retryTransactionCallback(
     return res.status(400).json({ error: 'Callback belum diset' });
   }
 
-  // 4) Ambil 1 job terbaru matching payload.orderId via aggregateRaw dan cast ke array
+  // 4) Ambil 1 job terbaru matching payload.orderId via aggregateRaw
   const rawJobs = await prisma.callbackJob.aggregateRaw({
     pipeline: [
       { $match: { 'payload.orderId': orderId } },
