@@ -447,8 +447,8 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
               status: { $in: statuses },
               ...(dateFrom || dateTo ? {
                 createdAt: {
-                  ...(dateFrom ? { $gte: dateFrom } : {}),
-                  ...(dateTo   ? { $lte: dateTo }   : {}),
+                  ...(dateFrom ? { $gte: { $date: dateFrom.toISOString() } } : {}),
+                  ...(dateTo   ? { $lte: { $date: dateTo.toISOString() } }   : {}),
                 }
               } : {})
           }},
@@ -499,21 +499,39 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
       });
 
       // Normalisasi aman: JsonObject -> any[] -> OrderExportRow[], tanpa warning TS
-      const batch: OrderExportRow[] = (raw as unknown as any[]).map((d) => ({
-        partnerClientId: String(d.partnerClientId),
-        id: String(d.id),
-        rrn: d.rrn ?? null,
-        playerId: String(d.playerId),
-        amount: Number(d.amount ?? 0),
-        pendingAmount: d.pendingAmount == null ? null : Number(d.pendingAmount),
-        settlementAmount: d.settlementAmount == null ? null : Number(d.settlementAmount),
-        feeLauncx: d.feeLauncx == null ? null : Number(d.feeLauncx),
-        status: String(d.status),
-        createdAt: new Date(d.createdAt),
-        paymentReceivedTime: d.paymentReceivedTime ? new Date(d.paymentReceivedTime) : null,
-        settlementTime: d.settlementTime ? new Date(d.settlementTime) : null,
-        trxExpirationTime: d.trxExpirationTime ? new Date(d.trxExpirationTime) : null,
-      }));
+      const batch: OrderExportRow[] = (raw as unknown as any[]).map((d) => {
+        // Helper function to convert MongoDB date format to JavaScript Date
+        const toDate = (val: any): Date | null => {
+          if (!val) return null;
+          // MongoDB extended JSON format: { $date: "ISO string" } or { $date: { $numberLong: "timestamp" } }
+          if (typeof val === 'object' && val.$date) {
+            if (typeof val.$date === 'string') {
+              return new Date(val.$date);
+            } else if (typeof val.$date === 'object' && val.$date.$numberLong) {
+              return new Date(Number(val.$date.$numberLong));
+            }
+          }
+          // Regular date string or timestamp
+          const date = new Date(val);
+          return isNaN(date.getTime()) ? null : date;
+        };
+
+        return {
+          partnerClientId: String(d.partnerClientId),
+          id: String(d.id),
+          rrn: d.rrn ?? null,
+          playerId: String(d.playerId),
+          amount: Number(d.amount ?? 0),
+          pendingAmount: d.pendingAmount == null ? null : Number(d.pendingAmount),
+          settlementAmount: d.settlementAmount == null ? null : Number(d.settlementAmount),
+          feeLauncx: d.feeLauncx == null ? null : Number(d.feeLauncx),
+          status: String(d.status),
+          createdAt: toDate(d.createdAt) ?? new Date(),
+          paymentReceivedTime: toDate(d.paymentReceivedTime),
+          settlementTime: toDate(d.settlementTime),
+          trxExpirationTime: toDate(d.trxExpirationTime),
+        };
+      });
 
       if (batch.length === 0) break;
 
