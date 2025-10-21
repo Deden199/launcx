@@ -14,7 +14,7 @@ const instantiatePrisma = () => {
   });
 
   prisma.$on('beforeExit', async () => {
-    console.log('Read-only Prisma client is shutting down gracefully...');
+    console.log('Prisma client is shutting down gracefully...');
   });
 
   return prisma;
