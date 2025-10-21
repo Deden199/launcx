@@ -416,7 +416,10 @@ model WithdrawRequest {
 model SubMerchantBalance {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   subMerchantId    String   @unique
-  availableBalance Float    @default(0.0)
+  balance          Float    @default(0.0) // Pre-calculated balance (totalIn - totalOut)
+  totalIn          Float    @default(0.0) // Total settlements received
+  totalOut         Float    @default(0.0) // Total withdrawals (pending + completed)
+  availableBalance Float    @default(0.0) // Legacy field, kept for compatibility
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -482,6 +485,28 @@ model CallbackJobDeadLetter {
 }
 
 model HilogateCallbackWatcher {
+  refId        String   @id @map("_id")
+  attemptCount Int      @default(0)
+  processed    Boolean  @default(false)
+  nextRetryAt  DateTime
+
+  @@index([processed])
+  @@index([nextRetryAt])
+  @@index([processed, nextRetryAt])
+}
+
+model Ing1CallbackWatcher {
+  orderId      String   @id @map("_id")
+  attemptCount Int      @default(0)
+  processed    Boolean  @default(false)
+  nextRetryAt  DateTime
+
+  @@index([processed])
+  @@index([nextRetryAt])
+  @@index([processed, nextRetryAt])
+}
+
+model Ing1WithdrawalWatcher {
   refId        String   @id @map("_id")
   attemptCount Int      @default(0)
   processed    Boolean  @default(false)

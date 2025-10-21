@@ -7,6 +7,7 @@ import cors from 'cors';
 // import cron from 'node-cron'; // ❌ tidak dipakai di file ini, biar tidak bikin bingung
 import { errorHandler } from './middleware/errorHandler';
 import { scheduleSettlementChecker, getSettlementCronStatus } from './cron/settlement'; // ⬅️ tambah getSettlementCronStatus
+import { scheduleDashboardSummary } from './cron/dashboardSummary';
 
 import subMerchantRoutes from './route/admin/subMerchant.routes';
 import pgProviderRoutes from './route/admin/pgProvider.routes';
@@ -263,7 +264,12 @@ app.use(errorHandler);
   // Jika ingin aktifkan yang lain:
   // try { scheduleDashboardSummary(); logger.info('[DashboardSummary] scheduled'); } catch (e) { logger.error('[DashboardSummary] init failed', e); }
   // try { scheduleLoanSettlementCron(); logger.info('[LoanSettlementCron] scheduled'); } catch (e) { logger.error('[LoanSettlementCron] init failed', e); }
-
+  try {
+    scheduleDashboardSummary();
+    logger.info('[DashboardSummary] scheduled');
+  } catch (e) {
+    logger.error('[DashboardSummary] init failed', e);
+  }
   const server = app.listen(config.api.port, () => {
     logger.info(`[HTTP] listening on ${config.api.port}`);
   });
