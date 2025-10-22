@@ -195,7 +195,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     // (6) Pagination + search
     const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
-    const pageSize = Math.min(100, parseInt(String(req.query.limit || '50'), 10));
+    const pageSize = Math.min(50, parseInt(String(req.query.limit || '25'), 10));
 
     const searchStr = typeof req.query.search === 'string'
       ? req.query.search.trim()
@@ -258,11 +258,12 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         }
       }),
       // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
+      // FIX: Always apply pagination even with search to prevent memory overflow
       prisma.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
-        skip: searchStr ? 0 : (pageNum - 1) * pageSize,
-        take: searchStr ? undefined : pageSize,
+        skip: (pageNum - 1) * pageSize,
+        take: pageSize,
         select: {
           id: true, qrPayload: true, rrn: true, playerId: true,
           amount: true, feeLauncx: true, settlementAmount: true,
@@ -579,12 +580,15 @@ export async function retryTransactionCallback(
     return res.status(400).json({ error: 'Missing orderId' });
   }
 
-  // 1) Load Order sebagai source of truth
+  // 1) Load Order + Partner config in single query (eliminates N+1)
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     select: {
       partnerClientId: true,
       status: true,
+      partnerClient: {
+        select: { callbackUrl: true, callbackSecret: true }
+      }
     }
   });
   if (!order) {
@@ -602,12 +606,8 @@ export async function retryTransactionCallback(
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // 3) Load konfigurasi callback partner
-  const partner = await prisma.partnerClient.findUnique({
-    where: { id: order.partnerClientId },
-    select: { callbackUrl: true, callbackSecret: true }
-  });
-  if (!partner?.callbackUrl || !partner.callbackSecret) {
+  // 3) Verify callback configuration (already loaded)
+  if (!order.partnerClient?.callbackUrl || !order.partnerClient.callbackSecret) {
     return res.status(400).json({ error: 'Callback belum diset' });
   }
 
