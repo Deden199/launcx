@@ -2210,3 +2210,87 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     return res.status(500).json({ error: err.message || 'Internal server error' })
   }
 }
+
+export async function getBanks(req: ClientAuthRequest, res: Response) {
+  try {
+    const clientUserId = req.clientUserId!
+
+    const userWithClient = await prisma.clientUser.findUnique({
+      where: { id: clientUserId },
+      select: { partnerClientId: true }
+    })
+
+    if (!userWithClient) {
+      return res.status(404).json({ error: 'User tidak ditemukan' })
+    }
+
+    const merchant = await prisma.merchant.findFirst({
+      where: { name: 'ing1' }
+    })
+
+    if (!merchant) {
+      return res.status(500).json({
+        error: 'INA merchant tidak ditemukan dalam sistem'
+      })
+    }
+
+    const now = new Date()
+    const day = now.getDay()
+    const isWeekend = day === 0 || day === 6
+    const isWeekday = !isWeekend
+
+    const subMerchant = await prisma.sub_merchant.findFirst({
+      where: {
+        merchantId: merchant.id,
+        provider: 'ing1'
+      }
+    })
+
+    if (!subMerchant) {
+      return res.status(500).json({
+        error: 'Sub-merchant INA tidak ditemukan dalam sistem'
+      })
+    }
+
+    const schedule = subMerchant.schedule as any
+    if (isWeekday && !schedule?.weekday) {
+      return res.status(503).json({
+        error: 'Layanan INA tidak aktif hari Senin-Jumat'
+      })
+    }
+    if (isWeekend && !schedule?.weekend) {
+      return res.status(503).json({
+        error: 'Layanan INA tidak aktif hari Sabtu-Minggu'
+      })
+    }
+
+    // INA Billers Engine supported banks for withdrawals
+    // These are the banks supported by the cashout/payment API endpoint
+    const inaBanks = [
+      { code: 'BCA', name: 'Bank Central Asia' },
+      { code: 'BNI', name: 'Bank Negara Indonesia' },
+      { code: 'MANDIRI', name: 'Bank Mandiri' },
+      { code: 'BRI', name: 'Bank Rakyat Indonesia' },
+      { code: 'CIMB', name: 'CIMB Niaga' },
+      { code: 'MAYBANK', name: 'Maybank' },
+      { code: 'PERMATA', name: 'Bank Permata' },
+      { code: 'DANAMON', name: 'Bank Danamon' },
+      { code: 'OKE', name: 'Bank OKE' },
+      { code: 'MEGA', name: 'Bank Mega' },
+      { code: 'BTN', name: 'Bank Tabungan Negara' },
+      { code: 'BSI', name: 'Bank Syariah Indonesia' },
+      { code: 'PANIN', name: 'Bank Panin' },
+      { code: 'OCBC', name: 'OCBC NISP' },
+      { code: 'UOB', name: 'UOB Bank' },
+      { code: 'DBS', name: 'Bank DBS' },
+      { code: 'HSBC', name: 'HSBC Bank' }
+    ]
+
+    return res.json({ banks: inaBanks })
+  } catch (err: any) {
+    logger.error('[getBanks] Unexpected error:', err)
+    return res.status(500).json({
+      error: err.message || 'Gagal mengambil daftar bank'
+    })
+  }
+}
