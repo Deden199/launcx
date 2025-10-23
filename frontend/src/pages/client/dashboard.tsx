@@ -125,12 +125,12 @@ export default function ClientDashboardPage() {
         children: ClientOption[]
       }>('/client/dashboard', { params: buildParams() })
 
-      setBalance(data.balance)
-      setTotalPend(data.totalPending)
-      setTotalSettlement(data.totalSettlement || 0)
-      setTotalPaid(data.totalPaid || 0)
-      setChildren(data.children)
-      setTotalTrans(data.totalCount)
+      setBalance(data.balance ?? 0)
+      setTotalPend(data.totalPending ?? 0)
+      setTotalSettlement(data.totalSettlement ?? 0)
+      setTotalPaid(data.totalPaid ?? 0)
+      setChildren(data.children ?? [])
+      setTotalTrans(data.totalCount ?? 0)
     } catch (err: any) {
       if (err?.response?.status === 401) {
         router.push('/client/login')
@@ -150,8 +150,8 @@ export default function ClientDashboardPage() {
         '/client/dashboard',
         { params: buildParams() }
       )
-      setTxs(data.transactions)
-      setTotalPages(Math.max(1, Math.ceil(data.total / perPage)))
+      setTxs(data.transactions ?? [])
+      setTotalPages(Math.max(1, Math.ceil((data.total ?? 0) / perPage)))
     } catch (err: any) {
       if (err?.response?.status === 401) {
         router.push('/client/login')
