@@ -860,7 +860,17 @@ if (mName === 'gidi') {
       const { data } = await axios.post(qrisUrl, formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      if (data.status_code === '00') return data;
+      if (data.status_code === '00') {
+        // Map GV response to OrderResponse format
+        return {
+          orderId: data.reference_id || custom,
+          checkoutUrl: data.checkout_url || qrisUrl,
+          qrPayload: data.qr_code || data.qr_string || undefined,
+          playerId: request.playerId,
+          totalAmount: amount,
+          expiredTs: data.expired_at || undefined,
+        };
+      }
       throw new Error(data.status_desc || 'GudangVoucher payment failed');
     } catch (err: any) {
       throw new Error(err.message || 'Error processing GudangVoucher payment');

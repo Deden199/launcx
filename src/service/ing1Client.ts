@@ -196,6 +196,11 @@ export interface Ing1CashoutHistoryItem {
   raw: any;
 }
 
+export interface Ing1BankCode {
+  code: string;
+  name: string;
+}
+
 export interface Ing1CashoutHistoryResult {
   rc: number;
   message: string;
@@ -259,6 +264,8 @@ export class Ing1Client {
   constructor(private readonly cfg: Ing1Config) {
     const trimmedBase = cfg.baseUrl.replace(/\/$/, '');
     const version = cfg.apiVersion ? cfg.apiVersion.replace(/^\//, '') : '';
+    // Construct base URL: if version is specified, append it, otherwise use as-is
+    // Example: baseUrl='https://api.ing1.com', apiVersion='v2' → 'https://api.ing1.com/v2'
     const baseURL = version ? `${trimmedBase}/${version}` : trimmedBase;
 
     this.http = axios.create({
@@ -645,6 +652,41 @@ export class Ing1Client {
       pagination,
       raw: data,
     };
+  }
+
+  /** Get list of supported bank codes for withdrawals */
+  async getBankCodes(): Promise<Ing1BankCode[]> {
+    const data = await this.authorizedRequest<any>({
+      method: 'GET',
+      url: 'product',
+    });
+
+    // Billers Engine API returns products array
+    // Bank transfer products have codes like: TRF_BCA, TRF_BNI, TRF_MANDIRI, etc.
+    // We need to extract bank codes from product codes
+    let products = Array.isArray(data?.data) ? data.data : Array.isArray(data?.products) ? data.products : Array.isArray(data) ? data : [];
+
+    // Filter and map bank transfer products to bank codes
+    const banks: Ing1BankCode[] = products
+      .filter((product: any) => {
+        const code = String(product?.code ?? product?.product_code ?? '').toUpperCase();
+        // Include TRF_ (transfer) products which are bank transfers
+        return code.startsWith('TRF_') || code.includes('TRANSFER') || code.includes('BANK');
+      })
+      .map((product: any) => {
+        const code = String(product?.code ?? product?.product_code ?? '');
+        const name = String(product?.name ?? product?.description ?? code);
+
+        // Extract bank code from TRF_BCA format: remove TRF_ prefix
+        const bankCode = code.startsWith('TRF_') ? code.substring(4) : code;
+
+        return {
+          code: bankCode.toUpperCase(),
+          name: name.trim(),
+        };
+      });
+
+    return banks;
   }
 }
 
