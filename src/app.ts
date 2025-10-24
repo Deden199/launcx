@@ -243,7 +243,6 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
-app.listen(config.api.port, () => {});
 scheduleSettlementChecker().catch(err => logger.error(err));
 // scheduleDashboardSummary();
 // scheduleLoanSettlementCron();
