@@ -10,6 +10,7 @@ import { config } from '../config'
 import crypto from 'crypto'
 import logger from '../logger'
 import { sendTelegramMessage } from '../core/telegram.axios'
+import { getInacashSettlementResult } from '../service/inacashSettlement.service'
 
 // ————————— CONFIG —————————
 const BATCH_SIZE = 1500                          // jumlah order PAID/LN_SETTLED diproses per batch
@@ -162,6 +163,18 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
               rrn: s.trx_id,
               st,
               tmt: d.settlement_time ? new Date(d.settlement_time) : undefined
+            }
+          } else if (o.channel === 'ing1' || o.channel === 'inacash') {
+            // Inacash/ING1 settlement check
+            const result = await getInacashSettlementResult(o.id, o.subMerchantId || '', creds)
+            if (!result) return // Not ready for settlement
+
+            settlementResult = {
+              netAmt: result.netAmt,
+              rrn: result.rrn,
+              st: result.st,
+              tmt: result.tmt,
+              fee: result.fee
             }
           }
 
