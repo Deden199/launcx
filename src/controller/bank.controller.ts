@@ -5,6 +5,7 @@ import { prisma } from '../core/prisma';
 import { HilogateClient, HilogateConfig } from '../service/hilogateClient';
 import { Ing1Client, Ing1Config } from '../service/ing1Client';
 import { isJakartaWeekend } from '../util/time'
+import { cacheGet, cacheSet } from '../core/redis';
 
 // List of INA/ING supported banks
 const INA_ING_SUPPORTED_BANKS = [
@@ -27,6 +28,14 @@ export async function getBanks(req: Request, res: Response) {
     }
 
     // Default: Use Hilogate
+    // Check cache first (banks list rarely changes)
+    const cacheKey = 'banks:list:hilogate';
+    const cached = await cacheGet<any>(cacheKey);
+    if (cached) {
+      return res.json({ banks: cached, cached: true });
+    }
+
+    // 1) Cari internal merchant Hilogate
     const merchant = await prisma.merchant.findFirst({
       where: { name: 'hilogate' }
     });
@@ -69,6 +78,11 @@ export async function getBanks(req: Request, res: Response) {
 
     // Return result
     return res.json({ banks });
+    // 5) Cache for 1 hour (banks list rarely changes)
+    await cacheSet(cacheKey, banks, 3600);
+
+    // 6) Kembalikan hasil
+    return res.json({ banks, cached: false });
 
   } catch {
     return res
