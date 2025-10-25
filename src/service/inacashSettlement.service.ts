@@ -73,7 +73,7 @@ export async function syncWithInacash(refId: string, subMerchantId: string) {
       data: {
         status: settlementStatus === 'COMPLETED' ? 'SETTLED' : 'PAID',
         settlementAmount: settlementAmount ?? undefined,
-        settlementAt: settlementStatus === 'COMPLETED' ? settlementTime : undefined,
+        settlementTime: settlementStatus === 'COMPLETED' ? settlementTime : undefined,
         settlementStatus: settlementStatus,
         updatedAt: new Date()
       }
@@ -141,7 +141,7 @@ export async function fetchBankCodes(merchantId: string) {
     const providers = await getActiveProviders(merchantId, 'ing1');
     if (!providers.length) throw new Error('No active Inacash/ING1 credentials');
 
-    const credentials = providers[0].credentials as any;
+    const credentials = providers[0].config as any;
     const cfg: Ing1Config = {
       baseUrl: credentials.baseUrl || 'https://api.ing1.com',
       email: credentials.email,
@@ -173,7 +173,7 @@ export async function inquiryAccount(
     const providers = await getActiveProviders(merchantId, 'ing1');
     if (!providers.length) throw new Error('No active Inacash/ING1 credentials');
 
-    const credentials = providers[0].credentials as any;
+    const credentials = providers[0].config as any;
     const cfg: Ing1Config = {
       baseUrl: credentials.baseUrl || 'https://api.ing1.com',
       email: credentials.email,

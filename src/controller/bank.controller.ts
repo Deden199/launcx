@@ -113,26 +113,26 @@ async function getBanksFromIna(req: Request, res: Response, provider: string) {
       return res.status(500).json({ error: 'No active ING1 credentials today' });
     }
 
-    // INA Billers Engine supported banks for withdrawals
+    // INA Billers Engine supported banks for withdrawals (using 3-digit BI codes)
     // These are the banks supported by the cashout/payment API endpoint
     const banks = [
-      { code: 'BCA', name: 'Bank Central Asia' },
-      { code: 'BNI', name: 'Bank Negara Indonesia' },
-      { code: 'MANDIRI', name: 'Bank Mandiri' },
-      { code: 'BRI', name: 'Bank Rakyat Indonesia' },
-      { code: 'CIMB', name: 'CIMB Niaga' },
-      { code: 'MAYBANK', name: 'Maybank' },
-      { code: 'PERMATA', name: 'Bank Permata' },
-      { code: 'DANAMON', name: 'Bank Danamon' },
-      { code: 'OKE', name: 'Bank OKE' },
-      { code: 'MEGA', name: 'Bank Mega' },
-      { code: 'BTN', name: 'Bank Tabungan Negara' },
-      { code: 'BSI', name: 'Bank Syariah Indonesia' },
-      { code: 'PANIN', name: 'Bank Panin' },
-      { code: 'OCBC', name: 'OCBC NISP' },
-      { code: 'UOB', name: 'UOB Bank' },
-      { code: 'DBS', name: 'Bank DBS' },
-      { code: 'HSBC', name: 'HSBC Bank' }
+      { code: '014', name: 'Bank Central Asia (BCA)' },
+      { code: '002', name: 'Bank Rakyat Indonesia (BRI)' },
+      { code: '009', name: 'Bank Negara Indonesia (BNI)' },
+      { code: '008', name: 'Bank Mandiri' },
+      { code: '022', name: 'CIMB Niaga' },
+      { code: '011', name: 'Maybank Indonesia' },
+      { code: '013', name: 'Bank Permata' },
+      { code: '016', name: 'Bank Danamon' },
+      { code: '053', name: 'Bank OKE Indonesia' },
+      { code: '023', name: 'Bank Mega' },
+      { code: '009', name: 'Bank Tabungan Negara (BTN)' },
+      { code: '451', name: 'Bank Syariah Indonesia (BSI)' },
+      { code: '019', name: 'Bank Panin Indonesia' },
+      { code: '028', name: 'OCBC NISP' },
+      { code: '506', name: 'UOB Indonesia' },
+      { code: '796', name: 'DBS Indonesia' },
+      { code: '087', name: 'HSBC Indonesia' }
     ];
 
     // Return result
