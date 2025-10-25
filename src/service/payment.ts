@@ -479,7 +479,7 @@ const apiResp = await hilClient.createTransaction({
 //   }
 // }
     const outer = apiResp.data;
-    const qrString = outer.data.qr_string;
+    const qrString = outer.qr_string;
 
     // 4) Simpan audit log
     await prisma.transaction_response.create({
