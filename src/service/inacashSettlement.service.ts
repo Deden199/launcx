@@ -34,14 +34,14 @@ export async function syncWithInacash(refId: string, subMerchantId: string) {
     };
 
     const cfg: Ing1Config = {
-      baseUrl: raw.baseUrl || 'https://api.ing1.com',
+      baseUrl: raw.baseUrl || 'https://core-dev.inacash.co.id/api',
       email: raw.email,
       password: raw.password,
       productCode: raw.productCode,
       callbackUrl: raw.callbackUrl,
       permanentToken: raw.permanentToken,
       merchantId: raw.merchantId,
-      apiVersion: raw.apiVersion
+      apiVersion: 'v1' // Always try v1 first, fallback to v2 if 404
     };
 
     const client = new Ing1Client(cfg);
@@ -95,14 +95,14 @@ export async function getInacashSettlementResult(
 ): Promise<{ netAmt: number; rrn: string; st: string; tmt?: Date; fee?: number } | null> {
   try {
     const cfg: Ing1Config = {
-      baseUrl: credentials.baseUrl || 'https://api.ing1.com',
+      baseUrl: credentials.baseUrl || 'https://core-dev.inacash.co.id/api',
       email: credentials.email,
       password: credentials.password,
       productCode: credentials.productCode,
       callbackUrl: credentials.callbackUrl,
       permanentToken: credentials.permanentToken,
       merchantId: credentials.merchantId,
-      apiVersion: credentials.apiVersion
+      apiVersion: 'v1' // Always try v1 first, fallback to v2 if 404
     };
 
     const client = new Ing1Client(cfg);
@@ -143,14 +143,14 @@ export async function fetchBankCodes(merchantId: string) {
 
     const credentials = providers[0].config as any;
     const cfg: Ing1Config = {
-      baseUrl: credentials.baseUrl || 'https://api.ing1.com',
+      baseUrl: credentials.baseUrl || 'https://core-dev.inacash.co.id/api',
       email: credentials.email,
       password: credentials.password,
       productCode: credentials.productCode,
       callbackUrl: credentials.callbackUrl,
       permanentToken: credentials.permanentToken,
       merchantId: credentials.merchantId,
-      apiVersion: credentials.apiVersion
+      apiVersion: 'v1' // Always try v1 first, fallback to v2 if 404
     };
 
     const client = new Ing1Client(cfg);
@@ -175,14 +175,14 @@ export async function inquiryAccount(
 
     const credentials = providers[0].config as any;
     const cfg: Ing1Config = {
-      baseUrl: credentials.baseUrl || 'https://api.ing1.com',
+      baseUrl: credentials.baseUrl || 'https://core-dev.inacash.co.id/api',
       email: credentials.email,
       password: credentials.password,
       productCode: credentials.productCode,
       callbackUrl: credentials.callbackUrl,
       permanentToken: credentials.permanentToken,
       merchantId: credentials.merchantId,
-      apiVersion: credentials.apiVersion
+      apiVersion: 'v1' // Always try v1 first, fallback to v2 if 404
     };
 
     const client = new Ing1Client(cfg);

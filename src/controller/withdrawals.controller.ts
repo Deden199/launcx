@@ -1215,6 +1215,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     bank_name,
     branch_code,
     internal_bank_code,
+    type = 'single',
+    bulk_id,
   } = req.body as {
     subMerchantId: string
     sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
@@ -1227,6 +1229,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     bank_name?: string
     branch_code?: string
     internal_bank_code?: string
+    type?: 'single' | 'bulk'
+    bulk_id?: string
 
   }
 
@@ -1456,6 +1460,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
           withdrawFeePercent: pc.withdrawFeePercent,
           withdrawFeeFlat: pc.withdrawFeeFlat,
           sourceProvider,
+          type: type,
+          bulkId: bulk_id,
           partnerClient: { connect: { id: partnerClientId } },
           subMerchant:    { connect: { id: subMerchantId } },
           accountName:      acctHolder,
@@ -1740,6 +1746,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     bank_name,
     branch_code,
     internal_bank_code,
+    type = 'single',
+    bulk_id,
   } = req.body as {
     subMerchantId: string
     sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
@@ -1751,6 +1759,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     bank_name?: string
     branch_code?: string
     internal_bank_code?: string
+    type?: 'single' | 'bulk'
+    bulk_id?: string
   }
 
   if (req.isParent) {
@@ -1951,6 +1961,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
           withdrawFeePercent: pc.withdrawFeePercent,
           withdrawFeeFlat: pc.withdrawFeeFlat,
           sourceProvider,
+          type: type,
+          bulkId: bulk_id,
           partnerClient: { connect: { id: partnerClientId } },
           subMerchant: { connect: { id: subMerchantId } },
           accountName: acctHolder,

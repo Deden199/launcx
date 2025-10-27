@@ -168,7 +168,8 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
           } else if (o.channel === 'ing1' || o.channel === 'inacash') {
             // Inacash/ING1 settlement check (using Billers Engine API)
             const inaCreds = creds as any
-            const baseUrl = inaCreds.baseUrl || 'https://core.inacash.co.id'
+            const baseUrl = inaCreds.baseUrl || 'https://core-dev.inacash.co.id/api'
+            const apiVersion = inaCreds.apiVersion || 'v2'
             const email = inaCreds.email
             const password = inaCreds.password
             const productCode = inaCreds.productCode || 'QRIS_DIRECT'
@@ -183,9 +184,10 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
             }
 
             try {
-              // Call INA Billers Engine API: POST /api/v2/transaction/cashin/check
+              // Call INA Billers Engine API: POST {{BASE_URL}}/{{VERSION}}/transaction/cashin/check
+              // Example: https://core-dev.inacash.co.id/api/v2/transaction/cashin/check
               const checkResp = await axios.post(
-                `${baseUrl}/api/v2/transaction/cashin/check`,
+                `${baseUrl}/${apiVersion}/transaction/cashin/check`,
                 {
                   product_code: productCode,
                   custno: custno,

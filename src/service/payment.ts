@@ -351,7 +351,17 @@ export const createTransaction = async (
     });
     if (!ingSubs.length) throw new Error('No active ING1 credentials');
 
+    logger.info(`[Payment] Found ${ingSubs.length} ING1 provider(s):`,
+      ingSubs.map((s, i) => ({
+        index: i,
+        id: s.id,
+        email: (s.config as any)?.email,
+        merchantId: (s.config as any)?.merchantId
+      }))
+    );
+
     const ingCfg = ingSubs[0].config as Ing1Config;
+    logger.info(`[Payment] Using ING1 provider: email=${ingCfg.email}, merchantId=${ingCfg.merchantId}`);
     const ingClient = new Ing1Client(ingCfg);
     const cashinResp = await ingClient.createCashin({
       amount,
