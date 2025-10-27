@@ -263,10 +263,14 @@ export class Ing1Client {
 
   constructor(private readonly cfg: Ing1Config) {
     const trimmedBase = cfg.baseUrl.replace(/\/$/, '');
-    const version = cfg.apiVersion ? cfg.apiVersion.replace(/^\//, '') : '';
-    // Construct base URL: if version is specified, append it, otherwise use as-is
-    // Example: baseUrl='https://api.ing1.com', apiVersion='v2' → 'https://api.ing1.com/v2'
-    const baseURL = version ? `${trimmedBase}/${version}` : trimmedBase;
+    // Always try v1 first, fallback to v2 if we get 404
+    const version = 'v1';
+    // Construct base URL: append version to base URL
+    // Example: baseUrl='https://core-dev.inacash.co.id/api', version='v1' → 'https://core-dev.inacash.co.id/api/v1'
+    const baseURL = `${trimmedBase}/${version}`;
+
+    console.log(`[Ing1Client] Constructor - baseUrl=${cfg.baseUrl}, dbApiVersion=${cfg.apiVersion}, initialVersion=${version}, finalURL=${baseURL}`);
+    console.log(`[Ing1Client] Credentials - email=${cfg.email}, password=${cfg.password ? '***' : 'MISSING'}, permanentToken=${cfg.permanentToken ? '***' : 'MISSING'}, merchantId=${cfg.merchantId}, productCode=${cfg.productCode}`);
 
     this.http = axios.create({
       baseURL,
@@ -326,21 +330,33 @@ export class Ing1Client {
       throw new Error('Missing ING1 credentials (email/password)');
     }
 
-    const { data } = await this.http.post('user/login', {
-      email: this.cfg.email,
-      password: this.cfg.password,
-    });
+    try {
+      console.log(`[Ing1Client] login() - attempting login at ${this.http.defaults.baseURL}/user/login with email=${this.cfg.email}`);
+      const { data } = await this.http.post('user/login', {
+        email: this.cfg.email,
+        password: this.cfg.password,
+      });
 
-    const token = data?.data?.token ?? data?.token;
-    if (!token || typeof token !== 'string') {
-      throw new Error('Failed to login to ING1: token missing');
+      const token = data?.data?.token ?? data?.token;
+      if (!token || typeof token !== 'string') {
+        throw new Error('Failed to login to ING1: token missing');
+      }
+      console.log(`[Ing1Client] login() - SUCCESS, received token`);
+      return token;
+    } catch (err) {
+      console.log(`[Ing1Client] login() - ERROR:`, err instanceof Error ? err.message : String(err));
+      if (axios.isAxiosError(err)) {
+        console.log(`[Ing1Client] login() - HTTP ${err.response?.status}: ${err.response?.statusText}`);
+        console.log(`[Ing1Client] login() - Response:`, err.response?.data);
+      }
+      throw err;
     }
-    return token;
   }
 
   private async authorizedRequest<T = any>(
     config: AxiosRequestConfig,
-    allowRetry = true
+    allowRetry = true,
+    retryWithV2 = true
   ): Promise<T> {
     const token = await this.ensureToken();
     const headers = {
@@ -349,20 +365,36 @@ export class Ing1Client {
     };
 
     try {
+      console.log(`[Ing1Client] authorizedRequest - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`);
       const response = await this.http.request<T>({ ...config, headers });
       const payload: any = response.data;
       const rc = typeof payload?.rc === 'number' ? payload.rc : Number(payload?.rc ?? NaN);
       if (allowRetry && rc === 98) {
         await this.ensureToken(true);
-        return this.authorizedRequest<T>(config, false);
+        return this.authorizedRequest<T>(config, false, retryWithV2);
       }
       return response.data;
     } catch (err) {
+      console.log(`[Ing1Client] authorizedRequest ERROR - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`, err instanceof Error ? err.message : String(err));
+
+      // If 404/500 and we haven't tried v2 yet, retry with v2
+      if (retryWithV2 && axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 500)) {
+        const currentBaseURL = this.http.defaults.baseURL || '';
+        const newBaseURL = currentBaseURL.replace(/\/v1$/, '/v2');
+
+        // Only retry if we actually changed the URL (i.e., it was v1)
+        if (newBaseURL !== currentBaseURL) {
+          console.log(`[Ing1Client] Got ${err.response?.status} with v1, retrying with v2: ${newBaseURL}`);
+          this.http.defaults.baseURL = newBaseURL;
+          return this.authorizedRequest<T>(config, allowRetry, false);
+        }
+      }
+
       if (allowRetry && axios.isAxiosError(err)) {
         const status = err.response?.status ?? 0;
         if (status === 401 || status === 403) {
           await this.ensureToken(true);
-          return this.authorizedRequest<T>(config, false);
+          return this.authorizedRequest<T>(config, false, retryWithV2);
         }
       }
       throw err;
@@ -389,6 +421,8 @@ export class Ing1Client {
 
     const merchantId = params.merchantId ?? this.cfg.merchantId;
     if (merchantId) payload.merchant_id = merchantId;
+
+    console.log(`[Ing1Client] createCashin - calling endpoint: transaction/cashin/create with payload:`, JSON.stringify(payload, null, 2));
 
     const data = await this.authorizedRequest<any>({
       method: 'POST',
