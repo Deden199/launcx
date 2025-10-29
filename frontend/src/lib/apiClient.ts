@@ -7,7 +7,8 @@ interface ErrorPayload {
 }
 
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE || '', // contoh: http://localhost:5001/api/v1
+  baseURL:
+    process.env.NEXT_PUBLIC_API_BASE || 'https://staging.launcx.com/api/v1', // contoh: http://localhost:5001/api/v1
   withCredentials: true, // kalau refresh token di cookie httpOnly
   headers: {
     'Content-Type': 'application/json',
@@ -21,7 +22,7 @@ let refreshQueue: Array<(token: string | null) => void> = [];
 let hasRedirected = false;
 
 function processQueue(token: string | null) {
-  refreshQueue.forEach(cb => cb(token));
+  refreshQueue.forEach((cb) => cb(token));
   refreshQueue = [];
 }
 
@@ -47,7 +48,7 @@ async function attemptTokenRefresh(): Promise<string> {
 
 // Request interceptor: pasang Authorization jika ada
 apiClient.interceptors.request.use(
-  config => {
+  (config) => {
     if (typeof window !== 'undefined') {
       const token = localStorage.getItem('clientToken');
       if (token) {
@@ -57,15 +58,17 @@ apiClient.interceptors.request.use(
     }
     return config;
   },
-  err => Promise.reject(err)
+  (err) => Promise.reject(err)
 );
 
 // Response interceptor: handle expired token / invalid token dengan refresh
 apiClient.interceptors.response.use(
-  response => response,
+  (response) => response,
   async (error: AxiosError) => {
     const resp = error.response;
-    const originalConfig = error.config as AxiosRequestConfig & { _retry?: boolean };
+    const originalConfig = error.config as AxiosRequestConfig & {
+      _retry?: boolean;
+    };
 
     // kalau ga ada response (network error), langsung reject
     if (!resp) return Promise.reject(error);
@@ -79,8 +82,8 @@ apiClient.interceptors.response.use(
       resp.status === 401 &&
       (errorCode === 'TOKEN_EXPIRED' ||
         errorCode === 'INVALID_TOKEN' ||
-        /token/i.test(errorMessage) &&
-          (/expired/i.test(errorMessage) || /invalid/i.test(errorMessage)));
+        (/token/i.test(errorMessage) &&
+          (/expired/i.test(errorMessage) || /invalid/i.test(errorMessage))));
 
     // handle token expired / invalid dengan refresh sekali
     if (isAuthError) {
@@ -88,7 +91,7 @@ apiClient.interceptors.response.use(
         // tunggu refresh jika sudah berjalan
         if (isRefreshing) {
           return new Promise((resolve, reject) => {
-            refreshQueue.push(token => {
+            refreshQueue.push((token) => {
               if (token) {
                 if (originalConfig.headers) {
                   originalConfig.headers['Authorization'] = `Bearer ${token}`;
@@ -107,7 +110,9 @@ apiClient.interceptors.response.use(
 
         try {
           const newToken = await attemptTokenRefresh();
-          apiClient.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+          apiClient.defaults.headers.common[
+            'Authorization'
+          ] = `Bearer ${newToken}`;
           processQueue(newToken);
           if (originalConfig.headers) {
             originalConfig.headers['Authorization'] = `Bearer ${newToken}`;
@@ -131,7 +136,14 @@ apiClient.interceptors.response.use(
     }
 
     // kasus 401 lain yang bukan token-expired/invalid: jangan logout, terus return ke caller
-    if (resp.status === 401 && ['INVALID_TOKEN_SUBJECT', 'CLIENT_USER_NOT_FOUND', 'PARTNER_CLIENT_NOT_FOUND'].includes(errorCode || '')) {
+    if (
+      resp.status === 401 &&
+      [
+        'INVALID_TOKEN_SUBJECT',
+        'CLIENT_USER_NOT_FOUND',
+        'PARTNER_CLIENT_NOT_FOUND',
+      ].includes(errorCode || '')
+    ) {
       return Promise.reject(error);
     }
 
