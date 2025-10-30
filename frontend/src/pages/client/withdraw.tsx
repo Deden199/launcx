@@ -18,6 +18,10 @@ import { oyCodeMap } from '../../utils/oyCodeMap';
 import { gidiChannelMap } from '../../utils/gidiChannelMap';
 import { resolvePiroBankMeta } from '../../utils/piroBankMap';
 
+// =============================================
+// TYPES AND INTERFACES
+// =============================================
+
 type ClientOption = { id: string; name: string };
 type Provider = 'hilogate' | 'oy' | 'gidi' | 'piro' | 'ing1' | string;
 
@@ -36,6 +40,8 @@ interface Withdrawal {
   createdAt: string;
   completedAt?: string;
   sourceProvider?: string;
+  type?: string;
+  bulk_id?: string;
 }
 
 interface SubMerchant {
@@ -60,17 +66,15 @@ type BulkRow = {
   accountNumber: string;
   idBulk: string;
   amount: number;
-  // optional
   bankName?: string;
   accountName?: string;
   branchCode?: string;
   note?: string;
-  // runtime
   errors?: string[];
   status?: 'queued' | 'ok' | 'fail';
+  timestamp?: string;
 };
 
-// JWT Utility
 interface JWTPayload {
   sub: string;
   id: string;
@@ -81,6 +85,23 @@ interface JWTPayload {
   exp?: number;
 }
 
+// =============================================
+// CONSTANTS AND UTILITIES
+// =============================================
+
+const MERCHANT_ID = 'test-merchant';
+const BULK_DUMMY_MODE = false;
+
+// Provider mapping configuration
+const providerMap = {
+  ing1: { apiBanksParam: 'ing1', sourceProvider: 'in-1' },
+  hilogate: { apiBanksParam: 'hilogate', sourceProvider: 'hilogate' },
+  oy: { apiBanksParam: 'oy', sourceProvider: 'oy' },
+  gidi: { apiBanksParam: 'gidi', sourceProvider: 'gidi' },
+  piro: { apiBanksParam: 'piro', sourceProvider: 'piro' },
+} as const;
+
+// Utility functions
 const decodeJWT = (token: string): JWTPayload | null => {
   try {
     const payload = token.split('.')[1];
@@ -97,75 +118,36 @@ const aliasFrom = (full: string) => {
   return `${parts[0]} ${parts.at(-1)![0]}.`;
 };
 
-/** ========= Custom mapping provider ========= */
-const providerMap = {
-  ing1: { apiBanksParam: 'ing1', sourceProvider: 'in-1' },
-  hilogate: { apiBanksParam: 'hilogate', sourceProvider: 'hilogate' },
-  oy: { apiBanksParam: 'oy', sourceProvider: 'oy' },
-  gidi: { apiBanksParam: 'gidi', sourceProvider: 'gidi' },
-  piro: { apiBanksParam: 'piro', sourceProvider: 'piro' },
-} as const;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const getSelectedProvider = (
-  subs: SubMerchant[],
-  selectedSub: string
-): { providerKey: Provider; apiBanksParam: string; sourceProvider: string } => {
-  const prov = (subs.find((s) => s.id === selectedSub)?.provider ||
-    'hilogate') as Provider;
-  const map = providerMap[prov as keyof typeof providerMap] || {
-    apiBanksParam: String(prov),
-    sourceProvider: String(prov),
-  };
-  return {
-    providerKey: prov,
-    apiBanksParam: map.apiBanksParam,
-    sourceProvider: map.sourceProvider,
-  };
-};
-
-// merchant id
-const MERCHANT_ID = 'test-merchant';
-
-// toggle: true = simulasi, false = call API beneran
-const BULK_DUMMY_MODE = false;
-
-// Fallback data untuk development
-// Fallback data dengan saldo yang REALISTIC
-const fallbackSubs: SubMerchant[] = [
-  {
-    id: '68f73f676f51451793468692',
-    name: 'ina1',
-    provider: 'oy',
-    balance: 100000, // SALDO KECIL untuk testing - sesuaikan dengan saldo sebenarnya
-  },
-  {
-    id: '68f73f676f51451793468693',
-    name: 'ina2',
-    provider: 'hilogate',
-    balance: 50000,
-  },
-];
+// =============================================
+// MAIN COMPONENT
+// =============================================
 
 export default function WithdrawPage() {
-  // ── Dashboard
+  // =============================================
+  // STATE MANAGEMENT
+  // =============================================
+
+  // Dashboard state
   const [balance, setBalance] = useState(0);
   const [pending, setPending] = useState(0);
   const [pageError, setPageError] = useState<string>('');
 
-  // ── Parent–Child & Subwallets
+  // Client and sub-merchant state
   const [children, setChildren] = useState<ClientOption[]>([]);
   const [selectedChild, setSelectedChild] = useState<'all' | string>('all');
   const [subs, setSubs] = useState<SubMerchant[]>([]);
   const [selectedSub, setSelectedSub] = useState<string>('');
 
-  // ── Banks (dependent on selected sub/provider)
+  // Banks state
   const [banks, setBanks] = useState<{ code: string; name: string }[]>([]);
 
-  // ── Withdrawals
+  // Withdrawals state
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ── Modal/Form
+  // Modal and form state
   const [open, setOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState({
@@ -184,7 +166,7 @@ export default function WithdrawPage() {
   const [busy, setBusy] = useState({ validating: false, submitting: false });
   const [error, setError] = useState('');
 
-  // ── Filters & pagination
+  // Filters and pagination state
   const [searchRef, setSearchRef] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -197,11 +179,7 @@ export default function WithdrawPage() {
   const [total, setTotal] = useState(0);
   const [startDate, endDate] = dateRange;
 
-  // ── AbortControllers
-  const ctlDashboard = useRef<AbortController | null>(null);
-  const ctlList = useRef<AbortController | null>(null);
-
-  // ── Bulk state
+  // Bulk state
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
   const [bulkParsing, setBulkParsing] = useState(false);
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
@@ -211,13 +189,41 @@ export default function WithdrawPage() {
     queued: number;
   }>({ ok: 0, fail: 0, queued: 0 });
 
-  // ── Debounce search
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchRef), 300);
-    return () => clearTimeout(t);
-  }, [searchRef]);
+  // Abort controllers for API calls
+  const ctlDashboard = useRef<AbortController | null>(null);
+  const ctlList = useRef<AbortController | null>(null);
 
-  // ── Helper provider/bank
+  // =============================================
+  // UTILITY FUNCTIONS
+  // =============================================
+
+  /**
+   * Get provider configuration based on selected sub-merchant
+   */
+  const getSelectedProvider = (
+    subs: SubMerchant[],
+    selectedSub: string
+  ): {
+    providerKey: Provider;
+    apiBanksParam: string;
+    sourceProvider: string;
+  } => {
+    const prov = (subs.find((s) => s.id === selectedSub)?.provider ||
+      'hilogate') as Provider;
+    const map = providerMap[prov as keyof typeof providerMap] || {
+      apiBanksParam: String(prov),
+      sourceProvider: String(prov),
+    };
+    return {
+      providerKey: prov,
+      apiBanksParam: map.apiBanksParam,
+      sourceProvider: map.sourceProvider,
+    };
+  };
+
+  /**
+   * Resolve bank code based on provider
+   */
   const resolveProviderBank = useCallback(
     (provider: Provider, bankCode: string) => {
       const bankObj = banks.find((b) => b.code === bankCode);
@@ -240,26 +246,51 @@ export default function WithdrawPage() {
     [banks]
   );
 
-  // ── Load sub-merchants dari API
+  /**
+   * Recalculate bulk import statistics
+   */
+  const recalcBulkInfo = (rows: BulkRow[]) => {
+    const ok = rows.filter(
+      (r) => (r.errors?.length ?? 0) === 0 && r.status === 'ok'
+    ).length;
+    const fail = rows.filter((r) => r.status === 'fail').length;
+    const queued = rows.filter(
+      (r) => !r.status || r.status === 'queued'
+    ).length;
+    setBulkInfo({ ok, fail, queued });
+  };
+
+  /**
+   * Normalize header keys for CSV parsing
+   */
+  const headerKey = (s: any) =>
+    String(s ?? '')
+      .toLowerCase()
+      .trim();
+
+  // =============================================
+  // API DATA FETCHING
+  // =============================================
+
+  /**
+   * Load sub-merchants from API with fallback to JWT and static data
+   */
   const loadSubMerchantsFromAPI = useCallback(async () => {
     try {
       setLoading(true);
       console.log('🔄 Loading sub-merchants from API...');
 
-      // Coba ambil dari API utama
+      // Try API first
       try {
         const response = await apiClient.get<SubMerchantResponse[]>(
           '/client/withdrawals/submerchants',
-          {
-            params: { clientId: 'all' },
-          }
+          { params: { clientId: 'all' } }
         );
 
         const subMerchantsFromAPI = response.data;
         console.log('📦 Sub-merchants from API:', subMerchantsFromAPI);
 
         if (subMerchantsFromAPI.length > 0) {
-          // Transform data dari API ke format yang diharapkan
           const transformedData: SubMerchant[] = subMerchantsFromAPI.map(
             (item) => ({
               id: item.id,
@@ -272,13 +303,13 @@ export default function WithdrawPage() {
           setSubs(transformedData);
           setSelectedSub(transformedData[0]?.id || '');
           console.log('✅ Using sub-merchants from API');
-          return; // Berhasil, keluar dari function
+          return;
         }
       } catch (apiError) {
         console.warn('❌ API Error, falling back to JWT token:', apiError);
       }
 
-      // Jika API gagal atau kosong, coba dari JWT token
+      // Fallback to JWT token only
       console.warn('⚠️ Trying JWT token as fallback...');
       const token = localStorage.getItem('clientToken');
       let subMerchantsFromJWT: SubMerchantResponse[] = [];
@@ -286,15 +317,11 @@ export default function WithdrawPage() {
       if (token) {
         try {
           const decoded = decodeJWT(token) as any;
-          console.log('🔐 JWT decoded:', decoded);
-
           if (decoded?.subMerchants && Array.isArray(decoded.subMerchants)) {
             subMerchantsFromJWT = decoded.subMerchants as SubMerchantResponse[];
           } else if (decoded?.wallets && Array.isArray(decoded.wallets)) {
             subMerchantsFromJWT = decoded.wallets as SubMerchantResponse[];
           }
-
-          console.log('📦 Sub-merchants from JWT:', subMerchantsFromJWT);
         } catch (jwtError) {
           console.warn('❌ Error decoding JWT:', jwtError);
         }
@@ -314,26 +341,24 @@ export default function WithdrawPage() {
         setSelectedSub(transformedData[0]?.id || '');
         console.log('✅ Using sub-merchants from JWT');
       } else {
-        // Final fallback ke static data
-        console.warn('⚠️ No sub-merchants found anywhere, using fallback data');
-        setSubs(fallbackSubs);
-        setSelectedSub(fallbackSubs[0]?.id || '');
+        // No fallback data - show empty state
+        console.warn('⚠️ No sub-merchants found');
+        setSubs([]);
+        setSelectedSub('');
       }
     } catch (error) {
       console.error('❌ Error in sub-merchants loading:', error);
-      setSubs(fallbackSubs);
-      setSelectedSub(fallbackSubs[0]?.id || '');
+      // No fallback - show empty state
+      setSubs([]);
+      setSelectedSub('');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // ── Load subs dari API saat component mount
-  useEffect(() => {
-    loadSubMerchantsFromAPI();
-  }, [loadSubMerchantsFromAPI]);
-
-  // ── Dashboard on child change
+  /**
+   * Load dashboard data
+   */
   const loadDashboard = useCallback(
     async (clientId: string | 'all') => {
       ctlDashboard.current?.abort();
@@ -358,7 +383,9 @@ export default function WithdrawPage() {
     [children.length]
   );
 
-  // ── List withdrawals
+  /**
+   * Load withdrawals history
+   */
   const loadWithdrawals = useCallback(async () => {
     ctlList.current?.abort();
     ctlList.current = new AbortController();
@@ -404,13 +431,29 @@ export default function WithdrawPage() {
     debouncedSearch,
   ]);
 
-  // ── Refetch All
+  /**
+   * Refetch all data
+   */
   const refetchAll = useCallback(() => {
     loadDashboard(selectedChild);
     loadWithdrawals();
   }, [loadDashboard, loadWithdrawals, selectedChild]);
 
-  // ── Triggers
+  // =============================================
+  // EFFECTS AND DATA LOADING
+  // =============================================
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchRef), 300);
+    return () => clearTimeout(t);
+  }, [searchRef]);
+
+  // Load initial data
+  useEffect(() => {
+    loadSubMerchantsFromAPI();
+  }, [loadSubMerchantsFromAPI]);
+
   useEffect(() => {
     loadDashboard(selectedChild);
     setPage(1);
@@ -423,12 +466,7 @@ export default function WithdrawPage() {
     };
   }, [loadWithdrawals]);
 
-  // ── Load subs dari token saat component mount
-  useEffect(() => {
-    loadSubMerchantsFromAPI();
-  }, [loadSubMerchantsFromAPI]);
-
-  // ── Banks: fetch setelah sub-wallet dipilih (depend on provider)
+  // Load banks when sub-merchant is selected
   useEffect(() => {
     if (!selectedSub || !subs.length) return;
     const { apiBanksParam } = getSelectedProvider(subs, selectedSub);
@@ -445,7 +483,13 @@ export default function WithdrawPage() {
     return () => ctl.abort();
   }, [selectedSub, subs]);
 
-  // ── Handlers (single withdraw)
+  // =============================================
+  // SINGLE WITHDRAWAL HANDLERS
+  // =============================================
+
+  /**
+   * Handle form input changes
+   */
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
@@ -472,7 +516,9 @@ export default function WithdrawPage() {
     }
   };
 
-  // ── Validate account
+  /**
+   * Validate bank account
+   */
   const validateAccount = async () => {
     setBusy((b) => ({ ...b, validating: true }));
     setError('');
@@ -495,6 +541,7 @@ export default function WithdrawPage() {
         sourceProvider,
         subMerchantId: selectedSub,
       };
+
       if (providerKey === 'piro') {
         body.bank_name = bankObj?.name ?? form.bankName;
         body.branch_code = piroMeta?.branchCode;
@@ -504,8 +551,11 @@ export default function WithdrawPage() {
       const res = await apiClient.post(
         '/client/withdrawals/validate-account',
         body,
-        { validateStatus: () => true }
+        {
+          validateStatus: () => true,
+        }
       );
+
       if (res.status === 200 && res.data.status === 'valid') {
         const holder = res.data.account_holder as string;
         setForm((f) => ({
@@ -532,7 +582,9 @@ export default function WithdrawPage() {
     }
   };
 
-  // ── Submit single withdraw
+  /**
+   * Submit single withdrawal
+   */
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid || error) return;
@@ -560,6 +612,7 @@ export default function WithdrawPage() {
         bank_name: form.bankName || bankObj?.name || undefined,
         otp: form.otp,
       };
+
       if (providerKey === 'piro') {
         body.branch_code = form.branchName || piroMeta?.branchCode;
         body.internal_bank_code = piroMeta?.bankIdentifier;
@@ -568,6 +621,7 @@ export default function WithdrawPage() {
       const res = await apiClient.post('/client/withdrawals', body, {
         validateStatus: () => true,
       });
+
       if (res.status === 201) {
         const [dash, list] = await Promise.all([
           apiClient.get('/client/dashboard', {
@@ -588,11 +642,13 @@ export default function WithdrawPage() {
             }
           ),
         ]);
+
         setBalance(dash.data.balance);
         setPending(dash.data.totalPending ?? 0);
         setWithdrawals(list.data.data);
         setTotal(list.data.total);
 
+        // Reset form
         setForm((f) => ({
           ...f,
           amount: '',
@@ -618,7 +674,302 @@ export default function WithdrawPage() {
     }
   };
 
-  // ── Export tanpa kolom "Source"
+  // =============================================
+  // BULK WITHDRAWAL HANDLERS
+  // =============================================
+
+  /**
+   * Download bulk template
+   */
+  const downloadBulkTemplate = () => {
+    if (subs.length === 0) {
+      alert('Tidak ada sub-merchant yang tersedia');
+      return;
+    }
+
+    const headers = [
+      'subMerchantId',
+      'type',
+      'bankCode',
+      'accountNumber',
+      'idBulk',
+      'amount',
+      'bankName',
+      'accountName',
+      'branchCode',
+      'note',
+    ];
+
+    const exampleBulkId = `bulk-${Date.now()}-1`;
+    const exampleData = [
+      subs[0]?.id || '',
+      'bulk',
+      '014',
+      '1234567890',
+      exampleBulkId,
+      50000,
+      'BCA',
+      'JOHN DOE',
+      '',
+      'Test withdrawal bulk',
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, exampleData]);
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    const blob = new Blob(['\uFEFF' + csv], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'bulk_withdraw_template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Handle bulk file upload and parsing
+   */
+  const handleBulkFile = async (file: File) => {
+    setBulkParsing(true);
+    setPageError('');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[][] = XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        raw: true,
+      }) as any[][];
+
+      if (!rows.length) throw new Error('File kosong');
+
+      const headers = (rows[0] || []).map(headerKey);
+      const required = ['submerchantid', 'bankcode', 'accountnumber', 'amount'];
+      const missing = required.filter((k) => !headers.includes(k));
+      if (missing.length) {
+        setBulkRows([]);
+        recalcBulkInfo([]);
+        setPageError(`Header wajib hilang: ${missing.join(', ')}`);
+        return;
+      }
+
+      const idxOf = (name: string) => headers.indexOf(name);
+      const out: BulkRow[] = [];
+      const bulkTimestamp = Date.now();
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i] || [];
+        if (r.every((c) => c == null || String(c).trim?.() === '')) continue;
+
+        const idBulkFromFile = String(r[idxOf('idbulk')] ?? '').trim();
+        const finalIdBulk = idBulkFromFile || `bulk-${bulkTimestamp}-${i}`;
+
+        const row: BulkRow = {
+          idx: i,
+          subMerchantId: String(r[idxOf('submerchantid')] ?? '').trim(),
+          type: 'bulk',
+          bankCode: String(r[idxOf('bankcode')] ?? '').trim(),
+          accountNumber: String(r[idxOf('accountnumber')] ?? '').trim(),
+          amount: Number(r[idxOf('amount')]),
+          bankName: String(r[idxOf('bankname')] ?? '').trim() || undefined,
+          accountName:
+            String(r[idxOf('accountname')] ?? '').trim() || undefined,
+          idBulk: finalIdBulk,
+          branchCode: String(r[idxOf('branchcode')] ?? '').trim() || undefined,
+          note: String(r[idxOf('note')] ?? '').trim() || undefined,
+          status: 'queued',
+          errors: [],
+          timestamp: bulkTimestamp.toString(),
+        };
+
+        // Validation
+        if (!row.subMerchantId) row.errors!.push('subMerchantId kosong');
+        if (!row.bankCode) row.errors!.push('bankCode kosong');
+        if (!row.accountNumber) row.errors!.push('accountNumber kosong');
+        if (!row.amount || row.amount <= 0)
+          row.errors!.push('amount harus > 0');
+        if (row.amount > 1000000)
+          row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
+
+        const subWallet = subs.find((s) => s.id === row.subMerchantId);
+        if (!subWallet) {
+          row.errors!.push(
+            `Sub-merchant "${row.subMerchantId}" tidak ditemukan`
+          );
+        } else if (row.errors!.length === 0 && row.amount > subWallet.balance) {
+          row.errors!.push(
+            `Saldo tidak mencukupi. Butuh: ${money(row.amount)}, Saldo: ${money(
+              subWallet.balance
+            )}`
+          );
+        }
+
+        out.push(row);
+      }
+
+      setBulkRows(out);
+      recalcBulkInfo(out);
+    } catch (e: any) {
+      setBulkRows([]);
+      recalcBulkInfo([]);
+      setPageError(e?.message || 'Gagal memproses file');
+    } finally {
+      setBulkParsing(false);
+    }
+  };
+
+  /**
+   * Submit bulk withdrawals
+   */
+  const submitBulk = async () => {
+    if (!bulkRows.length) return;
+    if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
+      setPageError('Perbaiki baris yang error sebelum submit.');
+      return;
+    }
+
+    setBulkSubmitting(true);
+    setPageError('');
+
+    try {
+      const cloned = bulkRows.map((r) => ({ ...r }));
+      let hasError = false;
+      let successCount = 0;
+
+      for (let i = 0; i < cloned.length; i++) {
+        const r = cloned[i];
+        const subId = r.subMerchantId || selectedSub;
+        const subWallet = subs.find((s) => s.id === subId);
+
+        if (!subWallet) {
+          cloned[i].status = 'fail';
+          cloned[i].errors = [
+            ...(cloned[i].errors || []),
+            `Sub-wallet "${subId}" tidak ditemukan`,
+          ];
+          hasError = true;
+          continue;
+        }
+
+        if (r.amount > subWallet.balance) {
+          cloned[i].status = 'fail';
+          cloned[i].errors = [
+            ...(cloned[i].errors || []),
+            `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(
+              subWallet.balance
+            )}`,
+          ];
+          hasError = true;
+          continue;
+        }
+
+        const { providerKey, sourceProvider } = getSelectedProvider(
+          subs,
+          subId
+        );
+        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(
+          providerKey,
+          r.bankCode
+        );
+        const finalBulkId = r.idBulk || `bulk-${Date.now()}-${i + 1}`;
+
+        const body: any = {
+          subMerchantId: subId,
+          sourceProvider,
+          account_number: r.accountNumber,
+          bank_code: payloadBankCode,
+          amount: +r.amount,
+          type: 'bulk',
+          bulk_id: finalBulkId,
+        };
+
+        if (r.accountName) body.account_name = r.accountName;
+        if (r.bankName) body.bank_name = r.bankName;
+        if (r.branchCode) body.branch_code = r.branchCode;
+        if (r.note) body.note = r.note;
+
+        if (['oy', 'gidi', 'piro'].includes(providerKey)) {
+          body.bank_name = r.bankName || bankObj?.name;
+          if (r.accountName) body.account_name = r.accountName;
+        }
+        if (providerKey === 'piro') {
+          body.branch_code = r.branchCode || piroMeta?.branchCode;
+          body.internal_bank_code = piroMeta?.bankIdentifier;
+        }
+
+        try {
+          const res = await apiClient.post('/withdrawals', body, {
+            validateStatus: () => true,
+          });
+
+          if (res.status === 201) {
+            cloned[i].status = 'ok';
+            successCount++;
+            setSubs((prev) =>
+              prev.map((s) =>
+                s.id === subId ? { ...s, balance: s.balance - r.amount } : s
+              )
+            );
+          } else {
+            cloned[i].status = 'fail';
+            const errorMsg =
+              res.data?.error || res.data?.message || `HTTP ${res.status}`;
+            cloned[i].errors = [...(cloned[i].errors || []), errorMsg];
+            hasError = true;
+          }
+        } catch (apiError: any) {
+          cloned[i].status = 'fail';
+          cloned[i].errors = [
+            ...(cloned[i].errors || []),
+            apiError.message || 'Network error',
+          ];
+          hasError = true;
+        }
+
+        setBulkRows([...cloned]);
+        recalcBulkInfo(cloned);
+        await sleep(500);
+      }
+
+      if (successCount > 0) {
+        await Promise.all([loadWithdrawals(), loadDashboard(selectedChild)]);
+        setPageError(
+          `✅ ${successCount} transaksi berhasil diproses${
+            hasError ? ', beberapa gagal' : ''
+          }`
+        );
+      }
+
+      if (!hasError) {
+        setTimeout(() => {
+          setImportOpen(false);
+          setBulkRows([]);
+          setBulkInfo({ ok: 0, fail: 0, queued: 0 });
+        }, 2000);
+      } else {
+        setPageError(
+          `${successCount} berhasil, ${
+            cloned.length - successCount
+          } gagal. Periksa kolom Errors.`
+        );
+      }
+    } catch (e: any) {
+      console.error('❌ Bulk import error:', e);
+      setPageError(e?.message || 'Bulk import gagal');
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
+  // =============================================
+  // EXPORT AND PAGINATION
+  // =============================================
+
+  /**
+   * Export withdrawals to Excel
+   */
   const exportToExcel = () => {
     const rows = [
       [
@@ -664,357 +1015,26 @@ export default function WithdrawPage() {
         ];
       }),
     ];
+
     const ws = XLSX.utils.aoa_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Withdrawals');
     XLSX.writeFile(wb, 'withdrawals.xlsx');
   };
 
-  // ── Bulk helpers & handlers
-  const headerKey = (s: any) =>
-    String(s ?? '')
-      .toLowerCase()
-      .trim();
-
-  const recalcBulkInfo = (rows: BulkRow[]) => {
-    const ok = rows.filter(
-      (r) => (r.errors?.length ?? 0) === 0 && r.status === 'ok'
-    ).length;
-    const fail = rows.filter((r) => r.status === 'fail').length;
-    const queued = rows.filter(
-      (r) => !r.status || r.status === 'queued'
-    ).length;
-    setBulkInfo({ ok, fail, queued });
-  };
-
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-  const downloadBulkTemplate = () => {
-    const availableSubs = subs.length > 0 ? subs : fallbackSubs;
-
-    if (availableSubs.length === 0) {
-      alert('Tidak ada sub-merchant yang tersedia');
-      return;
-    }
-
-    const headers = [
-      'subMerchantId',
-      'type',
-      'bankCode',
-      'accountNumber',
-      'idBulk',
-      'amount',
-      'bankName',
-      'accountName',
-      'branchCode',
-      'note',
-    ];
-
-    // Gunakan amount yang KECIL untuk testing
-    const exampleData = [
-      availableSubs[0].id,
-      'Bulk',
-      '014', // BCA
-      '1234567890',
-      `BULK-${Date.now()}-1`,
-      50000, // ⬅️ AMOUNT KECIL untuk testing
-      'BCA',
-      'John Doe',
-      '',
-      'Test withdrawal bulk',
-    ];
-
-    const ws = XLSX.utils.aoa_to_sheet([headers, exampleData]);
-    const csv = XLSX.utils.sheet_to_csv(ws);
-    const blob = new Blob(['\uFEFF' + csv], {
-      type: 'text/csv;charset=utf-8;',
-    });
-    const url = URL.createObjectURL(blob);
-
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'bulk_withdraw_template.csv';
-    link.click();
-
-    URL.revokeObjectURL(url);
-  };
-
-  const handleBulkFile = async (file: File) => {
-    setBulkParsing(true);
-    setPageError('');
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[][] = XLSX.utils.sheet_to_json(ws, {
-        header: 1,
-        raw: true,
-      }) as any[][];
-
-      if (!rows.length) throw new Error('File kosong');
-
-      const headers = (rows[0] || []).map(headerKey);
-      const required = ['submerchantid', 'bankcode', 'accountnumber', 'amount'];
-      const missing = required.filter((k) => !headers.includes(k));
-      if (missing.length) {
-        setBulkRows([]);
-        recalcBulkInfo([]);
-        setPageError(`Header wajib hilang: ${missing.join(', ')}`);
-        return;
-      }
-
-      const idxOf = (name: string) => headers.indexOf(name);
-      const out: BulkRow[] = [];
-
-      // Gunakan data yang tersedia
-      const availableSubs = subs.length > 0 ? subs : fallbackSubs;
-
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i] || [];
-        if (r.every((c) => c == null || String(c).trim?.() === '')) continue;
-
-        const row: BulkRow = {
-          idx: i,
-          subMerchantId: String(r[idxOf('submerchantid')] ?? '').trim(),
-          type: String(r[idxOf('type')] ?? '').trim(),
-          bankCode: String(r[idxOf('bankcode')] ?? '').trim(),
-          accountNumber: String(r[idxOf('accountnumber')] ?? '').trim(),
-          amount: Number(r[idxOf('amount')]),
-          bankName: String(r[idxOf('bankname')] ?? '').trim() || undefined,
-          accountName:
-            String(r[idxOf('accountname')] ?? '').trim() || undefined,
-          idBulk: String(r[idxOf('idbulk')] ?? '').trim(),
-          branchCode: String(r[idxOf('branchcode')] ?? '').trim() || undefined,
-          note: String(r[idxOf('note')] ?? '').trim() || undefined,
-          status: 'queued',
-          errors: [],
-        };
-
-        // Validasi dasar
-        if (!row.subMerchantId) {
-          row.errors!.push('subMerchantId kosong');
-        }
-
-        if (!row.bankCode) row.errors!.push('bankCode kosong');
-        if (!row.accountNumber) row.errors!.push('accountNumber kosong');
-
-        // Validasi amount
-        if (!row.amount || row.amount <= 0) {
-          row.errors!.push('amount harus > 0');
-        } else if (row.amount > 1000000) {
-          // Batas maksimal untuk testing
-          row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
-        }
-
-        // Validasi sub-merchant existence
-        const subWallet = availableSubs.find((s) => s.id === row.subMerchantId);
-        if (!subWallet) {
-          row.errors!.push(
-            `Sub-merchant "${row.subMerchantId}" tidak ditemukan`
-          );
-        } else {
-          // Validasi saldo HANYA jika tidak ada error lain
-          if (row.errors!.length === 0 && row.amount > subWallet.balance) {
-            row.errors!.push(
-              `Saldo tidak mencukupi. Butuh: ${money(
-                row.amount
-              )}, Saldo: ${money(subWallet.balance)}`
-            );
-          }
-        }
-
-        out.push(row);
-      }
-
-      setBulkRows(out);
-      recalcBulkInfo(out);
-    } catch (e: any) {
-      setBulkRows([]);
-      recalcBulkInfo([]);
-      setPageError(e?.message || 'Gagal memproses file');
-    } finally {
-      setBulkParsing(false);
-    }
-  };
-
-  const submitBulk = async () => {
-    if (!bulkRows.length) return;
-    if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
-      setPageError('Perbaiki baris yang error sebelum submit.');
-      return;
-    }
-
-    setBulkSubmitting(true);
-    setPageError('');
-
-    try {
-      const cloned = bulkRows.map((r) => ({ ...r }));
-      let hasError = false;
-      let successCount = 0;
-
-      // Gunakan data yang sudah ada, jangan refresh dulu
-      const availableSubs = subs.length > 0 ? subs : fallbackSubs;
-
-      for (let i = 0; i < cloned.length; i++) {
-        const r = cloned[i];
-        const subId = r.subMerchantId || selectedSub;
-
-        // Validasi dengan data yang ada
-        const subWallet = availableSubs.find((s) => s.id === subId);
-
-        if (!subWallet) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [
-            ...(cloned[i].errors || []),
-            `Sub-wallet "${subId}" tidak ditemukan`,
-          ];
-          hasError = true;
-          continue;
-        }
-
-        // ✅ VALIDASI SALDO: Cek saldo sebelum kirim
-        if (r.amount > subWallet.balance) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [
-            ...(cloned[i].errors || []),
-            `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(
-              subWallet.balance
-            )}`,
-          ];
-          hasError = true;
-          continue;
-        }
-
-        const { providerKey, sourceProvider } = getSelectedProvider(
-          availableSubs,
-          subId
-        );
-        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(
-          providerKey,
-          r.bankCode
-        );
-
-        // Prepare request body - PERBAIKI FORMAT
-        const body: any = {
-          subMerchantId: subId,
-          sourceProvider,
-          merchantId: MERCHANT_ID,
-          account_number: r.accountNumber,
-          bank_code: payloadBankCode,
-          amount: +r.amount,
-          type: 'BULK',
-          idBulk: r.idBulk || `BULK-${Date.now()}-${i}`,
-        };
-
-        // Tambahkan field optional
-        if (r.bankName) body.bank_name = r.bankName;
-        if (r.accountName) body.account_name = r.accountName;
-        if (r.branchCode) body.branch_code = r.branchCode;
-        if (r.note) body.note = r.note;
-
-        // Provider-specific fields
-        if (['oy', 'gidi', 'piro'].includes(providerKey)) {
-          body.bank_name = r.bankName || bankObj?.name;
-          if (r.accountName) body.account_name = r.accountName;
-        }
-        if (providerKey === 'piro') {
-          body.branch_code = r.branchCode || piroMeta?.branchCode;
-          body.internal_bank_code = piroMeta?.bankIdentifier;
-        }
-
-        console.log('🔹 Sending withdrawal request:', body);
-
-        try {
-          const res = await apiClient.post('/client/withdrawals', body, {
-            validateStatus: () => true,
-          });
-
-          console.log('🔹 Response withdrawal:', res.status, res.data);
-
-          if (res.status === 201) {
-            cloned[i].status = 'ok';
-            successCount++;
-
-            // Update balance lokal
-            setSubs((prev) =>
-              prev.map((s) =>
-                s.id === subId ? { ...s, balance: s.balance - r.amount } : s
-              )
-            );
-          } else {
-            cloned[i].status = 'fail';
-            const errorMsg =
-              res.data?.error || res.data?.message || `HTTP ${res.status}`;
-            cloned[i].errors = [...(cloned[i].errors || []), errorMsg];
-
-            // Jika error karena saldo, update data balance
-            if (errorMsg.includes('Saldo tidak mencukupi')) {
-              // Refresh data sub-merchants untuk mendapatkan balance terbaru
-              await loadSubMerchantsFromAPI();
-            }
-
-            hasError = true;
-          }
-        } catch (apiError: any) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [
-            ...(cloned[i].errors || []),
-            apiError.message || 'Network error',
-          ];
-          hasError = true;
-        }
-
-        setBulkRows([...cloned]);
-        recalcBulkInfo(cloned);
-
-        await sleep(500);
-      }
-
-      // 🔄 REFRESH DATA SETELAH BULK BERHASIL
-      if (successCount > 0) {
-        // Refresh data
-        await Promise.all([
-          loadWithdrawals(), // Refresh withdrawal history
-          loadDashboard(selectedChild), // Refresh dashboard
-        ]);
-
-        setPageError(
-          `✅ ${successCount} transaksi berhasil diproses${
-            hasError ? ', beberapa gagal' : ''
-          }`
-        );
-      }
-
-      if (!hasError) {
-        setTimeout(() => {
-          setImportOpen(false);
-          setBulkRows([]);
-          setBulkInfo({ ok: 0, fail: 0, queued: 0 });
-        }, 2000);
-      } else {
-        setPageError(
-          `${successCount} berhasil, ${
-            cloned.length - successCount
-          } gagal. Periksa kolom Errors.`
-        );
-      }
-    } catch (e: any) {
-      console.error('❌ Bulk import error:', e);
-      setPageError(e?.message || 'Bulk import gagal');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  // ── Pagination
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / perPage)),
     [total, perPage]
   );
 
+  // =============================================
+  // RENDER
+  // =============================================
+
   return (
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-7xl p-4 sm:p-6">
+        {/* Error Display */}
         {pageError && (
           <div className="mb-4 rounded-xl border border-rose-900/40 bg-rose-950/40 p-3 text-rose-300">
             <p className="mb-2 whitespace-pre-line">{pageError}</p>
@@ -1027,7 +1047,7 @@ export default function WithdrawPage() {
           </div>
         )}
 
-        {/* Child selector */}
+        {/* Child Selector */}
         {children.length > 0 && (
           <div className="mb-5 flex flex-wrap items-center gap-2">
             <label className="text-sm text-neutral-400">Pilih Child:</label>
@@ -1052,7 +1072,7 @@ export default function WithdrawPage() {
           </div>
         )}
 
-        {/* Stats */}
+        {/* Stats Dashboard */}
         <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
           {/* Sub-wallets */}
           <div className="md:col-span-2 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-3">
@@ -1068,12 +1088,11 @@ export default function WithdrawPage() {
                     <button
                       key={s.id}
                       onClick={() => setSelectedSub(s.id)}
-                      className={`rounded-xl border px-3 py-2 text-left transition
-                ${
-                  s.id === selectedSub
-                    ? 'border-sky-500 bg-sky-500/10'
-                    : 'border-neutral-800 hover:bg-neutral-800/60'
-                }`}
+                      className={`rounded-xl border px-3 py-2 text-left transition ${
+                        s.id === selectedSub
+                          ? 'border-sky-500 bg-sky-500/10'
+                          : 'border-neutral-800 hover:bg-neutral-800/60'
+                      }`}
                     >
                       <div className="text-sm font-medium">
                         {s.name || `Sub ${s.id.slice(0, 6)}`}
@@ -1112,7 +1131,6 @@ export default function WithdrawPage() {
             >
               <Upload size={18} /> Import
             </button>
-
             <button
               onClick={() => setOpen(true)}
               className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800/60"
@@ -1194,7 +1212,6 @@ export default function WithdrawPage() {
                       onClick={decreaseMonth}
                       disabled={prevMonthButtonDisabled}
                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-                      aria-label="Previous month"
                     >
                       ‹
                     </button>
@@ -1209,14 +1226,12 @@ export default function WithdrawPage() {
                       onClick={increaseMonth}
                       disabled={nextMonthButtonDisabled}
                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-                      aria-label="Next month"
                     >
                       ›
                     </button>
                   </div>
                 )}
               />
-
               {(startDate || endDate) && (
                 <button
                   type="button"
@@ -1289,11 +1304,11 @@ export default function WithdrawPage() {
                             : '-'}
                         </td>
                         <td className="px-3 py-2">{w.refId}</td>
-                        <td className="px-3 py-2">Bulk</td>
+                        <td className="px-3 py-2">{w.type || 'Bulk'}</td>
                         <td className="px-3 py-2">{w.bankName}</td>
                         <td className="px-3 py-2">{w.accountNumber}</td>
                         <td className="px-3 py-2">{w.accountName}</td>
-                        <td className="px-3 py-2">-</td>
+                        <td className="px-3 py-2">{w.bulk_id || '-'}</td>
                         <td className="px-3 py-2">
                           {w.sourceProvider === 'manual'
                             ? 'Manual Entry'
@@ -1310,16 +1325,15 @@ export default function WithdrawPage() {
                         </td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium
-                          ${
-                            w.status === 'COMPLETED'
-                              ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
-                              : w.status === 'PENDING'
-                              ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
-                              : w.status === 'FAILED'
-                              ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                              : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
-                          }`}
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              w.status === 'COMPLETED'
+                                ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
+                                : w.status === 'PENDING'
+                                ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
+                                : w.status === 'FAILED'
+                                ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
+                                : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
+                            }`}
                           >
                             {w.status}
                           </span>
@@ -1386,7 +1400,7 @@ export default function WithdrawPage() {
         </section>
       </div>
 
-      {/* ── MODAL: IMPORT (Bulk) */}
+      {/* Bulk Import Modal */}
       {importOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-4xl rounded-2xl bg-neutral-900 p-6 shadow-xl">
@@ -1452,7 +1466,7 @@ export default function WithdrawPage() {
               </span>
             </div>
 
-            {/* Preview table */}
+            {/* Preview Table */}
             <div className="mb-4 max-h-[50vh] overflow-auto rounded-xl border border-neutral-800">
               <table className="min-w-full text-sm">
                 <thead className="bg-neutral-900/80 backdrop-blur">
@@ -1510,7 +1524,7 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2">Bulk</td>
                         <td className="px-3 py-2">{r.bankCode}</td>
                         <td className="px-3 py-2">{r.accountNumber}</td>
-                        <td className="px-3 py-2">API</td>
+                        <td className="px-3 py-2">{r.idBulk}</td>
                         <td className="px-3 py-2">{money(r.amount)}</td>
                         <td className="px-3 py-2">
                           <span
@@ -1569,7 +1583,7 @@ export default function WithdrawPage() {
         </div>
       )}
 
-      {/* ── MODAL: NEW WITHDRAWAL (single) */}
+      {/* Single Withdrawal Modal */}
       {open && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
@@ -1593,7 +1607,6 @@ export default function WithdrawPage() {
               className="grid gap-3"
               onSubmit={submit}
             >
-              {/* Sub-wallet */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Sub-wallet
@@ -1616,7 +1629,6 @@ export default function WithdrawPage() {
                 </select>
               </div>
 
-              {/* Bank */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Bank
@@ -1639,7 +1651,6 @@ export default function WithdrawPage() {
                 </select>
               </div>
 
-              {/* Account Number */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Account Number
@@ -1653,7 +1664,6 @@ export default function WithdrawPage() {
                 />
               </div>
 
-              {/* Account Name (readonly) */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Account Name
@@ -1674,7 +1684,6 @@ export default function WithdrawPage() {
                 </div>
               </div>
 
-              {/* Amount */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Amount
@@ -1689,7 +1698,6 @@ export default function WithdrawPage() {
                 />
               </div>
 
-              {/* OTP */}
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   OTP
