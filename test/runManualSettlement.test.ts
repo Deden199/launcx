@@ -46,7 +46,7 @@ test('runManualSettlement settles PAID orders', async () => {
     updateMany: async () => ({ count: 1 })
   }
 
-  ;(prisma as any).$queryRaw = async () => [{ locked: true }]
+  ;(prisma as any).queryRaw = async () => [{ locked: true }]
 
   const orderUpdates: any[] = []
   ;(prisma as any).$transaction = async (fn: any) =>
@@ -78,4 +78,3 @@ test('runManualSettlement settles PAID orders', async () => {
 
   ;(billing as any).postBalanceMovement = originalPost
 })
-

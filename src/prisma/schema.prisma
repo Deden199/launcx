@@ -260,6 +260,9 @@ model Order {
   loanAt              DateTime?
   loanBy              String?
   loanedAt            DateTime?
+  type                String         @default("single")  // "single" or "bulk" - for bulk payment grouping
+  bulkId              String?         // Reference to bulk payment ID (only populated if type is "bulk")
+  expiredAt           Int             @default(300)      // TTL in minutes (default: 300 minutes = 5 hours)
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
@@ -273,6 +276,8 @@ model Order {
   @@index([pgRefId])
   @@index([partnerClientId, status, createdAt])
   @@index([merchantId, createdAt])
+  @@index([type])
+  @@index([bulkId])
 }
 
 model LoanEntry {
@@ -401,6 +406,8 @@ model WithdrawRequest {
   sourceProvider     String
   withdrawFeePercent Float
   withdrawFeeFlat    Float
+  type               String             @default("single")  // "single" or "bulk"
+  bulkId             String?             // Reference to bulk withdrawal ID (only populated if type is "bulk")
   partnerClient      PartnerClient      @relation(fields: [partnerClientId], references: [id])
   subMerchant        sub_merchant       @relation("SubMerchantWithdrawals", fields: [subMerchantId], references: [id])
 
@@ -411,12 +418,17 @@ model WithdrawRequest {
   @@index([subMerchantId, status, createdAt])
   @@index([partnerClientId, status, createdAt])
   @@index([partnerClientId, createdAt])
+  @@index([type])
+  @@index([bulkId])
 }
 
 model SubMerchantBalance {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   subMerchantId    String   @unique
-  availableBalance Float    @default(0.0)
+  balance          Float    @default(0.0) // Pre-calculated balance (totalIn - totalOut)
+  totalIn          Float    @default(0.0) // Total settlements received
+  totalOut         Float    @default(0.0) // Total withdrawals (pending + completed)
+  availableBalance Float    @default(0.0) // Legacy field, kept for compatibility
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -482,6 +494,28 @@ model CallbackJobDeadLetter {
 }
 
 model HilogateCallbackWatcher {
+  refId        String   @id @map("_id")
+  attemptCount Int      @default(0)
+  processed    Boolean  @default(false)
+  nextRetryAt  DateTime
+
+  @@index([processed])
+  @@index([nextRetryAt])
+  @@index([processed, nextRetryAt])
+}
+
+model Ing1CallbackWatcher {
+  orderId      String   @id @map("_id")
+  attemptCount Int      @default(0)
+  processed    Boolean  @default(false)
+  nextRetryAt  DateTime
+
+  @@index([processed])
+  @@index([nextRetryAt])
+  @@index([processed, nextRetryAt])
+}
+
+model Ing1WithdrawalWatcher {
   refId        String   @id @map("_id")
   attemptCount Int      @default(0)
   processed    Boolean  @default(false)
