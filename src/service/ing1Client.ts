@@ -112,6 +112,7 @@ export interface Ing1CashoutInquiryParams {
   accountNumber: string;
   amount: number;
   clientReff: string;
+  custno?: string; // Customer number - required by INA API but defaults to empty string
   customerName?: string;
   remark?: string;
   merchantId?: string;
@@ -369,6 +370,10 @@ export class Ing1Client {
       const response = await this.http.request<T>({ ...config, headers });
       const payload: any = response.data;
       const rc = typeof payload?.rc === 'number' ? payload.rc : Number(payload?.rc ?? NaN);
+      console.log(`[Ing1Client] Response - rc=${rc}, message=${payload?.message}, status=${response.status}`);
+      if (payload?.data?.error) {
+        console.log(`[Ing1Client] Response errors:`, JSON.stringify(payload.data.error));
+      }
       if (allowRetry && rc === 98) {
         await this.ensureToken(true);
         return this.authorizedRequest<T>(config, false, retryWithV2);
@@ -376,6 +381,9 @@ export class Ing1Client {
       return response.data;
     } catch (err) {
       console.log(`[Ing1Client] authorizedRequest ERROR - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`, err instanceof Error ? err.message : String(err));
+      if (axios.isAxiosError(err)) {
+        console.log(`[Ing1Client] HTTP Status: ${err.response?.status}, Response:`, JSON.stringify(err.response?.data));
+      }
 
       // If 404/500 and we haven't tried v2 yet, retry with v2
       if (retryWithV2 && axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 500)) {
@@ -532,7 +540,8 @@ export class Ing1Client {
     const payload: Record<string, any> = {
       bank_code: params.bankCode,
       account_no: params.accountNumber,
-      amount: params.amount,
+      custno: params.custno ?? params.clientReff, // REQUIRED by INA API - use clientReff as default
+      amount: params.amount ?? 0,
       client_reff: params.clientReff,
     };
 
@@ -542,9 +551,13 @@ export class Ing1Client {
     const merchantId = params.merchantId ?? this.cfg.merchantId;
     if (merchantId) payload.merchant_id = merchantId;
 
+    // NOTE: INA API uses /transaction/inquiry for all inquiries (including cashout validation)
+    // The /transaction/cashout/inquiry endpoint does not exist in the Billers Engine API
+    // IMPORTANT: The custno field is REQUIRED by the INA API
+    console.log(`[Ing1Client] cashoutInquiry - sending payload:`, JSON.stringify(payload, null, 2));
     const data = await this.authorizedRequest<any>({
       method: 'POST',
-      url: 'transaction/cashout/inquiry',
+      url: 'transaction/inquiry',
       data: payload,
     });
 
