@@ -208,6 +208,7 @@ export default function ApiClientsPage() {
               <option value="hilogate">Hilogate</option>
               <option value="oy">OY Indonesia</option>
               <option value="gidi">Gidi</option>
+              <option value="ing1">INA Cash</option>
             </select>
             <select
               value={newForceSchedule}

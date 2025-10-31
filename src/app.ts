@@ -246,10 +246,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
-// Removed duplicate immediate listen and duplicate cron bootstrap. The single server
-// start and cron bootstrap happen inside the async IIFE below to ensure graceful
-// shutdown wiring and single initialization.
-// scheduleSettlementChecker().catch(err => logger.error(err));
+scheduleSettlementChecker().catch(err => logger.error(err));
 // scheduleDashboardSummary();
 // scheduleLoanSettlementCron();
 // 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen
