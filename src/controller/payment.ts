@@ -34,7 +34,8 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
   try {
     // 0) Ambil partner-client ID dari apiKeyAuth
     const clientId = req.clientId!
-    
+    logger.info(`[Payment] createTransaction: clientId=${clientId}, body=${JSON.stringify(req.body)}`)
+
     // 1) merchantName default 'hilogate'
     const merchantName = String(req.body.merchantName ?? 'hilogate')
       .trim()
@@ -58,6 +59,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
 
     // 4) validate
     if (isNaN(price) || price <= 0) {
+      logger.warn(`[Payment] Invalid price: ${price}`)
       return res
         .status(400)
         .json(createErrorResponse('`price` harus > 0'))
@@ -68,6 +70,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
 
     })
     if (!client) {
+      logger.error(`[Payment] PartnerClient not found: clientId=${clientId}`)
       return res
         .status(404)
         .json(createErrorResponse('PartnerClient tidak ditemukan'))

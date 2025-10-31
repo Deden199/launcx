@@ -20,7 +20,13 @@ import {
   Bar,
   CartesianGrid,
 } from 'recharts'
+import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
+import timezone from 'dayjs/plugin/timezone'
+import { formatDateTimeInWIBShort } from '@/utils/datetime'
 
+dayjs.extend(utc)
+dayjs.extend(timezone)
 function parseJwt(t: string) {
   try {
     return JSON.parse(atob(t.split('.')[1]))
@@ -89,48 +95,44 @@ const AdminWithdrawForm = dynamic(() => import('@/components/dashboard/AdminWith
 
 // ——— Time utils (WIB) ———
 const TZ = 'Asia/Jakarta'
-const fmtISODateJak = (d: Date) =>
-  new Intl.DateTimeFormat('sv-SE', { timeZone: TZ }).format(d) // yyyy-mm-dd
+const fmtISODateJak = (value: Date | string | number) => dayjs(value).tz(TZ).format('YYYY-MM-DD')
 
 function startOfDayJak(d: Date) {
-  const local = new Date(d)
-  local.setHours(0, 0, 0, 0)
-  return new Date(local.toLocaleString('en-US', { timeZone: TZ }))
+  return dayjs(d).tz(TZ).startOf('day').toDate()
+
 }
 function endOfDayJak(d: Date) {
-  const local = new Date(d)
-  local.setHours(23, 59, 59, 999)
-  return new Date(local.toLocaleString('en-US', { timeZone: TZ }))
+  return dayjs(d).tz(TZ).endOf('day').toDate()
+
 }
 function nowJak() {
+
   return new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
 }
 function getPresetBounds(range: 'today' | 'yesterday' | 'week' | 'month') {
+    const now = dayjs().tz(TZ)
+
   if (range === 'today') {
-    return { start: startOfDayJak(new Date()), end: nowJak() }
+    return { start: now.startOf('day').toDate(), end: now.toDate() }
   }
   if (range === 'yesterday') {
-    const y = new Date()
-    y.setDate(y.getDate() - 1)
-    return { start: startOfDayJak(y), end: endOfDayJak(y) }
+    const y = now.subtract(1, 'day')
+    return { start: y.startOf('day').toDate(), end: y.endOf('day').toDate() }
   }
   if (range === 'week') {
-    const s = new Date()
-    s.setDate(s.getDate() - 6)
-    return { start: startOfDayJak(s), end: nowJak() }
+    const end = now
+    const start = end.subtract(6, 'day')
+    return { start: start.startOf('day').toDate(), end: end.toDate() }
   }
-  const s = new Date()
-  s.setDate(s.getDate() - 29)
-  return { start: startOfDayJak(s), end: nowJak() }
+  const start = now.subtract(29, 'day')
+  return { start: start.startOf('day').toDate(), end: now.toDate() }
 }
 
 // === Granularity & bucketing ===
 function isSameJakDay(a: Date, b: Date) {
-  const aj = new Date(a.toLocaleString('en-US', { timeZone: TZ }))
-  const bj = new Date(b.toLocaleString('en-US', { timeZone: TZ }))
-  return aj.getFullYear() === bj.getFullYear() &&
-    aj.getMonth() === bj.getMonth() &&
-    aj.getDate() === bj.getDate()
+  const aj = dayjs(a).tz(TZ)
+  const bj = dayjs(b).tz(TZ)
+  return aj.year() === bj.year() && aj.month() === bj.month() && aj.date() === bj.date()
 }
 function getGranularity(
   range: 'today' | 'yesterday' | 'week' | 'month' | 'custom',
@@ -511,13 +513,13 @@ export default function DashboardPage() {
 
       const volumeSeries = Array.isArray(data?.points)
         ? data.points.map(p => {
-            const dtJak = new Date(new Date(p.timestamp).toLocaleString('en-US', { timeZone: TZ }))
+            const dtJak = dayjs(p.timestamp).tz(TZ)
             if (granularity === 'hour') {
-              const dayKey = fmtISODateJak(dtJak)
-              const h = String(dtJak.getHours()).padStart(2, '0')
+                 const dayKey = dtJak.format('YYYY-MM-DD')
+              const h = dtJak.format('HH')
               return { key: `${dayKey} ${h}`, label: `${h}:00`, amount: p.totalAmount, count: p.count }
             }
-            const key = fmtISODateJak(dtJak)
+            const key = dtJak.format('YYYY-MM-DD')
             const [y, m, d] = key.split('-')
             return { key, label: `${d}/${m}`, amount: p.totalAmount, count: p.count }
           })
@@ -897,27 +899,25 @@ export default function DashboardPage() {
       </section>
 
       {/* Transactions & Withdraw History */}
-      <div className="grid grid-cols-1 2xl:grid-cols-3 gap-6">
-        <div className="2xl:col-span-2 space-y-6">
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 shadow-sm">
-            <TransactionsTable
-              search={search}
-              setSearch={setSearch}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              loadingTx={loadingTx}
-              txs={txs}
-              perPage={perPage}
-              setPerPage={setPerPage}
-              page={page}
-              setPage={setPage}
-              totalPages={totalPages}
-              buildParams={buildParams}
-              onDateChange={handleDateChange}
-            />
-          </div>
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 shadow-sm">
+          <TransactionsTable
+            search={search}
+            setSearch={setSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            loadingTx={loadingTx}
+            txs={txs}
+            perPage={perPage}
+            setPerPage={setPerPage}
+            page={page}
+            setPage={setPage}
+            totalPages={totalPages}
+            buildParams={buildParams}
+            onDateChange={handleDateChange}
+          />
         </div>
-        <section className="2xl:col-span-1 rounded-2xl border border-neutral-800 p-4 sm:p-5 bg-neutral-900/70 shadow-sm">
+        <section className="rounded-2xl border border-neutral-800 p-4 sm:p-5 bg-neutral-900/70 shadow-sm">
           <h2 className="text-lg font-semibold mb-3">Withdrawal History</h2>
           <WithdrawalHistory loadingWd={loadingWd} withdrawals={withdrawals} />
         </section>
@@ -948,9 +948,8 @@ export default function DashboardPage() {
                   {adminWithdrawals.length ? (
                     adminWithdrawals.map(a => (
                       <tr key={a.id} className="border-b border-neutral-800 last:border-0 hover:bg-neutral-900/60">
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {new Date(a.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
-                        </td>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatDateTimeInWIBShort(a.createdAt)}</td>
+
                         <td className="px-3 py-2">{a.wallet}</td>
                         <td className="px-3 py-2">{a.bankName}</td>
                         <td className="px-3 py-2">{a.accountNumber}</td>

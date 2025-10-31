@@ -1,0 +1,811 @@
+{
+  "info": {
+    "name": "INA Payment & Withdrawal Integration",
+    "description": "Complete Postman collection for INA (Inacash) payment creation, withdrawal, and settlement flows",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "ina-integration-collection",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Setup & Variables",
+      "description": "Configure your API credentials",
+      "item": [
+        {
+          "name": "Environment Setup",
+          "description": "Set your environment variables here",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Configure these variables in Postman Environment",
+                  "// 1. Click on Environment icon",
+                  "2. Create new environment: 'INA Integration'",
+                  "// 3. Add these variables:",
+                  "// - api_url: https://yourdomain.com",
+                  "// - api_key: your_api_key_here",
+                  "// - partner_token: your_jwt_token",
+                  "// - admin_token: your_admin_jwt_token",
+                  "// - sub_merchant_id: sub_ing1_123",
+                  "// - partner_client_id: partner_client_123",
+                  "// - customer_account: 1234567890",
+                  "// - bank_code: 002",
+                  ""
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. PAYMENT FLOW",
+      "description": "Create payments, track status, and process through settlement",
+      "item": [
+        {
+          "name": "1.1 Create Payment Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 100000,\n  \"playerId\": \"customer_123\",\n  \"buyer\": \"{{partner_client_id}}\",\n  \"merchantName\": \"ing1\",\n  \"flow\": \"embed\",\n  \"subMerchantId\": \"{{sub_merchant_id}}\",\n  \"sourceProvider\": \"ing1\",\n  \"transactionDescription\": \"Payment for Game Credit\",\n  \"customerEmail\": \"customer@example.com\",\n  \"customerFullName\": \"John Customer\",\n  \"customerPhone\": \"081234567890\",\n  \"paymentChannel\": \"QRIS\",\n  \"expiredTime\": 3600\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/v1/create-order",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "create-order"]
+            },
+            "description": "Create a new payment order and get checkout URL with QR code"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Save order ID for later use",
+                  "if (pm.response.code === 200) {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.environment.set('order_id', jsonData.data.orderId);",
+                  "  pm.environment.set('checkout_url', jsonData.data.checkoutUrl);",
+                  "  pm.environment.set('qr_payload', jsonData.data.qrPayload);",
+                  "  ",
+                  "  pm.test('Payment order created successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    pm.expect(jsonData.data.orderId).to.be.truthy;",
+                  "    pm.expect(jsonData.data.checkoutUrl).to.be.truthy;",
+                  "    pm.expect(jsonData.data.qrPayload).to.be.truthy;",
+                  "  });",
+                  "}",
+                  ""
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 Check Payment Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/orders/{{order_id}}",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "orders", "{{order_id}}"]
+            },
+            "description": "Check the current status of a payment order (PENDING, PAID, SETTLED)"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Get payment status', function () {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "  pm.expect(jsonData.data.status).to.be.oneOf(['PENDING', 'PAID', 'SETTLED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.3 Get All Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/orders?limit=10&offset=0&status=PAID",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "orders"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "status",
+                  "value": "PAID"
+                }
+              ]
+            },
+            "description": "List all orders with optional filtering by status"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. WITHDRAWAL FLOW",
+      "description": "Request withdrawals, validate accounts, and track completion",
+      "item": [
+        {
+          "name": "2.1 Check Partner Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{partner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/balance",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "balance"]
+            },
+            "description": "Check the current available balance for withdrawal"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Balance retrieved', function () {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "  pm.expect(jsonData.balance).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 Request Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{partner_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subMerchantId\": \"{{sub_merchant_id}}\",\n  \"sourceProvider\": \"ing1\",\n  \"account_number\": \"{{customer_account}}\",\n  \"bank_code\": \"{{bank_code}}\",\n  \"account_name\": \"John Partner\",\n  \"bank_name\": \"BRI\",\n  \"amount\": 500000,\n  \"account_name_alias\": \"John P\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/withdraw",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "withdraw"]
+            },
+            "description": "Request a withdrawal to a bank account"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.environment.set('withdrawal_ref', jsonData.refId);",
+                  "  pm.environment.set('withdrawal_id', jsonData.id);",
+                  "  ",
+                  "  pm.test('Withdrawal requested successfully', function () {",
+                  "    pm.expect(jsonData.refId).to.be.truthy;",
+                  "    pm.expect(jsonData.status).to.equal('PENDING');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 Check Withdrawal Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{partner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/withdrawals/{{withdrawal_ref}}",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "withdrawals", "{{withdrawal_ref}}"]
+            },
+            "description": "Check the status of a withdrawal (PENDING, COMPLETED, FAILED)"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Withdrawal status retrieved', function () {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "  pm.expect(jsonData.status).to.be.oneOf(['PENDING', 'COMPLETED', 'FAILED']);",
+                  "  pm.expect(jsonData.amount).to.be.a('number');",
+                  "  pm.expect(jsonData.pgFee).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.4 List Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{partner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/withdrawals?sourceProvider=ing1&limit=10&status=PENDING",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "withdrawals"],
+              "query": [
+                {
+                  "key": "sourceProvider",
+                  "value": "ing1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            },
+            "description": "List all withdrawals with optional filtering"
+          },
+          "response": []
+        },
+        {
+          "name": "2.5 Request Withdrawal with OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{partner_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subMerchantId\": \"{{sub_merchant_id}}\",\n  \"sourceProvider\": \"ing1\",\n  \"account_number\": \"{{customer_account}}\",\n  \"bank_code\": \"{{bank_code}}\",\n  \"account_name\": \"John Partner\",\n  \"bank_name\": \"BRI\",\n  \"amount\": 500000,\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/withdraw",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "withdraw"]
+            },
+            "description": "Request withdrawal with OTP if 2FA is enabled"
+          },
+          "response": []
+        },
+        {
+          "name": "2.6 Server-to-Server Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subMerchantId\": \"{{sub_merchant_id}}\",\n  \"sourceProvider\": \"ing1\",\n  \"account_number\": \"{{customer_account}}\",\n  \"bank_code\": \"{{bank_code}}\",\n  \"account_name\": \"John Partner\",\n  \"bank_name\": \"BRI\",\n  \"amount\": 500000\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/v1/client/dashboard/withdraw/s2s",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "client", "dashboard", "withdraw", "s2s"]
+            },
+            "description": "Server-to-Server withdrawal using API key instead of JWT token"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. SETTLEMENT FLOW",
+      "description": "Run manual settlement and check settlement status",
+      "item": [
+        {
+          "name": "3.1 Run Manual Settlement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": {\n    \"dateFrom\": \"2024-10-20\",\n    \"dateTo\": \"2024-10-24\",\n    \"paymentMethods\": [\"ing1\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/v1/admin/settlement/run-manual",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "admin", "settlement", "run-manual"]
+            },
+            "description": "Manually trigger settlement (normally runs automatically at 4 PM)"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.environment.set('settlement_job_id', jsonData.jobId);",
+                  "  ",
+                  "  pm.test('Settlement job started', function () {",
+                  "    pm.expect(jsonData.jobId).to.be.truthy;",
+                  "    pm.expect(jsonData.status).to.equal('running');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Check Settlement Job Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/admin/settlement/job/{{settlement_job_id}}",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "admin", "settlement", "job", "{{settlement_job_id}}"]
+            },
+            "description": "Check the progress and status of a settlement job"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Settlement job status retrieved', function () {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "  pm.expect(jsonData.status).to.be.oneOf(['running', 'completed', 'failed']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 Get Settlement History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/v1/admin/settlement/history?limit=10&offset=0",
+              "host": ["{{api_url}}"],
+              "path": ["api", "v1", "admin", "settlement", "history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get the history of settlement jobs"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. INA API (Direct - For Testing)",
+      "description": "Direct INA API calls (if testing against INA directly)",
+      "item": [
+        {
+          "name": "4.1 INA Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"merchant@example.com\",\n  \"password\": \"merchant_password\"\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/user/login",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["user", "login"]
+            },
+            "description": "Login to INA API and get JWT token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.environment.set('ina_token', jsonData.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 INA Create QRIS Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_code\": \"QRIS_DIRECT\",\n  \"amount\": 100000,\n  \"client_reff\": \"order_123456\",\n  \"remark\": \"Payment for Game Credit\",\n  \"expired_time\": \"2024-10-25T16:00:00Z\"\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/transaction/cashin/create",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["transaction", "cashin", "create"]
+            },
+            "description": "Create a QRIS payment directly with INA API"
+          },
+          "response": []
+        },
+        {
+          "name": "4.3 INA Check Payment Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reff\": \"TRX20241024001\"\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/transaction/cashin/check",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["transaction", "cashin", "check"]
+            },
+            "description": "Check payment status with INA API"
+          },
+          "response": []
+        },
+        {
+          "name": "4.4 INA Account Inquiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bankCode\": \"002\",\n  \"accountNumber\": \"1234567890\",\n  \"amount\": 500000,\n  \"clientReff\": \"wd-123456\"\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/transaction/cashout/inquiry",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["transaction", "cashout", "inquiry"]
+            },
+            "description": "Validate bank account and get transfer fee from INA"
+          },
+          "response": []
+        },
+        {
+          "name": "4.5 INA Execute Cashout Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reff\": \"REF20241024001\",\n  \"clientReff\": \"wd-123456\",\n  \"amount\": 500000\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/transaction/cashout/payment",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["transaction", "cashout", "payment"]
+            },
+            "description": "Execute cashout payment with INA API"
+          },
+          "response": []
+        },
+        {
+          "name": "4.6 INA Check Cashout Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reff\": \"REF20241024001\"\n}"
+            },
+            "url": {
+              "raw": "https://api.ing1.com/transaction/cashout/check",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["transaction", "cashout", "check"]
+            },
+            "description": "Check cashout payment status with INA API"
+          },
+          "response": []
+        },
+        {
+          "name": "4.7 INA Get Bank Codes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ina_token}}"
+              }
+            ],
+            "url": {
+              "raw": "https://api.ing1.com/common/banks",
+              "protocol": "https",
+              "host": ["api", "ing1", "com"],
+              "path": ["common", "banks"]
+            },
+            "description": "Get list of supported banks from INA"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. COMPLETE END-TO-END WORKFLOWS",
+      "description": "Full workflows combining multiple requests",
+      "item": [
+        {
+          "name": "Workflow 1: Payment to Settlement",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "https://postman-echo.com/get",
+              "host": ["postman-echo", "com"],
+              "path": ["get"]
+            },
+            "description": "Complete flow: Create Payment → Check Status → Settlement\n\nSteps:\n1. Run: 1.1 Create Payment Order\n2. Wait for customer to pay (simulate)\n3. Run: 1.2 Check Payment Status (wait for PAID)\n4. Run: 3.1 Run Manual Settlement\n5. Run: 3.2 Check Settlement Job Status\n6. Run: 1.2 Check Payment Status (should be SETTLED)"
+          },
+          "response": []
+        },
+        {
+          "name": "Workflow 2: Withdrawal Complete",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "https://postman-echo.com/get",
+              "host": ["postman-echo", "com"],
+              "path": ["get"]
+            },
+            "description": "Complete flow: Check Balance → Request Withdrawal → Check Status\n\nSteps:\n1. Run: 2.1 Check Partner Balance\n2. Run: 2.2 Request Withdrawal\n3. Wait 30 seconds for fallback checker\n4. Run: 2.3 Check Withdrawal Status (should be COMPLETED)\n5. Run: 2.1 Check Partner Balance (balance should be decreased)"
+          },
+          "response": []
+        },
+        {
+          "name": "Workflow 3: Full End-to-End",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "https://postman-echo.com/get",
+              "host": ["postman-echo", "com"],
+              "path": ["get"]
+            },
+            "description": "Complete end-to-end: Payment → Withdrawal → Settlement\n\nSteps:\n1. Run: 1.1 Create Payment Order\n2. Wait for customer to pay (simulate)\n3. Run: 2.1 Check Partner Balance (before)\n4. Run: 2.2 Request Withdrawal\n5. Wait 30 seconds\n6. Run: 2.3 Check Withdrawal Status (COMPLETED)\n7. Run: 3.1 Run Manual Settlement\n8. Run: 3.2 Check Settlement Job Status\n9. Run: 1.2 Check Payment Status (SETTLED)\n10. Run: 2.1 Check Partner Balance (after)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "api_url",
+      "value": "https://yourdomain.com",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "your_api_key_here",
+      "type": "string"
+    },
+    {
+      "key": "partner_token",
+      "value": "your_jwt_token",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "your_admin_jwt_token",
+      "type": "string"
+    },
+    {
+      "key": "sub_merchant_id",
+      "value": "sub_ing1_123",
+      "type": "string"
+    },
+    {
+      "key": "partner_client_id",
+      "value": "partner_client_123",
+      "type": "string"
+    },
+    {
+      "key": "customer_account",
+      "value": "1234567890",
+      "type": "string"
+    },
+    {
+      "key": "bank_code",
+      "value": "002",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "checkout_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "qr_payload",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "withdrawal_ref",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "withdrawal_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "settlement_job_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ina_token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
