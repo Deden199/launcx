@@ -868,7 +868,13 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
       query.client_reff ?? query.clientReff ?? query.client_ref ?? query.ref_id ?? query.refId
 
     if (!clientRef) {
-      return res.status(400).json({ error: 'Missing client reference' })
+      logger.warn('[ING1 Withdrawal Callback] Missing client reference');
+      return res.status(400).json({
+        success: false,
+        error: 'MISSING_CLIENT_REF',
+        message: 'Missing client_reff or ref_id parameter in callback',
+        statusCode: 400
+      })
     }
 
     const wr = await prisma.withdrawRequest.findUnique({
@@ -877,7 +883,13 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
     })
 
     if (!wr) {
-      return res.status(404).json({ error: 'Withdrawal not found' })
+      logger.warn('[ING1 Withdrawal Callback] Withdrawal not found', { refId: clientRef });
+      return res.status(404).json({
+        success: false,
+        error: 'WITHDRAWAL_NOT_FOUND',
+        message: `Withdrawal with refId ${clientRef} not found in system`,
+        statusCode: 404
+      })
     }
 
     const rc = rcStr != null ? Number(rcStr) : null
@@ -919,7 +931,14 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
     })
 
     if (result.count === 0) {
-      return res.json({ ok: true, updated: false })
+      logger.info('[ING1 Withdrawal Callback] No updates needed', { refId: clientRef, newStatus });
+      return res.json({
+        success: true,
+        ok: true,
+        updated: false,
+        statusCode: 200,
+        message: 'Withdrawal already processed'
+      })
     }
 
     if (newStatus === DisbursementStatus.FAILED) {
@@ -927,17 +946,67 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
         where: { id: wr.partnerClientId },
         data: { balance: { increment: wr.amount } },
       })
+      logger.info('[ING1 Withdrawal Callback] Withdrawal failed, balance refunded', {
+        refId: clientRef,
+        amount: wr.amount
+      });
     } else if (wr.status === DisbursementStatus.FAILED && newStatus === DisbursementStatus.COMPLETED) {
       await prisma.partnerClient.update({
         where: { id: wr.partnerClientId },
         data: { balance: { decrement: wr.amount } },
       })
+      logger.info('[ING1 Withdrawal Callback] Withdrawal completed from failed state', {
+        refId: clientRef,
+        amount: wr.amount
+      });
     }
 
-    return res.json({ ok: true, updated: true })
+    return res.json({
+      success: true,
+      ok: true,
+      updated: true,
+      statusCode: 200,
+      message: 'Withdrawal callback processed successfully',
+      refId: clientRef,
+      status: newStatus
+    })
   } catch (err: any) {
-    logger.error('[ing1WithdrawalCallback] error', err)
-    return res.status(500).json({ error: err.message || 'Internal server error' })
+    logger.error('[ING1 Withdrawal Callback] Error:', {
+      error: err.message,
+      code: err.code,
+      stack: err.stack
+    });
+
+    // Determine status code based on error
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    let message = 'Internal server error processing withdrawal callback';
+
+    if (err.message?.includes('not found') || err.message?.includes('not exist')) {
+      statusCode = 404;
+      errorCode = 'WITHDRAWAL_NOT_FOUND';
+      message = 'Withdrawal not found in system';
+    } else if (err.message?.includes('Invalid') || err.message?.includes('Validation')) {
+      statusCode = 400;
+      errorCode = 'INVALID_PAYLOAD';
+      message = 'Invalid callback payload';
+    } else if (err.message?.includes('Duplicate')) {
+      statusCode = 409;
+      errorCode = 'DUPLICATE_CALLBACK';
+      message = 'Callback already processed';
+    } else if (err.message?.includes('Balance') || err.message?.includes('Insufficient')) {
+      statusCode = 422;
+      errorCode = 'BALANCE_ERROR';
+      message = 'Error processing balance adjustment';
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      error: errorCode,
+      message: message,
+      statusCode: statusCode,
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    })
   }
 }
 export async function validateAccount(req: ClientAuthRequest, res: Response) {
