@@ -220,10 +220,39 @@ export interface Ing1CashoutHistoryResult {
   raw: any;
 }
 
-const mapRcToStatus = (rc: number): Ing1TransactionStatus => {
+const mapStatusText = (status: string | undefined | null): Ing1TransactionStatus | null => {
+  if (!status) return null;
+  const lowered = status.trim().toLowerCase();
+  if (!lowered) return null;
+  if (['success', 'paid', 'complete', 'completed', 'done'].includes(lowered)) return 'PAID';
+  if (['pending', 'process', 'processing', 'waiting'].includes(lowered)) return 'PENDING';
+  if (
+    [
+      'failed',
+      'fail',
+      'cancel',
+      'cancelled',
+      'expired',
+      'reject',
+      'rejected',
+      'void',
+      'error',
+    ].includes(lowered)
+  ) {
+    return 'FAILED';
+  }
+  return null;
+};
+
+const mapRcToStatus = (
+  rc: number,
+  statusText?: string | null
+): Ing1TransactionStatus => {
+  const fromText = mapStatusText(statusText);
+  if (fromText) return fromText;
+
   switch (rc) {
     case 0:
-      return 'PAID';
     case 91:
       return 'PENDING';
     case 99:
@@ -232,13 +261,8 @@ const mapRcToStatus = (rc: number): Ing1TransactionStatus => {
   }
 };
 
-const normalizeHistoryStatus = (status: string | undefined | null): Ing1TransactionStatus => {
-  if (!status) return 'FAILED';
-  const lowered = status.toLowerCase();
-  if (lowered === 'success' || lowered === 'paid') return 'PAID';
-  if (lowered === 'pending' || lowered === 'process') return 'PENDING';
-  return 'FAILED';
-};
+const normalizeHistoryStatus = (status: string | undefined | null): Ing1TransactionStatus =>
+  mapStatusText(status) ?? 'FAILED';
 
 const parseNumeric = (value: unknown): number | null => {
   if (value == null) return null;
@@ -252,6 +276,28 @@ const parseNumeric = (value: unknown): number | null => {
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : null;
   }
+  return null;
+};
+
+const extractStatusText = (payload: any): string | null => {
+  if (!payload) return null;
+
+  const candidates = [
+    payload?.status,
+    payload?.STATUS,
+    payload?.status_text,
+    payload?.statusText,
+    payload?.data?.status,
+    payload?.data?.STATUS,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+
   return null;
 };
 
@@ -369,6 +415,7 @@ export class Ing1Client {
       const response = await this.http.request<T>({ ...config, headers });
       const payload: any = response.data;
       const rc = typeof payload?.rc === 'number' ? payload.rc : Number(payload?.rc ?? NaN);
+      
       if (allowRetry && rc === 98) {
         await this.ensureToken(true);
         return this.authorizedRequest<T>(config, false, retryWithV2);
@@ -431,10 +478,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
+
     const result: Ing1CashinResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? null,
       clientReff: data?.client_reff ?? null,
       productCode: data?.product_code ?? productCode,
@@ -458,10 +507,13 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+            status: mapRcToStatus(rc, statusText),
+
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       productCode: data?.product_code ?? null,
@@ -486,6 +538,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1HistoryItem[] = historiesRaw.map((item) => ({
@@ -521,7 +575,7 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
@@ -549,12 +603,14 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const details = data?.data ?? {};
 
     const result: Ing1CashoutInquiryResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText ?? extractStatusText(details)),
       reff: data?.reff ?? details?.reff ?? null,
       clientReff: data?.client_reff ?? details?.client_reff ?? payload.client_reff ?? null,
       bankCode: details?.bank_code ?? details?.bankCode ?? payload.bank_code ?? null,
@@ -591,11 +647,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -614,11 +671,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -646,6 +704,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1CashoutHistoryItem[] = historiesRaw.map((item) => ({
@@ -681,7 +741,7 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
