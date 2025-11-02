@@ -120,6 +120,31 @@ const aliasFrom = (full: string) => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Header helpers
+const headerKey = (s: any) =>
+  String(s ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/\uFEFF/g, '')
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
+
+// Template + Required headers
+const TEMPLATE_HEADERS = [
+  'submerchantid',
+  'type',
+  'bankcode',
+  'accountnumber',
+  'idbulk',
+  'amount',
+  'bankname',
+  'accountname',
+  'branchcode',
+  'note',
+] as const;
+
+const REQUIRED_HEADERS = ['submerchantid', 'bankcode', 'accountnumber', 'amount'] as const;
+
 // =============================================
 // MAIN COMPONENT
 // =============================================
@@ -193,13 +218,36 @@ export default function WithdrawPage() {
   const ctlDashboard = useRef<AbortController | null>(null);
   const ctlList = useRef<AbortController | null>(null);
 
+  // File picker control
+  const [filePickerKey, setFilePickerKey] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Robust amount parser (supports "1.000,50" and "1,000.50")
+  const parseAmount = (v: any) => {
+    if (typeof v === 'number') return v;
+    const s = String(v ?? '').trim();
+    if (!s) return NaN;
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    const cleaned =
+      lastComma > lastDot
+        ? s.replace(/\./g, '').replace(',', '.')
+        : s.replace(/,/g, '');
+    return Number(cleaned);
+  };
+
+  useEffect(() => {
+    if (open) {
+      setBusy({ validating: false, submitting: false });
+      setError('');
+      setIsValid(false);
+    }
+  }, [open]);
+
   // =============================================
   // UTILITY FUNCTIONS
   // =============================================
 
-  /**
-   * Get provider configuration based on selected sub-merchant
-   */
   const getSelectedProvider = (
     subs: SubMerchant[],
     selectedSub: string
@@ -221,9 +269,6 @@ export default function WithdrawPage() {
     };
   };
 
-  /**
-   * Resolve bank code based on provider
-   */
   const resolveProviderBank = useCallback(
     (provider: Provider, bankCode: string) => {
       const bankObj = banks.find((b) => b.code === bankCode);
@@ -246,9 +291,6 @@ export default function WithdrawPage() {
     [banks]
   );
 
-  /**
-   * Recalculate bulk import statistics
-   */
   const recalcBulkInfo = (rows: BulkRow[]) => {
     const ok = rows.filter(
       (r) => (r.errors?.length ?? 0) === 0 && r.status === 'ok'
@@ -260,27 +302,43 @@ export default function WithdrawPage() {
     setBulkInfo({ ok, fail, queued });
   };
 
-  /**
-   * Normalize header keys for CSV parsing
-   */
-  const headerKey = (s: any) =>
-    String(s ?? '')
-      .toLowerCase()
-      .trim();
+  function validateHeaders(rawHeaders: any[]): { ok: boolean; reason?: string } {
+    const headers = (rawHeaders || []).map(headerKey);
+    if (!headers.length) {
+      return { ok: false, reason: 'File kosong atau header tidak terbaca.' };
+    }
+
+    const missing = (REQUIRED_HEADERS as readonly string[]).filter(
+      (k) => !headers.includes(k)
+    );
+    if (missing.length) {
+      return {
+        ok: false,
+        reason: `Header wajib hilang: ${missing.join(', ')}`,
+      };
+    }
+
+    // reject unknown columns
+    const allowed = new Set(TEMPLATE_HEADERS as readonly string[]);
+    const unknown = headers.filter((h) => !allowed.has(h));
+    if (unknown.length) {
+      return {
+        ok: false,
+        reason: `Ditemukan header yang tidak dikenali: ${unknown.join(
+          ', '
+        )}. Gunakan template.`,
+      };
+    }
+    return { ok: true };
+  }
 
   // =============================================
   // API DATA FETCHING
   // =============================================
 
-  /**
-   * Load sub-merchants from API with fallback to JWT and static data
-   */
   const loadSubMerchantsFromAPI = useCallback(async () => {
     try {
       setLoading(true);
-      console.log('🔄 Loading sub-merchants from API...');
-
-      // Try API first
       try {
         const response = await apiClient.get<SubMerchantResponse[]>(
           '/client/withdrawals/submerchants',
@@ -288,8 +346,6 @@ export default function WithdrawPage() {
         );
 
         const subMerchantsFromAPI = response.data;
-        console.log('📦 Sub-merchants from API:', subMerchantsFromAPI);
-
         if (subMerchantsFromAPI.length > 0) {
           const transformedData: SubMerchant[] = subMerchantsFromAPI.map(
             (item) => ({
@@ -302,7 +358,6 @@ export default function WithdrawPage() {
 
           setSubs(transformedData);
           setSelectedSub(transformedData[0]?.id || '');
-          console.log('✅ Using sub-merchants from API');
           return;
         }
       } catch (apiError) {
@@ -310,7 +365,6 @@ export default function WithdrawPage() {
       }
 
       // Fallback to JWT token only
-      console.warn('⚠️ Trying JWT token as fallback...');
       const token = localStorage.getItem('clientToken');
       let subMerchantsFromJWT: SubMerchantResponse[] = [];
 
@@ -339,16 +393,12 @@ export default function WithdrawPage() {
 
         setSubs(transformedData);
         setSelectedSub(transformedData[0]?.id || '');
-        console.log('✅ Using sub-merchants from JWT');
       } else {
-        // No fallback data - show empty state
-        console.warn('⚠️ No sub-merchants found');
         setSubs([]);
         setSelectedSub('');
       }
     } catch (error) {
       console.error('❌ Error in sub-merchants loading:', error);
-      // No fallback - show empty state
       setSubs([]);
       setSelectedSub('');
     } finally {
@@ -356,9 +406,6 @@ export default function WithdrawPage() {
     }
   }, []);
 
-  /**
-   * Load dashboard data
-   */
   const loadDashboard = useCallback(
     async (clientId: string | 'all') => {
       ctlDashboard.current?.abort();
@@ -383,9 +430,6 @@ export default function WithdrawPage() {
     [children.length]
   );
 
-  /**
-   * Load withdrawals history
-   */
   const loadWithdrawals = useCallback(async () => {
     ctlList.current?.abort();
     ctlList.current = new AbortController();
@@ -431,9 +475,6 @@ export default function WithdrawPage() {
     debouncedSearch,
   ]);
 
-  /**
-   * Refetch all data
-   */
   const refetchAll = useCallback(() => {
     loadDashboard(selectedChild);
     loadWithdrawals();
@@ -443,13 +484,11 @@ export default function WithdrawPage() {
   // EFFECTS AND DATA LOADING
   // =============================================
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchRef), 300);
     return () => clearTimeout(t);
   }, [searchRef]);
 
-  // Load initial data
   useEffect(() => {
     loadSubMerchantsFromAPI();
   }, [loadSubMerchantsFromAPI]);
@@ -466,7 +505,6 @@ export default function WithdrawPage() {
     };
   }, [loadWithdrawals]);
 
-  // Load banks when sub-merchant is selected
   useEffect(() => {
     if (!selectedSub || !subs.length) return;
     const { apiBanksParam } = getSelectedProvider(subs, selectedSub);
@@ -487,9 +525,6 @@ export default function WithdrawPage() {
   // SINGLE WITHDRAWAL HANDLERS
   // =============================================
 
-  /**
-   * Handle form input changes
-   */
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
@@ -498,8 +533,9 @@ export default function WithdrawPage() {
 
     if (name === 'amount') {
       const n = +value;
+      const subBal = subs.find((s) => s.id === selectedSub)?.balance ?? 0;
       if (!n || n <= 0) setError('Amount harus > 0');
-      else if (n > balance) setError('Melebihi saldo');
+      else if (n > subBal) setError('Melebihi saldo sub-wallet terpilih');
       else setError('');
     } else if (name === 'bankCode' || name === 'accountNumber') {
       setForm((f) => ({
@@ -516,21 +552,47 @@ export default function WithdrawPage() {
     }
   };
 
-  /**
-   * Validate bank account
-   */
   const validateAccount = async () => {
+    if (!selectedSub) {
+      setError('Pilih sub-wallet terlebih dahulu');
+      return;
+    }
+    if (!form.bankCode) {
+      setError('Pilih bank');
+      return;
+    }
+    if (!form.accountNumber?.trim()) {
+      setError('Nomor rekening wajib diisi');
+      return;
+    }
+
     setBusy((b) => ({ ...b, validating: true }));
     setError('');
+    setIsValid(false);
+
     try {
-      const { providerKey, sourceProvider } = getSelectedProvider(
-        subs,
-        selectedSub
-      );
-      const { bankObj, piroMeta } = resolveProviderBank(
-        providerKey,
-        form.bankCode
-      );
+      let providerKey: string, sourceProvider: string;
+      let bankObj: any, piroMeta: any;
+
+      try {
+        const sel = getSelectedProvider(subs, selectedSub);
+        providerKey = sel.providerKey;
+        sourceProvider = sel.sourceProvider;
+      } catch (e) {
+        console.error('getSelectedProvider error:', e);
+        setError('Sub-wallet tidak valid');
+        return;
+      }
+
+      try {
+        const resolved = resolveProviderBank(providerKey, form.bankCode);
+        bankObj = resolved.bankObj;
+        piroMeta = resolved.piroMeta;
+      } catch (e) {
+        console.error('resolveProviderBank error:', e);
+        setError('Kode bank tidak dikenali untuk provider ini');
+        return;
+      }
 
       const body: Record<string, any> = {
         bank_code:
@@ -541,7 +603,6 @@ export default function WithdrawPage() {
         sourceProvider,
         subMerchantId: selectedSub,
       };
-
       if (providerKey === 'piro') {
         body.bank_name = bankObj?.name ?? form.bankName;
         body.branch_code = piroMeta?.branchCode;
@@ -553,11 +614,12 @@ export default function WithdrawPage() {
         body,
         {
           validateStatus: () => true,
+          timeout: 20000,
         }
       );
 
-      if (res.status === 200 && res.data.status === 'valid') {
-        const holder = res.data.account_holder as string;
+      if (res.status === 200 && res.data?.status === 'valid') {
+        const holder = String(res.data.account_holder || '').trim();
         setForm((f) => ({
           ...f,
           accountName: holder,
@@ -570,11 +632,15 @@ export default function WithdrawPage() {
             '',
         }));
         setIsValid(true);
+        setError('');
       } else {
+        const apiErr =
+          res.data?.error || `Validasi gagal (status ${res.status})`;
         setIsValid(false);
-        setError(res.data.error || 'Rekening bank tidak ditemukan');
+        setError(apiErr);
       }
-    } catch {
+    } catch (e: any) {
+      console.error('validateAccount fatal error:', e);
       setIsValid(false);
       setError('Gagal koneksi ke server');
     } finally {
@@ -582,9 +648,6 @@ export default function WithdrawPage() {
     }
   };
 
-  /**
-   * Submit single withdrawal
-   */
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid || error) return;
@@ -648,7 +711,6 @@ export default function WithdrawPage() {
         setWithdrawals(list.data.data);
         setTotal(list.data.total);
 
-        // Reset form
         setForm((f) => ({
           ...f,
           amount: '',
@@ -678,9 +740,6 @@ export default function WithdrawPage() {
   // BULK WITHDRAWAL HANDLERS
   // =============================================
 
-  /**
-   * Download bulk template
-   */
   const downloadBulkTemplate = () => {
     if (subs.length === 0) {
       alert('Tidak ada sub-merchant yang tersedia');
@@ -728,12 +787,11 @@ export default function WithdrawPage() {
     URL.revokeObjectURL(url);
   };
 
-  /**
-   * Handle bulk file upload and parsing
-   */
   const handleBulkFile = async (file: File) => {
     setBulkParsing(true);
     setPageError('');
+    setBulkRows([]);
+    recalcBulkInfo([]);
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
@@ -744,6 +802,15 @@ export default function WithdrawPage() {
       }) as any[][];
 
       if (!rows.length) throw new Error('File kosong');
+
+      const validation = validateHeaders(rows[0] || []);
+      if (!validation.ok) {
+        setBulkRows([]);
+        recalcBulkInfo([]);
+        setPageError(validation.reason || 'File tidak sesuai template.');
+        fileInputRef.current && (fileInputRef.current.value = '');
+        return;
+      }
 
       const headers = (rows[0] || []).map(headerKey);
       const required = ['submerchantid', 'bankcode', 'accountnumber', 'amount'];
@@ -772,7 +839,7 @@ export default function WithdrawPage() {
           type: 'bulk',
           bankCode: String(r[idxOf('bankcode')] ?? '').trim(),
           accountNumber: String(r[idxOf('accountnumber')] ?? '').trim(),
-          amount: Number(r[idxOf('amount')]),
+          amount: parseAmount(r[idxOf('amount')]),
           bankName: String(r[idxOf('bankname')] ?? '').trim() || undefined,
           accountName:
             String(r[idxOf('accountname')] ?? '').trim() || undefined,
@@ -788,9 +855,13 @@ export default function WithdrawPage() {
         if (!row.subMerchantId) row.errors!.push('subMerchantId kosong');
         if (!row.bankCode) row.errors!.push('bankCode kosong');
         if (!row.accountNumber) row.errors!.push('accountNumber kosong');
-        if (!row.amount || row.amount <= 0)
+
+        if (!Number.isFinite(row.amount))
+          row.errors!.push('amount kosong atau tidak valid');
+        else if (row.amount <= 0)
           row.errors!.push('amount harus > 0');
-        if (row.amount > 1000000)
+
+        if (Number.isFinite(row.amount) && row.amount > 1000000)
           row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
 
         const subWallet = subs.find((s) => s.id === row.subMerchantId);
@@ -798,7 +869,7 @@ export default function WithdrawPage() {
           row.errors!.push(
             `Sub-merchant "${row.subMerchantId}" tidak ditemukan`
           );
-        } else if (row.errors!.length === 0 && row.amount > subWallet.balance) {
+        } else if ((row.errors?.length ?? 0) === 0 && row.amount > subWallet.balance) {
           row.errors!.push(
             `Saldo tidak mencukupi. Butuh: ${money(row.amount)}, Saldo: ${money(
               subWallet.balance
@@ -817,12 +888,10 @@ export default function WithdrawPage() {
       setPageError(e?.message || 'Gagal memproses file');
     } finally {
       setBulkParsing(false);
+      setFilePickerKey((k) => k + 1); // force remount input agar upload file yang sama juga re-parse
     }
   };
 
-  /**
-   * Submit bulk withdrawals
-   */
   const submitBulk = async () => {
     if (!bulkRows.length) return;
     if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
@@ -900,6 +969,7 @@ export default function WithdrawPage() {
         }
 
         try {
+          // NOTE: sesuaikan endpoint ini dengan backend kamu jika perlu
           const res = await apiClient.post('/withdrawals', body, {
             validateStatus: () => true,
           });
@@ -967,9 +1037,6 @@ export default function WithdrawPage() {
   // EXPORT AND PAGINATION
   // =============================================
 
-  /**
-   * Export withdrawals to Excel
-   */
   const exportToExcel = () => {
     const rows = [
       [
@@ -979,6 +1046,8 @@ export default function WithdrawPage() {
         'Bank',
         'Account',
         'Account Name',
+        'Type',
+        'Bulk ID',
         'Wallet',
         'Amount',
         'Fee',
@@ -1007,6 +1076,8 @@ export default function WithdrawPage() {
           w.bankName,
           w.accountNumber,
           w.accountName,
+          w.type,
+          w.bulk_id,
           walletDisplay,
           w.amount,
           fee,
@@ -1061,10 +1132,7 @@ export default function WithdrawPage() {
             >
               <option value="all">Semua Child</option>
               {children.map((c) => (
-                <option
-                  key={c.id}
-                  value={c.id}
-                >
+                <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
@@ -1191,7 +1259,9 @@ export default function WithdrawPage() {
                 dateFormat="dd-MM-yyyy"
                 className="h-10 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 text-sm text-neutral-100 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
                 calendarClassName="!bg-neutral-900 !text-neutral-100 !border !border-neutral-800 !rounded-xl !shadow-2xl !overflow-hidden"
-                weekDayClassName={() => '!text-neutral-400 !font-semibold'}
+                weekDayClassName={() =>
+                  '!text-neutral-400 !font-semibold'
+                }
                 dayClassName={() =>
                   'rounded-md !text-neutral-100 hover:!bg-neutral-800 focus:!bg-neutral-800'
                 }
@@ -1273,10 +1343,7 @@ export default function WithdrawPage() {
                       >
                         <span className="inline-flex items-center gap-1">
                           {h}
-                          <ArrowUpDown
-                            size={14}
-                            className="opacity-50"
-                          />
+                          <ArrowUpDown size={14} className="opacity-50" />
                         </span>
                       </th>
                     ))}
@@ -1368,10 +1435,7 @@ export default function WithdrawPage() {
                 className="h-9 rounded-lg border border-neutral-800 bg-neutral-900 px-2 text-sm outline-none"
               >
                 {[5, 10, 20].map((n) => (
-                  <option
-                    key={n}
-                    value={n}
-                  >
+                  <option key={n} value={n}>
                     {n}
                   </option>
                 ))}
@@ -1437,8 +1501,13 @@ export default function WithdrawPage() {
                   Unggah file <b>.csv</b> sesuai template
                 </label>
                 <input
+                  key={filePickerKey}
+                  ref={fileInputRef}
                   type="file"
                   accept=".csv"
+                  onClick={(e) => {
+                    (e.currentTarget as HTMLInputElement).value = '';
+                  }}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) handleBulkFile(f);
@@ -1512,10 +1581,7 @@ export default function WithdrawPage() {
                     </tr>
                   ) : (
                     bulkRows.map((r) => (
-                      <tr
-                        key={r.idx}
-                        className="border-b border-neutral-800"
-                      >
+                      <tr key={r.idx} className="border-b border-neutral-800">
                         <td className="px-3 py-2">{r.idx}</td>
                         <td className="px-3 py-2">
                           {subs.find((s) => s.id === r.subMerchantId)?.name ||
@@ -1603,10 +1669,7 @@ export default function WithdrawPage() {
               </button>
             </div>
 
-            <form
-              className="grid gap-3"
-              onSubmit={submit}
-            >
+            <form className="grid gap-3" onSubmit={submit}>
               <div>
                 <label className="mb-1 block text-sm text-neutral-300">
                   Sub-wallet
@@ -1619,10 +1682,7 @@ export default function WithdrawPage() {
                   required
                 >
                   {subs.map((s) => (
-                    <option
-                      key={s.id}
-                      value={s.id}
-                    >
+                    <option key={s.id} value={s.id}>
                       {s.name || s.provider} - {money(s.balance)}
                     </option>
                   ))}
@@ -1641,10 +1701,7 @@ export default function WithdrawPage() {
                 >
                   <option value="">Pilih bank…</option>
                   {banks.map((b) => (
-                    <option
-                      key={b.code}
-                      value={b.code}
-                    >
+                    <option key={b.code} value={b.code}>
                       {b.name}
                     </option>
                   ))}
@@ -1715,11 +1772,17 @@ export default function WithdrawPage() {
                 <button
                   type="button"
                   onClick={validateAccount}
-                  disabled={busy.validating}
+                  disabled={
+                    busy.validating ||
+                    !form.bankCode ||
+                    !form.accountNumber ||
+                    !selectedSub
+                  }
                   className="inline-flex items-center justify-center rounded-lg border border-amber-900/40 bg-amber-950/40 px-3 py-2 text-sm hover:bg-amber-900/30 disabled:opacity-50"
                 >
                   {busy.validating ? 'Validating…' : 'Validate'}
                 </button>
+
                 <button
                   type="submit"
                   disabled={!isValid || !!error || busy.submitting}
