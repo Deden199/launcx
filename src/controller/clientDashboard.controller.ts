@@ -130,202 +130,257 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
 const pendingDashboardRequests = new Map<string, Promise<any>>();
 
 export async function getClientDashboard(req: ClientAuthRequest, res: Response) {
-  try {
-    // (1) Build optimized cache key (minimal size)
-    const cacheKey = `dash:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '25'}`;
+    try {
+        // (1) Build cache key
+        const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}`;
 
-    // (2) Check cache FIRST (fastest path)
-    const cached = await cacheGet<any>(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
+        // (2) Check cache
+        const cached = await cacheGet<any>(cacheKey);
+        if (cached) {
+            return res.json(cached);
+        }
 
-    // (3) REQUEST DEDUPLICATION: Prevent concurrent identical requests from hitting DB
-    if (pendingDashboardRequests.has(cacheKey)) {
-      const result = await pendingDashboardRequests.get(cacheKey)!;
-      return res.json(result);
-    }
-
-    // (4) Create promise for this request
-    const dashboardPromise = (async () => {
-      try {
-        // (4a) Load user + partnerClient(+children) - single optimized query
+        // (3) Load user + partnerClient(+children)
         const user = await prisma.clientUser.findUnique({
-          where: { id: req.clientUserId! },
-          select: {
-            partnerClient: {
-              select: {
-                id: true,
-                name: true,
-                balance: true,
-                children: {
-                  select: { id: true, name: true, balance: true }
+            where: { id: req.clientUserId! },
+            include: {
+                partnerClient: {
+                    select: {
+                        id: true,
+                        name: true,
+                        balance: true,
+                        children: {
+                            select: {
+                                id: true,
+                                name: true,
+                                balance: true
+                            }
+                        }
+                    }
                 }
-              }
             }
-          }
         });
-        if (!user?.partnerClient) throw new Error('User tidak ditemukan');
-        const pc = user.partnerClient;
 
-        // (4b) Date params (default last 7 days)
-        const dateFrom = req.query.date_from
-          ? new Date(String(req.query.date_from))
-          : (() => { const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0); return d; })();
+        if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
+        const pc = user.partnerClient!;
 
-        const dateTo = req.query.date_to
-          ? new Date(String(req.query.date_to))
-          : new Date();
+        // (4) Date params (default last 7 days)
+        let dateFrom: Date;
+        let dateTo: Date;
 
-        // (4c) Status filter expansion (optimized)
+        dateFrom = req.query.date_from ? new Date(String(req.query.date_from)) : new Date();
+        if (!req.query.date_from) {
+            dateFrom.setDate(dateFrom.getDate() - 7);
+            dateFrom.setHours(0, 0, 0, 0);
+        }
+
+        dateTo = req.query.date_to ? new Date(String(req.query.date_to)) : new Date();
+
+        const createdAtFilter: { gte?: Date; lte?: Date } = {};
+        if (dateFrom) createdAtFilter.gte = dateFrom;
+        if (dateTo) createdAtFilter.lte = dateTo;
+
+        // (5) Status filter
         const rawStatus = (req.query as any).status;
         const allowed = DASHBOARD_STATUSES as readonly string[];
         let statuses: string[] = [];
 
         if (Array.isArray(rawStatus)) {
-          statuses = rawStatus.map(String).flatMap(s =>
-            s === ORDER_STATUS.SUCCESS
-              ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-              : [s]
-          ).filter(s => allowed.includes(s));
-        } else if (typeof rawStatus === 'string' && rawStatus.trim()) {
-          statuses = rawStatus.split(',').map(s => s.trim()).flatMap(s =>
-            s === ORDER_STATUS.SUCCESS
-              ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-              : [s]
-          ).filter(s => allowed.includes(s));
+            statuses = rawStatus
+                .map(String)
+                .flatMap(s =>
+                    s === ORDER_STATUS.SUCCESS
+                        ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
+                        : [s],
+                )
+                .filter(s => allowed.includes(s));
+        } else if (typeof rawStatus === 'string' && rawStatus.trim() !== '') {
+            statuses = rawStatus
+                .split(',')
+                .map(s => s.trim())
+                .flatMap(s =>
+                    s === ORDER_STATUS.SUCCESS
+                        ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
+                        : [s],
+                )
+                .filter(s => allowed.includes(s));
         }
 
-        if (!statuses.includes(ORDER_STATUS.LN_SETTLED) && statuses.includes(ORDER_STATUS.PAID)) {
-          statuses.push(ORDER_STATUS.LN_SETTLED);
+        if (statuses.includes(ORDER_STATUS.PAID) && !statuses.includes(ORDER_STATUS.LN_SETTLED)) {
+            statuses.push(ORDER_STATUS.LN_SETTLED);
         }
+
         if (statuses.length === 0) statuses = [...allowed];
 
-        // (4d) Pagination + search (strict limits to prevent memory issues)
-        const pageNum = Math.max(1, Math.min(10000, parseInt(String(req.query.page || '1'), 10)));
-        const pageSize = Math.min(50, Math.max(1, parseInt(String(req.query.limit || '25'), 10)));
-        const searchStr = (typeof req.query.search === 'string' ? req.query.search.trim() : '').substring(0, 100);
+        // (6) Pagination + search
+        const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+        const pageSize = Math.min(50, parseInt(String(req.query.limit || '25'), 10));
 
-        // (4e) Client IDs (single source of truth)
-        const clientIds = (typeof req.query.clientId === 'string' && req.query.clientId !== 'all' && req.query.clientId.trim())
-          ? [req.query.clientId]
-          : [pc.id, ...pc.children.map(c => c.id)];
+        const searchStr = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
-        // (4f) Build where clause
+        // (7) Client IDs
+        let clientIds: string[];
+        if (
+            typeof req.query.clientId === 'string' &&
+            req.query.clientId !== 'all' &&
+            req.query.clientId.trim()
+        ) {
+            clientIds = [req.query.clientId];
+        } else if (pc.children.length > 0) {
+            clientIds = [pc.id, ...pc.children.map(c => c.id)];
+        } else {
+            clientIds = [pc.id];
+        }
+
+        // (8) where clause
         const whereOrders: any = {
-          partnerClientId: { in: clientIds },
-          status: { in: statuses },
-          createdAt: { gte: dateFrom, lte: dateTo }
+            partnerClientId: { in: clientIds },
+            status: { in: statuses },
+            ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {}),
         };
 
         if (searchStr) {
-          whereOrders.OR = [
-            { id:       { contains: searchStr, mode: 'insensitive' } },
-            { rrn:      { contains: searchStr, mode: 'insensitive' } },
-            { playerId: { contains: searchStr, mode: 'insensitive' } },
-          ];
+            whereOrders.OR = [
+                { id: { contains: searchStr, mode: 'insensitive' } },
+                { rrn: { contains: searchStr, mode: 'insensitive' } },
+                { playerId: { contains: searchStr, mode: 'insensitive' } },
+            ];
         }
 
-        // (5) OPTIMIZED PARALLEL QUERIES: Use aggregation instead of in-memory filtering
-        const metricsStatuses = Array.from(new Set([...statuses, ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED, ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]));
+        // (9) Metrics statuses
+        const metricsStatuses = Array.from(
+            new Set([
+                ...statuses,
+                ORDER_STATUS.PAID,
+                ORDER_STATUS.LN_SETTLED,
+                ORDER_STATUS.SUCCESS,
+                ORDER_STATUS.DONE,
+                ORDER_STATUS.SETTLED,
+            ]),
+        );
 
+        // (10) Parallel queries
         const [metricsGrouped, orders, totalRows] = await Promise.all([
-          // Use database aggregation (MongoDB $group) instead of loading all docs
-          prisma.order.groupBy({
-            by: ['status'],
-            where: {
-              partnerClientId: { in: clientIds },
-              status: { in: metricsStatuses },
-              createdAt: { gte: dateFrom, lte: dateTo }
-            },
-            _sum: {
-              amount: true,
-              settlementAmount: true,
-              pendingAmount: true
-            }
-          }),
-          // Pagination prevents full table scan
-          prisma.order.findMany({
-            where: whereOrders,
-            orderBy: { createdAt: 'desc' },
-            skip: (pageNum - 1) * pageSize,
-            take: pageSize,
-            select: {
-              id: true, qrPayload: true, rrn: true, playerId: true,
-              amount: true, feeLauncx: true, settlementAmount: true,
-              pendingAmount: true, status: true, settlementStatus: true, createdAt: true,
-              paymentReceivedTime: true, trxExpirationTime: true
-            }
-          }),
-          // Count only the filtered set (not all records)
-          prisma.order.count({ where: whereOrders })
+            prisma.order.groupBy({
+                by: ['status'],
+                where: {
+                    partnerClientId: { in: clientIds },
+                    status: { in: metricsStatuses },
+                    ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {}),
+                },
+                _sum: {
+                    amount: true,
+                    settlementAmount: true,
+                    pendingAmount: true,
+                },
+            }),
+            // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
+            // FIX: Always apply pagination even with search to prevent memory overflow
+            prisma.order.findMany({
+                where: whereOrders,
+                orderBy: { createdAt: 'desc' },
+                skip: (pageNum - 1) * pageSize,
+                take: pageSize,
+                select: {
+                    id: true,
+                    qrPayload: true,
+                    rrn: true,
+                    playerId: true,
+                    amount: true,
+                    feeLauncx: true,
+                    settlementAmount: true,
+                    pendingAmount: true,
+                    status: true,
+                    settlementStatus: true,
+                    createdAt: true,
+                    paymentReceivedTime: true,
+                    trxExpirationTime: true,
+                },
+            }),
+            prisma.order.count({ where: whereOrders }),
         ]);
 
-        // (6) OPTIMIZED METRICS CALCULATION: Single pass instead of multiple filters
-        let totalPending = 0, totalPaid = 0, totalSettlement = 0, totalAmount = 0;
-        for (const g of metricsGrouped) {
-          const amt = g._sum.amount ?? 0;
-          const sett = g._sum.settlementAmount ?? 0;
-          const pend = g._sum.pendingAmount ?? 0;
+        // (11) Metrics calculation
+        const totalPending = metricsGrouped
+            .filter(g => g.status === ORDER_STATUS.PAID)
+            .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
 
-          if (g.status === ORDER_STATUS.PAID) totalPending += pend;
-          if ([ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any)) totalPaid += amt;
-          if ([ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any)) totalSettlement += sett;
-          if (statuses.includes(g.status as any)) totalAmount += amt;
-        }
+        const totalPaid = metricsGrouped
+            .filter(g => [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+            .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
 
-        // (7) MINIMAL OBJECT ALLOCATION: Reuse fields where possible
+        const totalSettlement = metricsGrouped
+            .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
+            .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0);
+
+        const totalAmount = metricsGrouped
+            .filter(g => statuses.includes(g.status as any))
+            .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
+
+        const totalCount = totalRows;
+
+        // (12) Balance
         const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
-        const totalActive = parentBal + pc.children
-          .filter(c => clientIds.includes(c.id))
-          .reduce((sum, c) => sum + (c.balance ?? 0), 0);
+        const childrenBal = pc.children
+            .filter(c => clientIds.includes(c.id))
+            .reduce((sum, c) => sum + (c.balance ?? 0), 0);
+        const totalActive = parentBal + childrenBal;
 
-        // (8) STREAM TRANSACTION MAPPING: Process one at a time instead of array.map
-        const transactions: any[] = [];
-        for (const o of orders) {
-          transactions.push({
-            id: o.id,
-            date: o.createdAt.toISOString(),
-            reference: o.qrPayload ?? '',
-            rrn: o.rrn ?? '',
-            playerId: o.playerId,
-            amount: o.amount,
-            feeLauncx: o.feeLauncx ?? 0,
-            netSettle: o.status === ORDER_STATUS.PAID ? (o.pendingAmount ?? 0) : (o.settlementAmount ?? 0),
-            settlementStatus: o.settlementStatus ?? '',
-            status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
-            paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
-            trxExpirationTime: o.trxExpirationTime?.toISOString() ?? ''
-          });
-        }
+        // (13) Map transactions (FIX utama di sini)
+        const transactions = orders.map(o => {
+            let status = o.status;
+            let settlementStatus = o.settlementStatus ?? '';
+
+            // FIX: kalau settlementStatus SUCCESS tapi status masih PENDING → ubah ke PAID
+            if (settlementStatus === 'SUCCESS' && status !== ORDER_STATUS.PAID) {
+                status = ORDER_STATUS.PAID;
+            }
+
+            // FIX: pending nettSettle jangan 0
+            const netSettle =
+                settlementStatus === 'SUCCESS'
+                    ? o.settlementAmount ?? 0
+                    : o.pendingAmount ?? o.settlementAmount ?? 0;
+
+            return {
+                id: o.id,
+                date: o.createdAt.toISOString(),
+                reference: o.qrPayload ?? '',
+                rrn: o.rrn ?? '',
+                playerId: o.playerId,
+                amount: o.amount,
+                feeLauncx: o.feeLauncx ?? 0,
+                netSettle,
+                settlementStatus,
+                status: status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : status,
+                paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
+                settlementTime: '',
+                trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
+            };
+        });
 
         const result = {
-          balance: totalActive,
-          totalPending,
-          totalAmount,
-          totalCount: totalRows,
-          totalSettlement,
-          totalPaid,
-          totalTransaksi: totalRows,
-          total: totalRows,
-          transactions,
-          children: pc.children
+            balance: totalActive,
+            totalPending,
+            totalAmount,
+            totalCount,
+            totalSettlement,
+            totalPaid,
+            totalTransaksi: totalCount,
+            total: totalCount,
+            transactions,
+            children: pc.children,
         };
 
-        // (9) Cache with aggressive TTL
-        await cacheSet(cacheKey, result, 120); // 2 minutes
-        return result;
-      } finally {
-        pendingDashboardRequests.delete(cacheKey);
-      }
-    })();
+        // (14) Cache
+        const ttl = getTTL('dashboard', 180);
+        await cacheSet(cacheKey, result, ttl);
 
-    pendingDashboardRequests.set(cacheKey, dashboardPromise);
-    const result = await dashboardPromise;
-    return res.json(result);
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Internal Server Error' });
-  }
+        return res.json(result);
+    } catch (err: any) {
+        console.error('Error in getClientDashboard:', err);
+        return res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
 }
 
 export async function exportClientTransactions(req: ClientAuthRequest, res: Response) {
