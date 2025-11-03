@@ -20,6 +20,7 @@ if (typeof webpackRuntime.WebpackError !== 'function') {
 }
 
 const nextConfig: NextConfig = {
+  
   reactStrictMode: true,
   outputFileTracingRoot: path.resolve(__dirname, '..'),
 }

@@ -351,7 +351,17 @@ export const createTransaction = async (
     });
     if (!ingSubs.length) throw new Error('No active ING1 credentials');
 
+    logger.info(`[Payment] Found ${ingSubs.length} ING1 provider(s):`,
+      ingSubs.map((s, i) => ({
+        index: i,
+        id: s.id,
+        email: (s.config as any)?.email,
+        merchantId: (s.config as any)?.merchantId
+      }))
+    );
+
     const ingCfg = ingSubs[0].config as Ing1Config;
+    logger.info(`[Payment] Using ING1 provider: email=${ingCfg.email}, merchantId=${ingCfg.merchantId}`);
     const ingClient = new Ing1Client(ingCfg);
     const cashinResp = await ingClient.createCashin({
       amount,
@@ -479,7 +489,7 @@ const apiResp = await hilClient.createTransaction({
 //   }
 // }
     const outer = apiResp.data;
-    const qrString = outer.data.qr_string;
+    const qrString = outer.qr_string;
 
     // 4) Simpan audit log
     await prisma.transaction_response.create({
@@ -860,7 +870,17 @@ if (mName === 'gidi') {
       const { data } = await axios.post(qrisUrl, formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      if (data.status_code === '00') return data;
+      if (data.status_code === '00') {
+        // Map GV response to OrderResponse format
+        return {
+          orderId: data.reference_id || custom,
+          checkoutUrl: data.checkout_url || qrisUrl,
+          qrPayload: data.qr_code || data.qr_string || undefined,
+          playerId: request.playerId,
+          totalAmount: amount,
+          expiredTs: data.expired_at || undefined,
+        };
+      }
       throw new Error(data.status_desc || 'GudangVoucher payment failed');
     } catch (err: any) {
       throw new Error(err.message || 'Error processing GudangVoucher payment');

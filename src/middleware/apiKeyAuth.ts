@@ -24,17 +24,21 @@ export default async function apiKeyAuth(
 ) {
   const gotKey = req.header('X-API-Key')
   const ts     = req.header('X-Timestamp')
+  console.log(`[Auth] Checking: gotKey=${!!gotKey}, ts=${ts}`)
   if (!gotKey || !ts)
     return res.status(401).json({ error: 'Missing API key or timestamp' })
 
   const timestamp = parseInt(ts, 10)
   const SKEW = 5 * 60 * 1000
-  if (isNaN(timestamp) || Math.abs(Date.now() - timestamp) > SKEW)
+  const timeDiff = Math.abs(Date.now() - timestamp)
+  console.log(`[Auth] timeDiff=${timeDiff}, SKEW=${SKEW}`)
+  if (isNaN(timestamp) || timeDiff > SKEW)
     return res.status(400).json({ error: 'Invalid or expired timestamp' })
 
   // Try to get from cache first (5 min TTL)
   const cacheKey = `apikey:${gotKey}`
   let clientData = await RedisCache.get<CachedClientData>(cacheKey)
+  console.log(`[Auth] Cache hit: ${!!clientData}`)
 
   if (!clientData) {
     // 1) Cari partnerClient + parentClientId from DB
@@ -42,6 +46,7 @@ export default async function apiKeyAuth(
       where: { apiKey: gotKey },
       select: { id: true, apiKey: true, isActive: true, parentClientId: true }
     })
+    console.log(`[Auth] DB lookup: client=${client?.id}, isActive=${client?.isActive}`)
 
     if (!client || !client.isActive)
       return res.status(401).json({ error: 'Invalid or inactive API key' })
@@ -78,5 +83,6 @@ export default async function apiKeyAuth(
     req.childrenIds = clientData.childrenIds
   }
 
+  console.log(`[Auth] ✓ Success: clientId=${req.clientId}, method=${req.method}, path=${req.path}`)
   next()
 }

@@ -196,6 +196,11 @@ export interface Ing1CashoutHistoryItem {
   raw: any;
 }
 
+export interface Ing1BankCode {
+  code: string;
+  name: string;
+}
+
 export interface Ing1CashoutHistoryResult {
   rc: number;
   message: string;
@@ -215,10 +220,39 @@ export interface Ing1CashoutHistoryResult {
   raw: any;
 }
 
-const mapRcToStatus = (rc: number): Ing1TransactionStatus => {
+const mapStatusText = (status: string | undefined | null): Ing1TransactionStatus | null => {
+  if (!status) return null;
+  const lowered = status.trim().toLowerCase();
+  if (!lowered) return null;
+  if (['success', 'paid', 'complete', 'completed', 'done'].includes(lowered)) return 'PAID';
+  if (['pending', 'process', 'processing', 'waiting'].includes(lowered)) return 'PENDING';
+  if (
+    [
+      'failed',
+      'fail',
+      'cancel',
+      'cancelled',
+      'expired',
+      'reject',
+      'rejected',
+      'void',
+      'error',
+    ].includes(lowered)
+  ) {
+    return 'FAILED';
+  }
+  return null;
+};
+
+const mapRcToStatus = (
+  rc: number,
+  statusText?: string | null
+): Ing1TransactionStatus => {
+  const fromText = mapStatusText(statusText);
+  if (fromText) return fromText;
+
   switch (rc) {
     case 0:
-      return 'PAID';
     case 91:
       return 'PENDING';
     case 99:
@@ -227,13 +261,8 @@ const mapRcToStatus = (rc: number): Ing1TransactionStatus => {
   }
 };
 
-const normalizeHistoryStatus = (status: string | undefined | null): Ing1TransactionStatus => {
-  if (!status) return 'FAILED';
-  const lowered = status.toLowerCase();
-  if (lowered === 'success' || lowered === 'paid') return 'PAID';
-  if (lowered === 'pending' || lowered === 'process') return 'PENDING';
-  return 'FAILED';
-};
+const normalizeHistoryStatus = (status: string | undefined | null): Ing1TransactionStatus =>
+  mapStatusText(status) ?? 'FAILED';
 
 const parseNumeric = (value: unknown): number | null => {
   if (value == null) return null;
@@ -250,6 +279,28 @@ const parseNumeric = (value: unknown): number | null => {
   return null;
 };
 
+const extractStatusText = (payload: any): string | null => {
+  if (!payload) return null;
+
+  const candidates = [
+    payload?.status,
+    payload?.STATUS,
+    payload?.status_text,
+    payload?.statusText,
+    payload?.data?.status,
+    payload?.data?.STATUS,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+
+  return null;
+};
+
 export class Ing1Client {
   private readonly http: AxiosInstance;
   private token: string | null;
@@ -258,8 +309,14 @@ export class Ing1Client {
 
   constructor(private readonly cfg: Ing1Config) {
     const trimmedBase = cfg.baseUrl.replace(/\/$/, '');
-    const version = cfg.apiVersion ? cfg.apiVersion.replace(/^\//, '') : '';
-    const baseURL = version ? `${trimmedBase}/${version}` : trimmedBase;
+    // Always try v1 first, fallback to v2 if we get 404
+    const version = 'v1';
+    // Construct base URL: append version to base URL
+    // Example: baseUrl='https://core-dev.inacash.co.id/api', version='v1' → 'https://core-dev.inacash.co.id/api/v1'
+    const baseURL = `${trimmedBase}/${version}`;
+
+    console.log(`[Ing1Client] Constructor - baseUrl=${cfg.baseUrl}, dbApiVersion=${cfg.apiVersion}, initialVersion=${version}, finalURL=${baseURL}`);
+    console.log(`[Ing1Client] Credentials - email=${cfg.email}, password=${cfg.password ? '***' : 'MISSING'}, permanentToken=${cfg.permanentToken ? '***' : 'MISSING'}, merchantId=${cfg.merchantId}, productCode=${cfg.productCode}`);
 
     this.http = axios.create({
       baseURL,
@@ -319,21 +376,33 @@ export class Ing1Client {
       throw new Error('Missing ING1 credentials (email/password)');
     }
 
-    const { data } = await this.http.post('user/login', {
-      email: this.cfg.email,
-      password: this.cfg.password,
-    });
+    try {
+      console.log(`[Ing1Client] login() - attempting login at ${this.http.defaults.baseURL}/user/login with email=${this.cfg.email}`);
+      const { data } = await this.http.post('user/login', {
+        email: this.cfg.email,
+        password: this.cfg.password,
+      });
 
-    const token = data?.data?.token ?? data?.token;
-    if (!token || typeof token !== 'string') {
-      throw new Error('Failed to login to ING1: token missing');
+      const token = data?.data?.token ?? data?.token;
+      if (!token || typeof token !== 'string') {
+        throw new Error('Failed to login to ING1: token missing');
+      }
+      console.log(`[Ing1Client] login() - SUCCESS, received token`);
+      return token;
+    } catch (err) {
+      console.log(`[Ing1Client] login() - ERROR:`, err instanceof Error ? err.message : String(err));
+      if (axios.isAxiosError(err)) {
+        console.log(`[Ing1Client] login() - HTTP ${err.response?.status}: ${err.response?.statusText}`);
+        console.log(`[Ing1Client] login() - Response:`, err.response?.data);
+      }
+      throw err;
     }
-    return token;
   }
 
   private async authorizedRequest<T = any>(
     config: AxiosRequestConfig,
-    allowRetry = true
+    allowRetry = true,
+    retryWithV2 = true
   ): Promise<T> {
     const token = await this.ensureToken();
     const headers = {
@@ -342,20 +411,37 @@ export class Ing1Client {
     };
 
     try {
+      console.log(`[Ing1Client] authorizedRequest - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`);
       const response = await this.http.request<T>({ ...config, headers });
       const payload: any = response.data;
       const rc = typeof payload?.rc === 'number' ? payload.rc : Number(payload?.rc ?? NaN);
+      
       if (allowRetry && rc === 98) {
         await this.ensureToken(true);
-        return this.authorizedRequest<T>(config, false);
+        return this.authorizedRequest<T>(config, false, retryWithV2);
       }
       return response.data;
     } catch (err) {
+      console.log(`[Ing1Client] authorizedRequest ERROR - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`, err instanceof Error ? err.message : String(err));
+
+      // If 404/500 and we haven't tried v2 yet, retry with v2
+      if (retryWithV2 && axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 500)) {
+        const currentBaseURL = this.http.defaults.baseURL || '';
+        const newBaseURL = currentBaseURL.replace(/\/v1$/, '/v2');
+
+        // Only retry if we actually changed the URL (i.e., it was v1)
+        if (newBaseURL !== currentBaseURL) {
+          console.log(`[Ing1Client] Got ${err.response?.status} with v1, retrying with v2: ${newBaseURL}`);
+          this.http.defaults.baseURL = newBaseURL;
+          return this.authorizedRequest<T>(config, allowRetry, false);
+        }
+      }
+
       if (allowRetry && axios.isAxiosError(err)) {
         const status = err.response?.status ?? 0;
         if (status === 401 || status === 403) {
           await this.ensureToken(true);
-          return this.authorizedRequest<T>(config, false);
+          return this.authorizedRequest<T>(config, false, retryWithV2);
         }
       }
       throw err;
@@ -383,6 +469,8 @@ export class Ing1Client {
     const merchantId = params.merchantId ?? this.cfg.merchantId;
     if (merchantId) payload.merchant_id = merchantId;
 
+    console.log(`[Ing1Client] createCashin - calling endpoint: transaction/cashin/create with payload:`, JSON.stringify(payload, null, 2));
+
     const data = await this.authorizedRequest<any>({
       method: 'POST',
       url: 'transaction/cashin/create',
@@ -390,10 +478,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
+
     const result: Ing1CashinResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? null,
       clientReff: data?.client_reff ?? null,
       productCode: data?.product_code ?? productCode,
@@ -417,10 +507,13 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+            status: mapRcToStatus(rc, statusText),
+
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       productCode: data?.product_code ?? null,
@@ -445,6 +538,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1HistoryItem[] = historiesRaw.map((item) => ({
@@ -480,7 +575,7 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
@@ -508,12 +603,14 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const details = data?.data ?? {};
 
     const result: Ing1CashoutInquiryResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText ?? extractStatusText(details)),
       reff: data?.reff ?? details?.reff ?? null,
       clientReff: data?.client_reff ?? details?.client_reff ?? payload.client_reff ?? null,
       bankCode: details?.bank_code ?? details?.bankCode ?? payload.bank_code ?? null,
@@ -550,11 +647,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -573,11 +671,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+    const statusText = extractStatusText(data);
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -605,6 +704,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1CashoutHistoryItem[] = historiesRaw.map((item) => ({
@@ -640,11 +741,46 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
     };
+  }
+
+  /** Get list of supported bank codes for withdrawals */
+  async getBankCodes(): Promise<Ing1BankCode[]> {
+    const data = await this.authorizedRequest<any>({
+      method: 'GET',
+      url: 'product',
+    });
+
+    // Billers Engine API returns products array
+    // Bank transfer products have codes like: TRF_BCA, TRF_BNI, TRF_MANDIRI, etc.
+    // We need to extract bank codes from product codes
+    let products = Array.isArray(data?.data) ? data.data : Array.isArray(data?.products) ? data.products : Array.isArray(data) ? data : [];
+
+    // Filter and map bank transfer products to bank codes
+    const banks: Ing1BankCode[] = products
+      .filter((product: any) => {
+        const code = String(product?.code ?? product?.product_code ?? '').toUpperCase();
+        // Include TRF_ (transfer) products which are bank transfers
+        return code.startsWith('TRF_') || code.includes('TRANSFER') || code.includes('BANK');
+      })
+      .map((product: any) => {
+        const code = String(product?.code ?? product?.product_code ?? '');
+        const name = String(product?.name ?? product?.description ?? code);
+
+        // Extract bank code from TRF_BCA format: remove TRF_ prefix
+        const bankCode = code.startsWith('TRF_') ? code.substring(4) : code;
+
+        return {
+          code: bankCode.toUpperCase(),
+          name: name.trim(),
+        };
+      });
+
+    return banks;
   }
 }
 

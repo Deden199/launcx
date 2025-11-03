@@ -96,7 +96,9 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
       pendingAmount: true,
       channel: true,
       createdAt: true,
-      subMerchant: { select: { credentials: true } }
+      pgRefId: true,
+      pgClientRef: true,
+      subMerchant: { select: { id: true, credentials: true } }
     }
   })
 
@@ -162,6 +164,73 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
               rrn: s.trx_id,
               st,
               tmt: d.settlement_time ? new Date(d.settlement_time) : undefined
+            }
+          } else if (o.channel === 'ing1' || o.channel === 'inacash') {
+            // Inacash/ING1 settlement check (using Billers Engine API)
+            const inaCreds = creds as any
+            const baseUrl = inaCreds.baseUrl || 'https://core-dev.inacash.co.id/api'
+            const apiVersion = inaCreds.apiVersion || 'v2'
+            const email = inaCreds.email
+            const password = inaCreds.password
+            const productCode = inaCreds.productCode || 'QRIS_DIRECT'
+            const custno = inaCreds.merchantId || inaCreds.custno
+
+            // Get transaction reference (pgRefId is the INA reff)
+            const pgRefId = o.pgRefId || o.id
+
+            if (!email || !password || !custno) {
+              logger.warn(`[SettlementCron] INA: missing credentials for order ${o.id}`)
+              return
+            }
+
+            try {
+              // Call INA Billers Engine API: POST {{BASE_URL}}/{{VERSION}}/transaction/cashin/check
+              // Example: https://core-dev.inacash.co.id/api/v2/transaction/cashin/check
+              const checkResp = await axios.post(
+                `${baseUrl}/${apiVersion}/transaction/cashin/check`,
+                {
+                  product_code: productCode,
+                  custno: custno,
+                  reff: pgRefId,
+                  email: email,
+                  password: password
+                },
+                {
+                  headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                  httpsAgent,
+                  timeout: 15_000
+                }
+              )
+
+              const resp = checkResp.data
+              // rc: 0 = success, 91 = pending, 99 = failed
+              if (resp.rc !== 0) {
+                logger.debug(`[SettlementCron] INA order ${o.id} not ready (rc=${resp.rc})`)
+                return // Not ready for settlement yet
+              }
+
+              const data = resp.data || {}
+              const status = (data.status || resp.status || '').toUpperCase()
+
+              // Check if payment is confirmed
+              if (status !== 'PAID' && status !== 'COMPLETED' && status !== 'SUCCESS') {
+                logger.debug(`[SettlementCron] INA order ${o.id} status=${status}, waiting for PAID`)
+                return
+              }
+
+              // Parse settlement time
+              const paidAt = data.paid_at || data.paidAt || data.payment_received_time
+              const settlementTmt = paidAt ? new Date(paidAt) : undefined
+
+              settlementResult = {
+                netAmt: o.pendingAmount ?? data.amount ?? data.total ?? 0,
+                rrn: resp.reff || pgRefId || 'N/A',
+                st: 'COMPLETED',
+                tmt: settlementTmt
+              }
+            } catch (inaErr: any) {
+              logger.error(`[SettlementCron] INA check failed for order ${o.id}:`, inaErr.message)
+              return // Skip this order
             }
           }
 

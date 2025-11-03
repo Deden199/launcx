@@ -287,6 +287,7 @@ export default function EditClientPage() {
                 <option value="hilogate">Hilogate</option>
                 <option value="oy">OY Indonesia</option>
                 <option value="gidi">Gidi</option>
+                <option value="ing1">INA1</option>
               </select>
             </div>
 
