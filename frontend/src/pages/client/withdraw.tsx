@@ -38,6 +38,7 @@ interface Withdrawal {
   amount: number;
   status: string;
   createdAt: string;
+  paidAt?: string;
   completedAt?: string;
   sourceProvider?: string;
   type?: string;
@@ -213,6 +214,7 @@ export default function WithdrawPage() {
     fail: number;
     queued: number;
   }>({ ok: 0, fail: 0, queued: 0 });
+  const [bulkError, setBulkError] = useState<string>(''); // ⬅️ error khusus modal
 
   // Abort controllers for API calls
   const ctlDashboard = useRef<AbortController | null>(null);
@@ -281,10 +283,10 @@ export default function WithdrawPage() {
         provider === 'oy'
           ? oyCodeMap[(bankObj?.name || '').toLowerCase()] ?? bankCode
           : provider === 'gidi'
-          ? gidiChannelMap[(bankObj?.name || '').toLowerCase()] ?? bankCode
-          : provider === 'piro'
-          ? piroMeta?.bankCode ?? bankCode
-          : bankCode;
+            ? gidiChannelMap[(bankObj?.name || '').toLowerCase()] ?? bankCode
+            : provider === 'piro'
+              ? piroMeta?.bankCode ?? bankCode
+              : bankCode;
 
       return { bankObj, piroMeta, payloadBankCode };
     },
@@ -789,7 +791,7 @@ export default function WithdrawPage() {
 
   const handleBulkFile = async (file: File) => {
     setBulkParsing(true);
-    setPageError('');
+    setBulkError(''); // ⬅️ gunakan error khusus modal
     setBulkRows([]);
     recalcBulkInfo([]);
     try {
@@ -807,7 +809,7 @@ export default function WithdrawPage() {
       if (!validation.ok) {
         setBulkRows([]);
         recalcBulkInfo([]);
-        setPageError(validation.reason || 'File tidak sesuai template.');
+        setBulkError(validation.reason || 'File tidak sesuai template.');
         fileInputRef.current && (fileInputRef.current.value = '');
         return;
       }
@@ -818,7 +820,7 @@ export default function WithdrawPage() {
       if (missing.length) {
         setBulkRows([]);
         recalcBulkInfo([]);
-        setPageError(`Header wajib hilang: ${missing.join(', ')}`);
+        setBulkError(`Header wajib hilang: ${missing.join(', ')}`);
         return;
       }
 
@@ -885,7 +887,7 @@ export default function WithdrawPage() {
     } catch (e: any) {
       setBulkRows([]);
       recalcBulkInfo([]);
-      setPageError(e?.message || 'Gagal memproses file');
+      setBulkError(e?.message || 'Gagal memproses file');
     } finally {
       setBulkParsing(false);
       setFilePickerKey((k) => k + 1); // force remount input agar upload file yang sama juga re-parse
@@ -895,12 +897,12 @@ export default function WithdrawPage() {
   const submitBulk = async () => {
     if (!bulkRows.length) return;
     if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
-      setPageError('Perbaiki baris yang error sebelum submit.');
+      setBulkError('Perbaiki baris yang error sebelum submit.');
       return;
     }
 
     setBulkSubmitting(true);
-    setPageError('');
+    setBulkError('');
 
     try {
       const cloned = bulkRows.map((r) => ({ ...r }));
@@ -1005,9 +1007,8 @@ export default function WithdrawPage() {
 
       if (successCount > 0) {
         await Promise.all([loadWithdrawals(), loadDashboard(selectedChild)]);
-        setPageError(
-          `✅ ${successCount} transaksi berhasil diproses${
-            hasError ? ', beberapa gagal' : ''
+        setBulkError(
+          `✅ ${successCount} transaksi berhasil diproses${hasError ? ', beberapa gagal' : ''
           }`
         );
       }
@@ -1017,17 +1018,17 @@ export default function WithdrawPage() {
           setImportOpen(false);
           setBulkRows([]);
           setBulkInfo({ ok: 0, fail: 0, queued: 0 });
+          setBulkError('');
         }, 2000);
       } else {
-        setPageError(
-          `${successCount} berhasil, ${
-            cloned.length - successCount
+        setBulkError(
+          `${successCount} berhasil, ${cloned.length - successCount
           } gagal. Periksa kolom Errors.`
         );
       }
     } catch (e: any) {
       console.error('❌ Bulk import error:', e);
-      setPageError(e?.message || 'Bulk import gagal');
+      setBulkError(e?.message || 'Bulk import gagal');
     } finally {
       setBulkSubmitting(false);
     }
@@ -1042,11 +1043,12 @@ export default function WithdrawPage() {
       [
         'Created At',
         'Completed At',
+        'Paid At',
         'Ref ID',
+        'Type',
         'Bank',
         'Account',
         'Account Name',
-        'Type',
         'Bulk ID',
         'Wallet',
         'Amount',
@@ -1061,28 +1063,36 @@ export default function WithdrawPage() {
         });
         const completed = w.completedAt
           ? new Date(w.completedAt).toLocaleString('id-ID', {
-              dateStyle: 'short',
-              timeStyle: 'short',
-            })
+            dateStyle: 'short',
+            timeStyle: 'short',
+          })
+          : '-';
+          const paid = w.paidAt
+          ? new Date(w.paidAt).toLocaleString('id-ID', {
+            dateStyle: 'short',
+            timeStyle: 'short',
+          })
           : '-';
         const walletDisplay =
           w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
         const fee = w.amount - (w.netAmount ?? 0);
         const net = w.netAmount ?? 0;
+
         return [
-          created,
-          completed,
-          w.refId,
-          w.bankName,
-          w.accountNumber,
-          w.accountName,
-          w.type,
-          w.bulk_id,
-          walletDisplay,
-          w.amount,
-          fee,
-          net,
-          w.status,
+          created,                 // Created At
+          completed,               // Completed At
+          paid,                    // Paid At
+          w.refId,                 // Ref ID
+          w.type || 'Bulk',        // Type  <<< dipindah ke sini
+          w.bankName,              // Bank
+          w.accountNumber,         // Account
+          w.accountName,           // Account Name
+          w.bulk_id || '-',        // Bulk ID
+          walletDisplay,           // Wallet
+          w.amount,                // Amount (angka mentah biar bisa dihitung di Excel)
+          fee,                     // Fee
+          net,                     // Net Amount
+          w.status,                // Status
         ];
       }),
     ];
@@ -1092,6 +1102,7 @@ export default function WithdrawPage() {
     XLSX.utils.book_append_sheet(wb, ws, 'Withdrawals');
     XLSX.writeFile(wb, 'withdrawals.xlsx');
   };
+
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / perPage)),
@@ -1105,7 +1116,7 @@ export default function WithdrawPage() {
   return (
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-7xl p-4 sm:p-6">
-        {/* Error Display */}
+        {/* Error Display (global page) */}
         {pageError && (
           <div className="mb-4 rounded-xl border border-rose-900/40 bg-rose-950/40 p-3 text-rose-300">
             <p className="mb-2 whitespace-pre-line">{pageError}</p>
@@ -1156,11 +1167,10 @@ export default function WithdrawPage() {
                     <button
                       key={s.id}
                       onClick={() => setSelectedSub(s.id)}
-                      className={`rounded-xl border px-3 py-2 text-left transition ${
-                        s.id === selectedSub
+                      className={`rounded-xl border px-3 py-2 text-left transition ${s.id === selectedSub
                           ? 'border-sky-500 bg-sky-500/10'
                           : 'border-neutral-800 hover:bg-neutral-800/60'
-                      }`}
+                        }`}
                     >
                       <div className="text-sm font-medium">
                         {s.name || `Sub ${s.id.slice(0, 6)}`}
@@ -1194,7 +1204,10 @@ export default function WithdrawPage() {
           <h2 className="text-lg font-semibold">Withdrawal</h2>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setImportOpen(true)}
+              onClick={() => {
+                setImportOpen(true);
+                setBulkError(''); // ⬅️ reset error modal saat buka
+              }}
               className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800/60"
             >
               <Upload size={18} /> Import
@@ -1325,6 +1338,7 @@ export default function WithdrawPage() {
                     {[
                       'Created At',
                       'Completed At',
+                      'Paid At',
                       'Ref ID',
                       'Type',
                       'Bank',
@@ -1365,9 +1379,17 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2 whitespace-nowrap">
                           {w.completedAt
                             ? new Date(w.completedAt).toLocaleString('id-ID', {
-                                dateStyle: 'short',
-                                timeStyle: 'short',
-                              })
+                              dateStyle: 'short',
+                              timeStyle: 'short',
+                            })
+                            : '-'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {w.paidAt
+                            ? new Date(w.paidAt).toLocaleString('id-ID', {
+                              dateStyle: 'short',
+                              timeStyle: 'short',
+                            })
                             : '-'}
                         </td>
                         <td className="px-3 py-2">{w.refId}</td>
@@ -1392,15 +1414,14 @@ export default function WithdrawPage() {
                         </td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
-                              w.status === 'COMPLETED'
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${w.status === 'COMPLETED'
                                 ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                                 : w.status === 'PENDING'
-                                ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
-                                : w.status === 'FAILED'
-                                ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                                : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
-                            }`}
+                                  ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
+                                  : w.status === 'FAILED'
+                                    ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
+                                    : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
+                              }`}
                           >
                             {w.status}
                           </span>
@@ -1467,7 +1488,7 @@ export default function WithdrawPage() {
       {/* Bulk Import Modal */}
       {importOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-4xl rounded-2xl bg-neutral-900 p-6 shadow-xl">
+          <div className="w-full max-w-4xl rounded-2xl bg-neutral-900 p-6 shadow-xl" role="dialog" aria-modal="true">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Upload size={18} /> Bulk Withdrawal Import
@@ -1486,6 +1507,7 @@ export default function WithdrawPage() {
                     setImportOpen(false);
                     setBulkRows([]);
                     setBulkInfo({ ok: 0, fail: 0, queued: 0 });
+                    setBulkError('');
                   }}
                   className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-800/60"
                 >
@@ -1493,6 +1515,20 @@ export default function WithdrawPage() {
                 </button>
               </div>
             </div>
+
+            {/* Banner error/notice khusus modal */}
+            {bulkError && (
+              <div
+                role="status"
+                aria-live="polite"
+                className={`mb-4 rounded-xl border p-3 text-sm ${bulkError.startsWith('✅')
+                    ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
+                    : 'border-rose-900/40 bg-rose-950/40 text-rose-300'
+                  }`}
+              >
+                {bulkError}
+              </div>
+            )}
 
             {/* Uploader */}
             <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-3">
@@ -1594,13 +1630,12 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2">{money(r.amount)}</td>
                         <td className="px-3 py-2">
                           <span
-                            className={`rounded-full px-2 py-0.5 text-xs ${
-                              r.status === 'ok'
+                            className={`rounded-full px-2 py-0.5 text-xs ${r.status === 'ok'
                                 ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
                                 : r.status === 'fail'
-                                ? 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30'
-                                : 'bg-neutral-500/15 text-neutral-300 ring-1 ring-neutral-500/30'
-                            }`}
+                                  ? 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30'
+                                  : 'bg-neutral-500/15 text-neutral-300 ring-1 ring-neutral-500/30'
+                              }`}
                           >
                             {r.status ?? 'queued'}
                           </span>
@@ -1641,8 +1676,8 @@ export default function WithdrawPage() {
                 {bulkSubmitting
                   ? 'Processing…'
                   : BULK_DUMMY_MODE
-                  ? 'Simulate Bulk'
-                  : 'Submit Bulk'}
+                    ? 'Simulate Bulk'
+                    : 'Submit Bulk'}
               </button>
             </div>
           </div>

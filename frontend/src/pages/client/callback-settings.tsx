@@ -24,11 +24,12 @@ export default function CallbackPage() {
   const [isError, setIsError] = useState(false);
 
   // Minute Expired
-  const [minuteExpired, setMinuteExpired] = useState(15);
+  const [minuteExpired, setMinuteExpired] = useState<number>(15);
+  const [minuteExpiredInput, setMinuteExpiredInput] = useState<string>('15');
   const [savingMinute, setSavingMinute] = useState(false);
   const [minuteMessage, setMinuteMessage] = useState('');
   const [minuteError, setMinuteError] = useState(false);
-  const [localStorageStatus, setLocalStorageStatus] = useState<string>(''); // ✅ New state
+  const [localStorageStatus, setLocalStorageStatus] = useState<string>('');
 
   // Password change
   const [oldPassword, setOldPassword] = useState('');
@@ -46,59 +47,20 @@ export default function CallbackPage() {
   const [faMsg, setFaMsg] = useState('');
   const [working, setWorking] = useState(false);
 
-  // Initial fetch - Load dari localStorage saat komponen mount
-  useEffect(() => {
-    // Load minute expired dari localStorage
-    const savedMinuteExpired = localStorage.getItem('minuteExpired');
-    if (savedMinuteExpired) {
-      setMinuteExpired(Number(savedMinuteExpired));
-    }
+  // Helpers
+  const LS_KEY = 'minuteExpired';
+  const clampMinute = (n: number) => (Number.isFinite(n) ? Math.max(15, n) : 15);
 
-    // Set localStorage status setelah component mount (client-side only)
-    updateLocalStorageStatus();
-
-    apiClient
-      .get('/client/callback-url')
-      .then((res) => {
-        setUrl(res.data.callbackUrl || '');
-        setSecret(res.data.callbackSecret || '');
-
-        // Prioritaskan data dari API, fallback ke localStorage
-        if (res.data.minuteExpired) {
-          setMinuteExpired(res.data.minuteExpired);
-          localStorage.setItem(
-            'minuteExpired',
-            res.data.minuteExpired.toString()
-          );
-          updateLocalStorageStatus();
-        }
-      })
-      .catch(() => {
-        setMessage('Failed to load callback data');
-        setIsError(true);
-      });
-
-    (async () => {
-      try {
-        const res = await apiClient.get('/client/2fa/status');
-        setIs2FAEnabled(!!res.data.totpEnabled);
-      } catch {
-        // ignore
-      } finally {
-        setLoading2FA(false);
-      }
-    })();
-  }, []);
-
-  // Function untuk update localStorage status
   const updateLocalStorageStatus = () => {
-    if (typeof window !== 'undefined') {
-      const savedValue = localStorage.getItem('minuteExpired');
+    try {
+      const savedValue = localStorage.getItem(LS_KEY);
       if (savedValue) {
         setLocalStorageStatus(`Tersimpan: ${savedValue} menit`);
       } else {
         setLocalStorageStatus('Belum ada data tersimpan');
       }
+    } catch {
+      setLocalStorageStatus('Status penyimpanan tidak tersedia');
     }
   };
 
@@ -129,6 +91,74 @@ export default function CallbackPage() {
     }, 3500);
   };
 
+  // Initial fetch - Load localStorage dulu, lalu API
+  useEffect(() => {
+    // 1) Load dari localStorage
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw != null) {
+        const parsed = clampMinute(parseInt(raw, 10));
+        setMinuteExpired(parsed);
+        setMinuteExpiredInput(String(parsed));
+      } else {
+        // default 15
+        setMinuteExpired(15);
+        setMinuteExpiredInput('15');
+      }
+    } catch {
+      setMinuteExpired(15);
+      setMinuteExpiredInput('15');
+    }
+
+    updateLocalStorageStatus();
+
+    // 2) Fetch callback & minuteExpired dari API (override kalau ada)
+    apiClient
+      .get('/client/callback-url')
+      .then((res) => {
+        setUrl(res.data.callbackUrl || '');
+        setSecret(res.data.callbackSecret || '');
+        if (res.data.minuteExpired) {
+          const apiVal = clampMinute(Number(res.data.minuteExpired));
+          setMinuteExpired(apiVal);
+          setMinuteExpiredInput(String(apiVal));
+          localStorage.setItem(LS_KEY, String(apiVal));
+          updateLocalStorageStatus();
+        }
+      })
+      .catch(() => {
+        setMessage('Failed to load callback data');
+        setIsError(true);
+      });
+
+    // 3) 2FA status
+    (async () => {
+      try {
+        const res = await apiClient.get('/client/2fa/status');
+        setIs2FAEnabled(!!res.data.totpEnabled);
+      } catch {
+        // ignore
+      } finally {
+        setLoading2FA(false);
+      }
+    })();
+  }, []);
+
+  // Cross-tab sync untuk minuteExpired
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LS_KEY && e.newValue != null) {
+        const parsed = clampMinute(parseInt(e.newValue, 10));
+        setMinuteExpired(parsed);
+        setMinuteExpiredInput(String(parsed));
+        updateLocalStorageStatus();
+        minuteFlash(`Minute expired updated in another tab: ${parsed} minutes`);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // Save callback URL dan secret
   const handleSave = async () => {
     setSaving(true);
@@ -149,9 +179,24 @@ export default function CallbackPage() {
     }
   };
 
-  // Save minute expired ke localStorage
+  // Minute input handlers
+  const handleMinuteExpiredChange = (val: string) => {
+    // izinkan kosong & hanya digit
+    if (/^\d*$/.test(val)) setMinuteExpiredInput(val);
+  };
+
+  const commitMinuteExpired = () => {
+    const n = parseInt(minuteExpiredInput, 10);
+    const clamped = clampMinute(n);
+    setMinuteExpired(clamped);
+    setMinuteExpiredInput(String(clamped));
+    return clamped;
+  };
+
+  // Save minute expired ke localStorage (commit dulu)
   const handleSaveMinuteExpired = async () => {
-    if (minuteExpired < 15) {
+    const toSave = commitMinuteExpired();
+    if (toSave < 15) {
       minuteFlash('Minute expired must be at least 15 minutes', true);
       return;
     }
@@ -161,25 +206,22 @@ export default function CallbackPage() {
     setMinuteError(false);
 
     try {
-      // Simpan ke localStorage
-      localStorage.setItem('minuteExpired', minuteExpired.toString());
-      updateLocalStorageStatus(); // ✅ Update status setelah save
+      localStorage.setItem(LS_KEY, String(toSave));
+      // (opsional) metadata
+      localStorage.setItem(`${LS_KEY}:meta`, JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        source: 'ui',
+        version: 1,
+      }));
 
-      minuteFlash(
-        `Minute expired saved to localStorage: ${minuteExpired} minutes!`
-      );
+      updateLocalStorageStatus();
+      minuteFlash(`Minute expired saved to localStorage: ${toSave} minutes!`);
     } catch (error) {
       console.error('Error saving to localStorage:', error);
       minuteFlash('Failed to save minute expired', true);
     } finally {
       setSavingMinute(false);
     }
-  };
-
-  // Update minute expired
-  const handleMinuteExpiredChange = (value: number) => {
-    if (value < 15) value = 15;
-    setMinuteExpired(value);
   };
 
   // Copy secret
@@ -301,12 +343,7 @@ export default function CallbackPage() {
           <p className="text-sm font-medium">
             {idx}. {title}
           </p>
-          {done && (
-            <CheckCircle2
-              size={16}
-              className="text-emerald-400"
-            />
-          )}
+          {done && <CheckCircle2 size={16} className="text-emerald-400" />}
         </div>
         <p className="mt-0.5 text-xs text-neutral-400">{desc}</p>
       </div>
@@ -327,10 +364,7 @@ export default function CallbackPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label
-                htmlFor="cbUrl"
-                className="mb-1 block text-sm text-neutral-300"
-              >
+              <label htmlFor="cbUrl" className="mb-1 block text-sm text-neutral-300">
                 Transactions Callback URL
               </label>
               <input
@@ -386,11 +420,7 @@ export default function CallbackPage() {
                     : 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                 }`}
               >
-                {isError ? (
-                  <AlertCircle size={16} />
-                ) : (
-                  <CheckCircle2 size={16} />
-                )}
+                {isError ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
                 <span>{message}</span>
               </div>
             )}
@@ -417,18 +447,19 @@ export default function CallbackPage() {
               </label>
               <div className="relative">
                 <input
-                  type="number"
-                  min="15"
-                  value={minuteExpired}
-                  onChange={(e) =>
-                    handleMinuteExpiredChange(Number(e.target.value))
-                  }
-                  className="h-11 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 pr-20 text-sm outline-none placeholder:text-neutral-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={minuteExpiredInput}
+                  onChange={(e) => handleMinuteExpiredChange(e.target.value)}
+                  onBlur={commitMinuteExpired}
+                  className="h-11 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 pr-20 text-sm outline-none placeholder:text-neutral-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400">
                   Minute
                 </div>
               </div>
+              <p className="mt-2 text-xs text-neutral-400">{localStorageStatus}</p>
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3">
@@ -450,11 +481,7 @@ export default function CallbackPage() {
                     : 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                 }`}
               >
-                {minuteError ? (
-                  <AlertCircle size={16} />
-                ) : (
-                  <CheckCircle2 size={16} />
-                )}
+                {minuteError ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
                 <span>{minuteMessage}</span>
               </div>
             )}
@@ -469,12 +496,9 @@ export default function CallbackPage() {
                 <Shield size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">
-                  Two-Factor Authentication
-                </h2>
+                <h2 className="text-lg font-semibold">Two-Factor Authentication</h2>
                 <p className="text-xs text-neutral-400">
-                  Tambahkan lapisan keamanan ekstra menggunakan aplikasi
-                  Authenticator.
+                  Tambahkan lapisan keamanan ekstra menggunakan aplikasi Authenticator.
                 </p>
               </div>
             </div>
@@ -537,9 +561,7 @@ export default function CallbackPage() {
                     </button>
                   )}
 
-                  {!!faMsg && (
-                    <span className="text-xs text-neutral-300">{faMsg}</span>
-                  )}
+                  {!!faMsg && <span className="text-xs text-neutral-300">{faMsg}</span>}
                 </div>
               </div>
 
@@ -547,28 +569,15 @@ export default function CallbackPage() {
               <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4">
                 {is2FAEnabled ? (
                   <div className="grid place-items-center py-10 text-center">
-                    <CheckCircle2
-                      size={36}
-                      className="mb-2 text-emerald-400"
-                    />
+                    <CheckCircle2 size={36} className="mb-2 text-emerald-400" />
                     <p className="text-sm text-neutral-300">
-                      2FA sudah aktif. Anda dapat meregenerasi secret jika
-                      diperlukan.
+                      2FA sudah aktif. Anda dapat meregenerasi secret jika diperlukan.
                     </p>
                   </div>
                 ) : qr ? (
-                  <form
-                    autoComplete="off"
-                    onSubmit={handleVerify}
-                    className="space-y-4"
-                  >
+                  <form autoComplete="off" onSubmit={handleVerify} className="space-y-4">
                     {/* dummy fields to absorb autofill */}
-                    <input
-                      type="text"
-                      name="username"
-                      autoComplete="username"
-                      className="hidden"
-                    />
+                    <input type="text" name="username" autoComplete="username" className="hidden" />
                     <input
                       type="password"
                       name="new-password"
@@ -605,10 +614,7 @@ export default function CallbackPage() {
                 ) : (
                   <div className="grid place-items-center py-10 text-center text-sm text-neutral-400">
                     2FA belum aktif. Klik{' '}
-                    <span className="mx-1 font-medium text-neutral-200">
-                      Enable 2FA
-                    </span>{' '}
-                    untuk memulai.
+                    <span className="mx-1 font-medium text-neutral-200">Enable 2FA</span> untuk memulai.
                   </div>
                 )}
               </div>
@@ -622,9 +628,7 @@ export default function CallbackPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className="mb-1 block text-sm text-neutral-300">
-                Old Password
-              </label>
+              <label className="mb-1 block text-sm text-neutral-300">Old Password</label>
               <input
                 type="password"
                 value={oldPassword}
@@ -634,9 +638,7 @@ export default function CallbackPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-neutral-300">
-                New Password
-              </label>
+              <label className="mb-1 block text-sm text-neutral-300">New Password</label>
               <input
                 type="password"
                 value={newPassword}
@@ -646,9 +648,7 @@ export default function CallbackPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-neutral-300">
-                Confirm New Password
-              </label>
+              <label className="mb-1 block text-sm text-neutral-300">Confirm New Password</label>
               <input
                 type="password"
                 value={confirmPassword}
@@ -679,11 +679,7 @@ export default function CallbackPage() {
                     : 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                 }`}
               >
-                {pwError ? (
-                  <AlertCircle size={16} />
-                ) : (
-                  <CheckCircle2 size={16} />
-                )}
+                {pwError ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
                 <span>{pwMessage}</span>
               </div>
             )}
