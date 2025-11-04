@@ -1061,21 +1061,8 @@ export const checkPaymentStatus = async (req: Request) => {
       subMerchantId: true,
       pgRefId: true,
       pgClientRef: true,
-      trxExpirationTime: true,
     },
   });
-
-  // Check if transaction is expired
-  if (order?.trxExpirationTime && new Date() > new Date(order.trxExpirationTime)) {
-    // Update status to EXPIRED if not already
-    if (order.status === 'PENDING') {
-      await prisma.order.update({
-        where: { id: refId },
-        data: { status: 'EXPIRED' }
-      });
-      return { status: 'EXPIRED' };
-    }
-  }
   if (order) {
     if (order.status === 'PENDING') {
       const pc = await prisma.partnerClient.findUnique({
