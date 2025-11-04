@@ -768,7 +768,7 @@ if (mName === 'gidi') {
   // 5) Panggil API generate QRIS dengan signature layer
     //    Sertakan waktu kedaluwarsa ~30 menit dari sekarang dalam format GIDI
   const now = wibTimestamp();
-  const expireDate = new Date(now.getTime() + 30 * 60 * 1000);
+  const expireDate = new Date(now.getTime() + 15 * 60 * 1000); // 15 menit expiry
   const datetimeExpired = formatDateJakarta(expireDate);
 
   let qrResult: GidiQrisResult;
@@ -910,20 +910,47 @@ export async function processHilogatePayload(payload: {
   // 1) Hit DB untuk ambil order & merchant
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { merchantId: true, amount: true, feeLauncx: true, status: true }
+    select: { merchantId: true, amount: true, feeLauncx: true, status: true, trxExpirationTime: true }
   });
   if (!existing) throw new Error(`Order ${orderId} not found`);
 
-  // 2) Jika order sudah SETTLED, abaikan callback agar status tidak berubah
-  if (existing.status === 'SETTLED') {
+  // 2) Jika order sudah SETTLED atau EXPIRED, abaikan callback
+  if (existing.status === 'SETTLED' || existing.status === 'EXPIRED') {
     return;
   }
 
-  // 3) Hitung status internal
-  const upStatus  = pgStatus.toUpperCase();
+  // 3) Check if expired based on trxExpirationTime
+  const now = wibTimestamp();
+  if (existing.trxExpirationTime && existing.trxExpirationTime.getTime() < now.getTime()) {
+    // Mark as EXPIRED and stop processing
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: 'EXPIRED',
+        settlementStatus: null,
+        updatedAt: now
+      }
+    });
+    return;
+  }
+
+  // 4) Hitung status internal untuk transaksi yang belum expired
+  const upStatus = pgStatus.toUpperCase();
   const isSuccess = ['SUCCESS','DONE'].includes(upStatus);
-  const newStatus = isSuccess ? 'PAID' : upStatus;
-  const newSetSt  = settlement_status?.toUpperCase() ?? (isSuccess ? 'PENDING' : null);
+  
+  // Determine status based on expiry and payment status
+  let newStatus: string;
+  let newSetSt: string | null;
+
+  if (existing.trxExpirationTime && now.getTime() > existing.trxExpirationTime.getTime()) {
+    // Transaction has expired
+    newStatus = 'EXPIRED';
+    newSetSt = null;
+  } else {
+    // Not expired, process normally
+    newStatus = isSuccess ? 'PAID' : upStatus;
+    newSetSt = settlement_status?.toUpperCase() ?? (isSuccess ? 'PENDING' : null);
+  }
 
   // 4) Update order di DB
   await prisma.order.update({
