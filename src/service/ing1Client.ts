@@ -240,7 +240,6 @@ const mapRcToStatus = (rc: number, expiredAt?: string | null): Ing1TransactionSt
 
   switch (rc) {
     case 0:
-      return 'PAID';
     case 91:
       return 'PENDING';
     case 99:
@@ -274,6 +273,28 @@ const parseNumeric = (value: unknown): number | null => {
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : null;
   }
+  return null;
+};
+
+const extractStatusText = (payload: any): string | null => {
+  if (!payload) return null;
+
+  const candidates = [
+    payload?.status,
+    payload?.STATUS,
+    payload?.status_text,
+    payload?.statusText,
+    payload?.data?.status,
+    payload?.data?.STATUS,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+
   return null;
 };
 
@@ -530,6 +551,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1HistoryItem[] = historiesRaw.map((item) => ({
@@ -565,7 +588,7 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
@@ -598,6 +621,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const details = data?.data ?? {};
     const expiredAt = details?.expired_at ?? null;
 
@@ -698,6 +723,8 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
+        const statusText = extractStatusText(data);
+
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
     const histories: Ing1CashoutHistoryItem[] = historiesRaw.map((item) => ({
@@ -734,7 +761,7 @@ export class Ing1Client {
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc),
+      status: mapRcToStatus(rc, statusText),
       histories,
       pagination,
       raw: data,
