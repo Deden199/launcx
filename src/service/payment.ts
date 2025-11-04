@@ -363,10 +363,20 @@ export const createTransaction = async (
     const ingCfg = ingSubs[0].config as Ing1Config;
     logger.info(`[Payment] Using ING1 provider: email=${ingCfg.email}, merchantId=${ingCfg.merchantId}`);
     const ingClient = new Ing1Client(ingCfg);
+    // compute expiry time to send to ING1 (fallback when provider doesn't return expiry)
+    const nowForIng = wibTimestamp();
+    // request.expiredTime may be provided in minutes by caller; assume minutes
+    const expireMinutesCandidate = request.expiredTime ?? 30; // default 30 minutes for QRIS
+    const expireMinutes = Number(expireMinutesCandidate) || 30;
+    const ingExpireDate = new Date(nowForIng.getTime() + expireMinutes * 60 * 1000);
+    const ingExpiryTimeStr = formatDateJakarta(ingExpireDate);
+
     const cashinResp = await ingClient.createCashin({
       amount,
       clientReff: refId,
       remark: request.transactionDescription || `Payment ${refId}`,
+      expiryTime: ingExpiryTimeStr,
+      merchantId: ingCfg.merchantId,
     });
 
     await prisma.transaction_response.create({
@@ -400,7 +410,8 @@ export const createTransaction = async (
       return undefined;
     };
 
-    const expiration = parseExpiry(cashinResp.expiredAt);
+  // prefer provider returned expiredAt, otherwise fall back to the expiry we sent
+  const expiration = parseExpiry(cashinResp.expiredAt) ?? ingExpireDate;
 
     await prisma.order.create({
       data: {
