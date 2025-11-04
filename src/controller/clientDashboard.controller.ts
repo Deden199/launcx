@@ -300,21 +300,41 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
             prisma.order.count({ where: whereOrders }),
         ]);
 
-        // (11) Metrics calculation
-        const totalPending = metricsGrouped
+        // (11) Metrics calculation with consistent status handling
+        const now = new Date();
+        
+        // Recalculate metrics with expired status check
+        const metricsWithExpired = metricsGrouped.map(g => {
+            // Don't modify SUCCESS/DONE/SETTLED transactions
+            if ([ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any)) {
+                return g;
+            }
+            
+            const isExpired = g.status === ORDER_STATUS.PENDING && orders.some(o => 
+                o.trxExpirationTime && new Date(o.trxExpirationTime) < now
+            );
+            
+            return {
+                ...g,
+                status: isExpired ? ORDER_STATUS.EXPIRED : g.status
+            };
+        });
+
+        const totalPending = metricsWithExpired
             .filter(g => g.status === ORDER_STATUS.PAID)
             .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
 
-        const totalPaid = metricsGrouped
+        const totalPaid = metricsWithExpired
             .filter(g => [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
             .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
 
-        const totalSettlement = metricsGrouped
+        const totalSettlement = metricsWithExpired
             .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
             .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0);
 
-        const totalAmount = metricsGrouped
-            .filter(g => statuses.includes(g.status as any))
+        // Total amount should exclude expired transactions
+        const totalAmount = metricsWithExpired
+            .filter(g => statuses.includes(g.status as any) && g.status !== ORDER_STATUS.EXPIRED)
             .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
 
         const totalCount = totalRows;
@@ -326,21 +346,27 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
             .reduce((sum, c) => sum + (c.balance ?? 0), 0);
         const totalActive = parentBal + childrenBal;
 
-        // (13) Map transactions (FIX utama di sini)
+        // (13) Map transactions with proper status handling
         const transactions = orders.map(o => {
             let status = o.status;
             let settlementStatus = o.settlementStatus ?? '';
+            const now = new Date();
 
-            // FIX: kalau settlementStatus SUCCESS tapi status masih PENDING → ubah ke PAID
-            if (settlementStatus === 'SUCCESS' && status !== ORDER_STATUS.PAID) {
+            // Check if transaction is expired
+            if (o.trxExpirationTime && new Date(o.trxExpirationTime) < now && status === ORDER_STATUS.PENDING) {
+                status = ORDER_STATUS.EXPIRED;
+            }
+            // Handle settlement status
+            else if (settlementStatus === 'SUCCESS') {
                 status = ORDER_STATUS.PAID;
             }
 
-            // FIX: pending nettSettle jangan 0
-            const netSettle =
-                settlementStatus === 'SUCCESS'
-                    ? o.settlementAmount ?? 0
-                    : o.pendingAmount ?? o.settlementAmount ?? 0;
+            // Calculate netSettle based on status
+            const netSettle = 
+                status === ORDER_STATUS.EXPIRED ? 0 :
+                settlementStatus === 'SUCCESS' ? (o.settlementAmount ?? 0) :
+                status === ORDER_STATUS.PAID ? (o.pendingAmount ?? 0) :
+                0;
 
             return {
                 id: o.id,
