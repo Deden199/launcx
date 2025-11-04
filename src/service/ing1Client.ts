@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 
-export type Ing1TransactionStatus = 'PAID' | 'PENDING' | 'FAILED';
+export type Ing1TransactionStatus = 'PAID' | 'PENDING' | 'FAILED' | 'EXPIRED';
 
 export interface Ing1Config {
   baseUrl: string;
@@ -112,6 +112,7 @@ export interface Ing1CashoutInquiryParams {
   accountNumber: string;
   amount: number;
   clientReff: string;
+  custno?: string; // Customer number - required by INA API but defaults to empty string
   customerName?: string;
   remark?: string;
   merchantId?: string;
@@ -190,6 +191,7 @@ export interface Ing1CashoutHistoryItem {
   accountNumber?: string | null;
   accountName?: string | null;
   paidAt?: string | null;
+  expiredAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   remark?: string | null;
@@ -220,36 +222,21 @@ export interface Ing1CashoutHistoryResult {
   raw: any;
 }
 
-const mapStatusText = (status: string | undefined | null): Ing1TransactionStatus | null => {
-  if (!status) return null;
-  const lowered = status.trim().toLowerCase();
-  if (!lowered) return null;
-  if (['success', 'paid', 'complete', 'completed', 'done'].includes(lowered)) return 'PAID';
-  if (['pending', 'process', 'processing', 'waiting'].includes(lowered)) return 'PENDING';
-  if (
-    [
-      'failed',
-      'fail',
-      'cancel',
-      'cancelled',
-      'expired',
-      'reject',
-      'rejected',
-      'void',
-      'error',
-    ].includes(lowered)
-  ) {
-    return 'FAILED';
+const isExpired = (expiredAt: string | undefined | null): boolean => {
+  if (!expiredAt) return false;
+  try {
+    const expiryTime = new Date(expiredAt).getTime();
+    return Date.now() > expiryTime;
+  } catch {
+    return false;
   }
-  return null;
 };
 
-const mapRcToStatus = (
-  rc: number,
-  statusText?: string | null
-): Ing1TransactionStatus => {
-  const fromText = mapStatusText(statusText);
-  if (fromText) return fromText;
+const mapRcToStatus = (rc: number, expiredAt?: string | null): Ing1TransactionStatus => {
+  // Check if transaction has expired
+  if (isExpired(expiredAt)) {
+    return 'EXPIRED';
+  }
 
   switch (rc) {
     case 0:
@@ -261,8 +248,18 @@ const mapRcToStatus = (
   }
 };
 
-const normalizeHistoryStatus = (status: string | undefined | null): Ing1TransactionStatus =>
-  mapStatusText(status) ?? 'FAILED';
+const normalizeHistoryStatus = (status: string | undefined | null, expiredAt?: string | null): Ing1TransactionStatus => {
+  // Check if transaction has expired
+  if (isExpired(expiredAt)) {
+    return 'EXPIRED';
+  }
+
+  if (!status) return 'FAILED';
+  const lowered = status.toLowerCase();
+  if (lowered === 'success' || lowered === 'paid') return 'PAID';
+  if (lowered === 'pending' || lowered === 'process') return 'PENDING';
+  return 'FAILED';
+};
 
 const parseNumeric = (value: unknown): number | null => {
   if (value == null) return null;
@@ -415,7 +412,10 @@ export class Ing1Client {
       const response = await this.http.request<T>({ ...config, headers });
       const payload: any = response.data;
       const rc = typeof payload?.rc === 'number' ? payload.rc : Number(payload?.rc ?? NaN);
-      
+      console.log(`[Ing1Client] Response - rc=${rc}, message=${payload?.message}, status=${response.status}`);
+      if (payload?.data?.error) {
+        console.log(`[Ing1Client] Response errors:`, JSON.stringify(payload.data.error));
+      }
       if (allowRetry && rc === 98) {
         await this.ensureToken(true);
         return this.authorizedRequest<T>(config, false, retryWithV2);
@@ -423,6 +423,9 @@ export class Ing1Client {
       return response.data;
     } catch (err) {
       console.log(`[Ing1Client] authorizedRequest ERROR - ${config.method?.toUpperCase()} ${this.http.defaults.baseURL}/${config.url}`, err instanceof Error ? err.message : String(err));
+      if (axios.isAxiosError(err)) {
+        console.log(`[Ing1Client] HTTP Status: ${err.response?.status}, Response:`, JSON.stringify(err.response?.data));
+      }
 
       // If 404/500 and we haven't tried v2 yet, retry with v2
       if (retryWithV2 && axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 500)) {
@@ -478,18 +481,30 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-    const statusText = extractStatusText(data);
+    const expiredAt = data?.data?.expired_at ?? null;
+
+    if (expiredAt) {
+      const expiryDate = new Date(expiredAt);
+      const now = new Date();
+      const secondsUntilExpiry = Math.round((expiryDate.getTime() - now.getTime()) / 1000);
+      console.log(`[Ing1Client] createCashin response:
+        - requested expiryTime: ${payload.expiry_time} minutes
+        - INA returned expired_at: ${expiredAt}
+        - parsed as: ${expiryDate.toISOString()}
+        - current time: ${now.toISOString()}
+        - seconds until expiry: ${secondsUntilExpiry}`);
+    }
 
     const result: Ing1CashinResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc, statusText),
+      status: mapRcToStatus(rc, expiredAt),
       reff: data?.reff ?? null,
       clientReff: data?.client_reff ?? null,
       productCode: data?.product_code ?? productCode,
       paymentUrl: data?.data?.payment_url ?? null,
       qrContent: data?.data?.content ?? null,
-      expiredAt: data?.data?.expired_at ?? null,
+      expiredAt: expiredAt,
       data: data?.data,
       raw: data,
     };
@@ -507,13 +522,11 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-        const statusText = extractStatusText(data);
-
+    const expiredAt = data?.data?.expired_at ?? null;
     return {
       rc,
       message: data?.message ?? '',
-            status: mapRcToStatus(rc, statusText),
-
+      status: mapRcToStatus(rc, expiredAt),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       productCode: data?.product_code ?? null,
@@ -548,7 +561,7 @@ export class Ing1Client {
       content: item?.content ?? null,
       returnUrl: item?.return_url ?? null,
       status: item?.status ?? '',
-      normalizedStatus: normalizeHistoryStatus(item?.status),
+      normalizedStatus: normalizeHistoryStatus(item?.status, item?.expired_at),
       rrn: item?.rrn ?? null,
       reff: item?.reff ?? null,
       clientReff: item?.client_reff ?? null,
@@ -586,7 +599,8 @@ export class Ing1Client {
     const payload: Record<string, any> = {
       bank_code: params.bankCode,
       account_no: params.accountNumber,
-      amount: params.amount,
+      custno: params.custno ?? params.clientReff, // REQUIRED by INA API - use clientReff as default
+      amount: params.amount ?? 0,
       client_reff: params.clientReff,
     };
 
@@ -596,9 +610,13 @@ export class Ing1Client {
     const merchantId = params.merchantId ?? this.cfg.merchantId;
     if (merchantId) payload.merchant_id = merchantId;
 
+    // NOTE: INA API uses /transaction/inquiry for all inquiries (including cashout validation)
+    // The /transaction/cashout/inquiry endpoint does not exist in the Billers Engine API
+    // IMPORTANT: The custno field is REQUIRED by the INA API
+    console.log(`[Ing1Client] cashoutInquiry - sending payload:`, JSON.stringify(payload, null, 2));
     const data = await this.authorizedRequest<any>({
       method: 'POST',
-      url: 'transaction/cashout/inquiry',
+      url: 'transaction/inquiry',
       data: payload,
     });
 
@@ -606,11 +624,12 @@ export class Ing1Client {
         const statusText = extractStatusText(data);
 
     const details = data?.data ?? {};
+    const expiredAt = details?.expired_at ?? null;
 
     const result: Ing1CashoutInquiryResult = {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc, statusText ?? extractStatusText(details)),
+      status: mapRcToStatus(rc, expiredAt),
       reff: data?.reff ?? details?.reff ?? null,
       clientReff: data?.client_reff ?? details?.client_reff ?? payload.client_reff ?? null,
       bankCode: details?.bank_code ?? details?.bankCode ?? payload.bank_code ?? null,
@@ -647,12 +666,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-    const statusText = extractStatusText(data);
+    const expiredAt = data?.data?.expired_at ?? null;
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc, statusText),
+      status: mapRcToStatus(rc, expiredAt),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -671,12 +690,12 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-    const statusText = extractStatusText(data);
+    const expiredAt = data?.data?.expired_at ?? null;
 
     return {
       rc,
       message: data?.message ?? '',
-      status: mapRcToStatus(rc, statusText),
+      status: mapRcToStatus(rc, expiredAt),
       reff: data?.reff ?? payload.reff,
       clientReff: data?.client_reff ?? payload.client_reff ?? null,
       data: data?.data,
@@ -712,7 +731,7 @@ export class Ing1Client {
       amount: parseNumeric(item?.amount),
       fee: parseNumeric(item?.fee ?? item?.total_fee),
       status: item?.status ?? '',
-      normalizedStatus: normalizeHistoryStatus(item?.status),
+      normalizedStatus: normalizeHistoryStatus(item?.status, item?.expired_at),
       reff: item?.reff ?? null,
       clientReff: item?.client_reff ?? null,
       bankCode: item?.bank_code ?? item?.bankCode ?? null,
@@ -720,6 +739,7 @@ export class Ing1Client {
       accountNumber: item?.account_number ?? item?.accountNo ?? null,
       accountName: item?.account_name ?? item?.accountName ?? null,
       paidAt: item?.paid_at ?? item?.paidAt ?? null,
+      expiredAt: item?.expired_at ?? null,
       createdAt: item?.created_at ?? item?.createdAt ?? null,
       updatedAt: item?.updated_at ?? item?.updatedAt ?? null,
       remark: item?.remark ?? null,

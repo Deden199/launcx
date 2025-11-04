@@ -363,10 +363,17 @@ export const createTransaction = async (
     const ingCfg = ingSubs[0].config as Ing1Config;
     logger.info(`[Payment] Using ING1 provider: email=${ingCfg.email}, merchantId=${ingCfg.merchantId}`);
     const ingClient = new Ing1Client(ingCfg);
+
+    // Default to 15 minutes expiry if not specified
+    const expiryTimeMinutes = request.expiredTime ?? 15;
+    const expiryTimeStr = String(expiryTimeMinutes);
+
+    logger.info(`[Payment] Creating ING1 transaction with expiryTime=${expiryTimeStr} minutes`);
     const cashinResp = await ingClient.createCashin({
       amount,
       clientReff: refId,
       remark: request.transactionDescription || `Payment ${refId}`,
+      expiryTime: expiryTimeStr,
     });
 
     await prisma.transaction_response.create({
@@ -401,6 +408,13 @@ export const createTransaction = async (
     };
 
     const expiration = parseExpiry(cashinResp.expiredAt);
+
+    logger.info(`[Payment] INA Response:
+      - reff: ${cashinResp.reff}
+      - expiredAt (raw): ${cashinResp.expiredAt}
+      - expiration (parsed): ${expiration?.toISOString() ?? 'null'}
+      - current time: ${new Date().toISOString()}
+      - time until expiry: ${expiration ? Math.round((expiration.getTime() - Date.now()) / 1000) + ' seconds' : 'expired or invalid'}`);
 
     await prisma.order.create({
       data: {

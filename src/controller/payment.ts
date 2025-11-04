@@ -55,7 +55,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
     const walletId = req.body.walletId ?? req.body.wallet_id
     const walletIdType = req.body.walletIdType ?? req.body.wallet_id_type
     const transactionDescription = req.body.transactionDescription ?? req.body.transaction_description
-    const expiredTime = req.body.expiredTime ?? req.body.expired_time
+    const expiredTime = req.body.expiredTime ?? req.body.expired_time ?? req.body.expired_at
 
     // 4) validate
     if (isNaN(price) || price <= 0) {
@@ -423,7 +423,16 @@ export const ing1TransactionCallback = async (req: Request, res: Response) => {
       extractString(req.query.client_reff) ||
       extractString((req.query as any).clientReff) ||
       extractString((req.query as any).client_ref);
-    if (!clientReff) throw new Error('Missing client_reff');
+
+    if (!clientReff) {
+      logger.warn('[ING1 Payment Callback] Missing client_reff');
+      return res.status(400).json({
+        success: false,
+        error: 'MISSING_CLIENT_REF',
+        message: 'Missing client_reff parameter in callback',
+        statusCode: 400
+      });
+    }
 
     const billerReff =
       extractString(req.query.reff) ||
@@ -512,10 +521,40 @@ export const ing1TransactionCallback = async (req: Request, res: Response) => {
       expirationTime,
     });
 
-    return res.status(200).json(createSuccessResponse({ message: 'OK' }));
+    return res.status(200).json(createSuccessResponse({ message: 'OK', statusCode: 200, code: 'PAYMENT_CALLBACK_SUCCESS' }));
   } catch (err: any) {
-    logger.error('[ING1 Callback] Error:', err);
-    return res.status(400).json(createErrorResponse(err.message ?? 'Unable to process callback'));
+    logger.error('[ING1 Payment Callback] Error:', {
+      error: err.message,
+      code: err.code,
+      stack: err.stack
+    });
+
+    // Determine status code based on error
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    let message = 'Internal server error processing payment callback';
+
+    if (err.message?.includes('not found') || err.message?.includes('not exist')) {
+      statusCode = 404;
+      errorCode = 'ORDER_NOT_FOUND';
+      message = 'Order not found in system';
+    } else if (err.message?.includes('Invalid') || err.message?.includes('Validation')) {
+      statusCode = 400;
+      errorCode = 'INVALID_PAYLOAD';
+      message = 'Invalid callback payload';
+    } else if (err.message?.includes('Duplicate')) {
+      statusCode = 409;
+      errorCode = 'DUPLICATE_CALLBACK';
+      message = 'Callback already processed';
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      error: errorCode,
+      message: message,
+      statusCode: statusCode,
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 };
 
