@@ -38,7 +38,7 @@ interface Withdrawal {
   amount: number;
   status: string;
   createdAt: string;
-  paidAt?: string;
+  // paidAt?: string;
   completedAt?: string;
   sourceProvider?: string;
   type?: string;
@@ -1042,7 +1042,6 @@ export default function WithdrawPage() {
     const rows = [
       [
         'Created At',
-        'Completed At',
         'Paid At',
         'Ref ID',
         'Type',
@@ -1067,12 +1066,7 @@ export default function WithdrawPage() {
             timeStyle: 'short',
           })
           : '-';
-          const paid = w.paidAt
-          ? new Date(w.paidAt).toLocaleString('id-ID', {
-            dateStyle: 'short',
-            timeStyle: 'short',
-          })
-          : '-';
+    
         const walletDisplay =
           w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
         const fee = w.amount - (w.netAmount ?? 0);
@@ -1081,7 +1075,6 @@ export default function WithdrawPage() {
         return [
           created,                 // Created At
           completed,               // Completed At
-          paid,                    // Paid At
           w.refId,                 // Ref ID
           w.type || 'Bulk',        // Type  <<< dipindah ke sini
           w.bankName,              // Bank
@@ -1337,7 +1330,6 @@ export default function WithdrawPage() {
                   <tr className="border-b border-neutral-800 bg-neutral-900/80 backdrop-blur">
                     {[
                       'Created At',
-                      'Completed At',
                       'Paid At',
                       'Ref ID',
                       'Type',
@@ -1384,14 +1376,7 @@ export default function WithdrawPage() {
                             })
                             : '-'}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {w.paidAt
-                            ? new Date(w.paidAt).toLocaleString('id-ID', {
-                              dateStyle: 'short',
-                              timeStyle: 'short',
-                            })
-                            : '-'}
-                        </td>
+                     
                         <td className="px-3 py-2">{w.refId}</td>
                         <td className="px-3 py-2">{w.type || 'Bulk'}</td>
                         <td className="px-3 py-2">{w.bankName}</td>
@@ -1737,7 +1722,7 @@ export default function WithdrawPage() {
                   <option value="">Pilih bank…</option>
                   {banks.map((b) => (
                     <option key={b.code} value={b.code}>
-                      {b.name}
+                      {b.name || b.code}
                     </option>
                   ))}
                 </select>
