@@ -554,10 +554,12 @@ export async function getActiveProvidersForClient(
           if (!ing1Subs.length) throw new Error('No active ING1 credentials');
           const cfg = ing1Subs[0].config as Ing1Config;
           const client = new Ing1Client(cfg);
+          // Default to 15 minutes expiry
           const resp = await client.createCashin({
             amount,
             clientReff: orderId,
             remark: `Order ${orderId}`,
+            expiryTime: '15',
           });
           return resp.paymentUrl ?? resp.qrContent ?? '';
         },
@@ -568,10 +570,12 @@ export async function getActiveProvidersForClient(
           if (!ing1Subs.length) throw new Error('No active ING1 credentials');
           const cfg = ing1Subs[0].config as Ing1Config;
           const client = new Ing1Client(cfg);
+          // Default to 15 minutes expiry
           const resp = await client.createCashin({
             amount,
             clientReff: orderId,
             remark: `Order ${orderId}`,
+            expiryTime: '15',
           });
           if (!resp.qrContent) {
             throw new Error('ING1 did not return QR content');

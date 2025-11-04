@@ -63,6 +63,8 @@ export async function syncWithInacash(refId: string, subMerchantId: string) {
       settlementTime = new Date();
     } else if (checkResult.status === 'PENDING' && checkResult.rc === 91) {
       settlementStatus = 'PENDING';
+    } else if (checkResult.status === 'EXPIRED') {
+      settlementStatus = 'FAILED';
     } else {
       settlementStatus = 'FAILED';
     }
@@ -110,7 +112,12 @@ export async function getInacashSettlementResult(
     // Check transaction status
     const checkResult = await client.checkCashin({ reff: orderId });
 
-    // If not paid or failed, return null (not ready for settlement)
+    // If not paid, failed, or expired, return null (not ready for settlement)
+    if (checkResult.status === 'EXPIRED') {
+      logger.warn(`[InacashSettlement] getInacashSettlementResult - Transaction ${orderId} has expired`);
+      return null;
+    }
+
     if (checkResult.rc !== 0 || checkResult.status !== 'PAID') {
       return null;
     }
