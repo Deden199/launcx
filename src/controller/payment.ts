@@ -42,13 +42,12 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
       .toLowerCase()
 
     // 2) price & playerId
-    const price = Number(req.body.price ?? req.body.amount)
+    const price    = Number(req.body.price ?? req.body.amount)
     const playerId = String(req.body.playerId ?? 0)
 
     // 3) flow
     const flow = req.body.flow === 'redirect' ? 'redirect' : 'embed'
 
-    // 4) Parse parameters
     const paymentChannel = req.body.paymentChannel ?? req.body.payment_channel
     const customerEmail = req.body.customerEmail ?? req.body.customer_email
     const customerFullName = req.body.customerFullName ?? req.body.customer_full_name
@@ -56,13 +55,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
     const walletId = req.body.walletId ?? req.body.wallet_id
     const walletIdType = req.body.walletIdType ?? req.body.wallet_id_type
     const transactionDescription = req.body.transactionDescription ?? req.body.transaction_description
-    
-    // Parse and validate expiredTime
-    const rawExpiredTime = req.body.expiredTime ?? req.body.expired_time
-    const expiredTime = rawExpiredTime ? Number(rawExpiredTime) : undefined
-    if (expiredTime !== undefined && (isNaN(expiredTime) || expiredTime <= 0)) {
-      return res.status(400).json(createErrorResponse('expiredTime harus lebih besar dari 0'))
-    }
+    const expiredTime = req.body.expiredTime ?? req.body.expired_time
 
     // 4) validate
     if (isNaN(price) || price <= 0) {
