@@ -95,7 +95,7 @@ const BULK_DUMMY_MODE = false;
 
 // Provider mapping configuration
 const providerMap = {
-  ing1: { apiBanksParam: 'ing1', sourceProvider: 'in-1' },
+  ing1: { apiBanksParam: 'ing1', sourceProvider: 'ing1' },
   hilogate: { apiBanksParam: 'hilogate', sourceProvider: 'hilogate' },
   oy: { apiBanksParam: 'oy', sourceProvider: 'oy' },
   gidi: { apiBanksParam: 'gidi', sourceProvider: 'gidi' },

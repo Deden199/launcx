@@ -941,7 +941,7 @@ export async function processHilogatePayload(payload: {
       where: { id: orderId },
       data: {
         status: 'EXPIRED',
-        settlementStatus: null,
+        settlementStatus: 'EXPIRED',
         updatedAt: now
       }
     });

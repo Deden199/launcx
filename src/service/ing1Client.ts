@@ -597,12 +597,13 @@ export class Ing1Client {
 
   async cashoutInquiry(params: Ing1CashoutInquiryParams): Promise<Ing1CashoutInquiryResult> {
     const payload: Record<string, any> = {
-      bank_code: params.bankCode,
-      account_no: params.accountNumber,
-      custno: params.custno ?? params.clientReff, // REQUIRED by INA API - use clientReff as default
+      product_code: params.bankCode,
+      custno: params.accountNumber, // REQUIRED by INA API - use clientReff as default
       amount: params.amount ?? 0,
       client_reff: params.clientReff,
     };
+
+    console.log(`[Ing1Client] cashoutInquiry - prepared payload before optional fields:`, JSON.stringify(payload, null, 2));
 
     if (params.customerName) payload.customer_name = params.customerName;
     if (params.remark) payload.remark = params.remark;

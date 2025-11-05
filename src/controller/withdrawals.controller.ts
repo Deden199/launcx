@@ -1031,6 +1031,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
   }
 
   try {
+    console.log('[validateAccount] sourceProvider: =============')
     if (isPiroVariant(sourceProvider)) {
       const merchant = await prisma.merchant.findFirst({
         where: { name: 'piro' },
