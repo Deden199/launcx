@@ -620,7 +620,7 @@ export default function WithdrawPage() {
         }
       );
 
-      if (res.status === 200 && res.data?.status === 'valid') {
+      if (res.status === 200 ) {
         const holder = String(res.data.account_holder || '').trim();
         setForm((f) => ({
           ...f,

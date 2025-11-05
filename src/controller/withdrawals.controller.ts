@@ -1069,7 +1069,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
         })
       }
 
-      return res.json({
+      return res.status(200).json({
         account_number: validation.accountNumber,
         account_holder: validation.accountName ?? '',
         bank_code: validation.bankCode ?? bank_code,
@@ -1114,7 +1114,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
         })
       }
 
-      return res.json({
+      return res.status(200).json({
         account_number: inquiry.accountNumber ?? account_number,
         account_holder: inquiry.accountName ?? '',
         bank_code: inquiry.bankCode ?? bank_code,
