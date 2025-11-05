@@ -112,7 +112,6 @@ export interface Ing1CashoutInquiryParams {
   accountNumber: string;
   amount: number;
   clientReff: string;
-  custno?: string; // Customer number - required by INA API but defaults to empty string
   customerName?: string;
   remark?: string;
   merchantId?: string;
@@ -297,6 +296,18 @@ const extractStatusText = (payload: any): string | null => {
 
   return null;
 };
+const normalizeMerchantId = (value: unknown): string | undefined => {
+  if (value == null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return undefined;
+    return String(value);
+  }
+  return undefined;
+};
 
 export class Ing1Client {
   private readonly http: AxiosInstance;
@@ -328,6 +339,24 @@ export class Ing1Client {
     this.tokenExpiry = this.token ? this.extractExpiry(this.token) : null;
   }
 
+  private resolveMerchantId(override?: string | null): string | undefined {
+    const direct = normalizeMerchantId(override);
+    if (direct) return direct;
+
+    const rawCfg = this.cfg as any;
+    const keys = Object.keys(rawCfg ?? {});
+
+    for (const key of keys) {
+      if (typeof key !== 'string') continue;
+      const normalizedKey = key.replace(/[_-]/g, '').toLowerCase();
+      if (normalizedKey !== 'merchantid') continue;
+
+      const normalized = normalizeMerchantId(rawCfg?.[key]);
+      if (normalized) return normalized;
+    }
+
+    return undefined;
+  }
   private extractExpiry(token: string): number | null {
     try {
       const parts = token.split('.');
@@ -469,7 +498,7 @@ export class Ing1Client {
     const returnUrl = params.returnUrl ?? this.cfg.callbackUrl;
     if (returnUrl) payload.return_url = returnUrl;
 
-    const merchantId = params.merchantId ?? this.cfg.merchantId;
+    const merchantId = this.resolveMerchantId(params.merchantId);
     if (merchantId) payload.merchant_id = merchantId;
 
     console.log(`[Ing1Client] createCashin - calling endpoint: transaction/cashin/create with payload:`, JSON.stringify(payload, null, 2));
@@ -551,7 +580,7 @@ export class Ing1Client {
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-        const statusText = extractStatusText(data);
+    const statusText = extractStatusText(data);
 
     const historiesRaw: any[] = Array.isArray(data?.histories) ? data.histories : [];
 
@@ -597,8 +626,8 @@ export class Ing1Client {
 
   async cashoutInquiry(params: Ing1CashoutInquiryParams): Promise<Ing1CashoutInquiryResult> {
     const payload: Record<string, any> = {
-      product_code: params.bankCode,
-      custno: params.accountNumber, // REQUIRED by INA API - use clientReff as default
+      bank_code: params.bankCode,
+      account_no: params.accountNumber,
       amount: params.amount ?? 0,
       client_reff: params.clientReff,
     };
@@ -608,8 +637,11 @@ export class Ing1Client {
     if (params.customerName) payload.customer_name = params.customerName;
     if (params.remark) payload.remark = params.remark;
 
-    const merchantId = params.merchantId ?? this.cfg.merchantId;
-    if (merchantId) payload.merchant_id = merchantId;
+      const merchantId = this.resolveMerchantId(params.merchantId);
+    if (!merchantId) {
+      throw new Error('ING1 merchantId is required for cashout inquiry');
+    }
+    payload.merchant_id = merchantId;
 
     // NOTE: INA API uses /transaction/inquiry for all inquiries (including cashout validation)
     // The /transaction/cashout/inquiry endpoint does not exist in the Billers Engine API
@@ -617,12 +649,12 @@ export class Ing1Client {
     console.log(`[Ing1Client] cashoutInquiry - sending payload:`, JSON.stringify(payload, null, 2));
     const data = await this.authorizedRequest<any>({
       method: 'POST',
-      url: 'transaction/inquiry',
+      url: 'transaction/cashout/inquiry',
       data: payload,
     });
 
     const rc = typeof data?.rc === 'number' ? data.rc : Number(data?.rc ?? 99);
-        const statusText = extractStatusText(data);
+    const statusText = extractStatusText(data);
 
     const details = data?.data ?? {};
     const expiredAt = details?.expired_at ?? null;
@@ -657,8 +689,11 @@ export class Ing1Client {
     if (params.otp) payload.otp = params.otp;
     if (params.remark) payload.remark = params.remark;
 
-    const merchantId = params.merchantId ?? this.cfg.merchantId;
-    if (merchantId) payload.merchant_id = merchantId;
+    const merchantId = this.resolveMerchantId(params.merchantId);
+    if (!merchantId) {
+      throw new Error('ING1 merchantId is required for cashout payment');
+    }
+    payload.merchant_id = merchantId;
 
     const data = await this.authorizedRequest<any>({
       method: 'POST',
