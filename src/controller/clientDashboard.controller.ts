@@ -411,7 +411,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
 export async function exportClientTransactions(req: ClientAuthRequest, res: Response) {
   try {
-    // 1) load user + children
+    // 1) Load user + children
     const user = await prisma.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
@@ -419,36 +419,42 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
           include: { children: { select: { id: true, name: true } } }
         }
       }
-    })
-    if (!user) return res.status(404).json({ error: 'User tidak ditemukan' })
-    const pc = user.partnerClient!
+    });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
 
-    // 2) tanggal
-    const dateFrom = req.query.date_from ? new Date(String(req.query.date_from)) : undefined
-    const dateTo   = req.query.date_to ? new Date(String(req.query.date_to)) : undefined
+    const pc = user.partnerClient!;
 
-    // 3) clientIds override
-    const isParent = pc.children.length > 0
-    let clientIds = isParent
-      ? [pc.id, ...pc.children.map(c => c.id)]
-      : [pc.id]
-    if (typeof req.query.clientId === 'string' && req.query.clientId !== 'all' && req.query.clientId.trim()) {
-      clientIds = [String(req.query.clientId)]
+    // 2) Tanggal filter
+    const dateFrom = req.query.date_from ? new Date(String(req.query.date_from)) : undefined;
+    const dateTo = req.query.date_to ? new Date(String(req.query.date_to)) : undefined;
+
+    // 3) Client IDs (parent + children)
+    const isParent = pc.children.length > 0;
+    let clientIds: string[] = isParent ? [pc.id, ...pc.children.map(c => c.id)] : [pc.id];
+
+    const queryClientId = req.query.clientId;
+    if (
+      typeof queryClientId === 'string' &&
+      queryClientId !== 'all' &&
+      queryClientId.trim()
+    ) {
+      clientIds = [queryClientId];
     }
 
-    // 4) status filter expansion
-    const rawStatus = req.query.status
-    const allowed = DASHBOARD_STATUSES as readonly string[]
-    let statuses: string[] = []
+    // 4) Status filter
+    const rawStatus = req.query.status;
+    const allowed = DASHBOARD_STATUSES as readonly string[];
+    let statuses: string[] = [];
+
     if (Array.isArray(rawStatus)) {
       statuses = rawStatus
-        .map(String)
+        .map(s => String(s))
         .flatMap(s =>
           s === ORDER_STATUS.SUCCESS
             ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-            : [s],
+            : [s]
         )
-        .filter(s => allowed.includes(s))
+        .filter(s => allowed.includes(s));
     } else if (typeof rawStatus === 'string' && rawStatus.trim() !== '') {
       statuses = rawStatus
         .split(',')
@@ -456,115 +462,114 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
         .flatMap(s =>
           s === ORDER_STATUS.SUCCESS
             ? [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED]
-            : [s],
+            : [s]
         )
-        .filter(s => allowed.includes(s))
+        .filter(s => allowed.includes(s));
     }
+
     if (statuses.includes(ORDER_STATUS.PAID) && !statuses.includes(ORDER_STATUS.LN_SETTLED)) {
-      statuses.push(ORDER_STATUS.LN_SETTLED)
+      statuses.push(ORDER_STATUS.LN_SETTLED);
     }
-    if (statuses.length === 0) statuses = [...allowed]
+    if (statuses.length === 0) statuses = [...allowed];
 
-    // 5) id->name map
-    const idToName: Record<string,string> = {}
-    pc.children.forEach(c => { idToName[c.id] = c.name })
-    idToName[pc.id] = pc.name
+    // 5) ID → Name map
+    const idToName: Record<string, string> = {};
+    pc.children.forEach(c => { idToName[c.id] = c.name; });
+    idToName[pc.id] = pc.name;
 
-    // 6) headers
-    res.setHeader('Content-Disposition', 'attachment; filename=client-transactions.xlsx')
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    // 6) Excel headers
+    res.setHeader('Content-Disposition', 'attachment; filename=client-transactions.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
-    // 7) streaming workbook
     const wb = new ExcelJS.stream.xlsx.WorkbookWriter({
       stream: res,
       useStyles: false,
       useSharedStrings: true,
-    })
+    });
 
-    const all = wb.addWorksheet('All Transactions')
-    all.columns = [
-      { header: 'Child Name', key: 'name',     width: 30 },
-      { header: 'Order ID',   key: 'id',       width: 36 },
-      { header: 'RRN',        key: 'rrn',      width: 24 },
-      { header: 'Player ID',  key: 'player',   width: 20 },
-      { header: 'Amount',     key: 'amt',      width: 15 },
-      { header: 'Pending',    key: 'pend',     width: 15 },
-      { header: 'Settled',    key: 'sett',     width: 15 },
-      { header: 'Fee',        key: 'fee',      width: 15 },
-      { header: 'Status',     key: 'stat',     width: 16 },
-      { header: 'Date',       key: 'date',     width: 20 },
-      { header: 'Update At',  key: 'paidAt',   width: 20 },
+    const sheet = wb.addWorksheet('All Transactions');
+    sheet.columns = [
+      { header: 'Child Name', key: 'name', width: 30 },
+      { header: 'Order ID', key: 'id', width: 36 },
+      { header: 'RRN', key: 'rrn', width: 24 },
+      { header: 'Player ID', key: 'player', width: 20 },
+      { header: 'Amount', key: 'amt', width: 15 },
+      { header: 'Pending', key: 'pend', width: 15 },
+      { header: 'Settled', key: 'sett', width: 15 },
+      { header: 'Fee', key: 'fee', width: 15 },
+      { header: 'Status', key: 'stat', width: 16 },
+      { header: 'Date', key: 'date', width: 20 },
+      { header: 'Update At', key: 'paidAt', width: 20 },
       { header: 'Settled At', key: 'settledAt', width: 20 },
       { header: 'Expires At', key: 'expiresAt', width: 20 },
-    ]
+    ];
 
-    // 8) MEMORY-OPTIMIZED STREAMING: Chunked fetch with immediate write-to-disk
-    const CHUNK_SIZE = 500; // Smaller chunks = less memory footprint
+    // 7) Streaming fetch (memory safe)
+    const CHUNK_SIZE = 500;
     let skipped = 0;
     let totalRows = 0;
-    const MEMORY_THRESHOLD = 50 * 1024 * 1024; // 50MB max per batch
 
-    // Helper to convert MongoDB dates
     const toDate = (val: any): Date | null => {
       if (!val) return null;
       if (typeof val === 'object' && val.$date) {
         if (typeof val.$date === 'string') return new Date(val.$date);
-        if (typeof val.$date === 'object' && val.$date.$numberLong) return new Date(Number(val.$date.$numberLong));
+        if (typeof val.$date === 'object' && val.$date.$numberLong)
+          return new Date(Number(val.$date.$numberLong));
       }
       const date = new Date(val);
       return isNaN(date.getTime()) ? null : date;
     };
 
     while (true) {
-      // Memory check: Stop if using too much memory
-      const memUsage = process.memoryUsage().heapUsed;
-      if (memUsage > MEMORY_THRESHOLD) {
-        console.warn(`[Export] Memory usage ${(memUsage / 1024 / 1024).toFixed(0)}MB, pausing batch`);
-        await new Promise(resolve => setTimeout(resolve, 100)); // Give GC time to run
-      }
-
       const raw = await prisma.order.aggregateRaw({
         pipeline: [
-          { $match: {
+          {
+            $match: {
               partnerClientId: { $in: clientIds },
               status: { $in: statuses },
-              ...(dateFrom || dateTo ? {
-                createdAt: {
-                  ...(dateFrom ? { $gte: { $date: dateFrom.toISOString() } } : {}),
-                  ...(dateTo   ? { $lte: { $date: dateTo.toISOString() } }   : {}),
-                }
-              } : {})
-          }},
+              ...(dateFrom || dateTo
+                ? {
+                    createdAt: {
+                      ...(dateFrom ? { $gte: { $date: dateFrom.toISOString() } } : {}),
+                      ...(dateTo ? { $lte: { $date: dateTo.toISOString() } } : {}),
+                    },
+                  }
+                : {}),
+            },
+          },
           { $sort: { createdAt: -1 } },
           { $skip: skipped },
           { $limit: CHUNK_SIZE },
-          { $addFields: {
+          {
+            $addFields: {
               settlementTime: {
                 $cond: [
-                  { $eq: [ { $type: "$settlementTime" }, "string" ] },
-                  { $dateFromString: { dateString: "$settlementTime", onError: null, onNull: null } },
-                  "$settlementTime"
-                ]
+                  { $eq: [{ $type: '$settlementTime' }, 'string'] },
+                  { $dateFromString: { dateString: '$settlementTime', onError: null, onNull: null } },
+                  '$settlementTime',
+                ],
               },
               paymentReceivedTime: {
                 $cond: [
-                  { $eq: [ { $type: "$paymentReceivedTime" }, "string" ] },
-                  { $dateFromString: { dateString: "$paymentReceivedTime", onError: null, onNull: null } },
-                  "$paymentReceivedTime"
-                ]
+                  { $eq: [{ $type: '$paymentReceivedTime' }, 'string'] },
+                  { $dateFromString: { dateString: '$paymentReceivedTime', onError: null, onNull: null } },
+                  '$paymentReceivedTime',
+                ],
               },
               trxExpirationTime: {
                 $cond: [
-                  { $eq: [ { $type: "$trxExpirationTime" }, "string" ] },
-                  { $dateFromString: { dateString: "$trxExpirationTime", onError: null, onNull: null } },
-                  "$trxExpirationTime"
-                ]
-              }
-          }},
-          { $project: {
+                  { $eq: [{ $type: '$trxExpirationTime' }, 'string'] },
+                  { $dateFromString: { dateString: '$trxExpirationTime', onError: null, onNull: null } },
+                  '$trxExpirationTime',
+                ],
+              },
+            },
+          },
+          {
+            $project: {
               _id: 0,
               partnerClientId: 1,
-              id: { $toString: "$_id" },
+              id: { $toString: '$_id' },
               rrn: 1,
               playerId: 1,
               amount: 1,
@@ -575,28 +580,39 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
               createdAt: 1,
               paymentReceivedTime: 1,
               settlementTime: 1,
-              trxExpirationTime: 1
-          }}
-        ]
+              trxExpirationTime: 1,
+            },
+          },
+        ],
       });
 
       const batch = raw as unknown as any[];
       if (batch.length === 0) break;
 
-      // Write directly to Excel stream (no memory buffering)
+      const now = new Date();
+
       for (const d of batch) {
-        all.addRow({
-          name:      idToName[String(d.partnerClientId)] || String(d.partnerClientId),
-          id:        String(d.id),
-          rrn:       d.rrn ? String(d.rrn) : '',
-          player:    String(d.playerId),
-          amt:       Number(d.amount ?? 0),
-          pend:      Number(d.pendingAmount ?? 0),
-          sett:      Number(d.settlementAmount ?? 0),
-          fee:       Number(d.feeLauncx ?? 0),
-          stat:      d.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : d.status,
-          date:      formatDateJakarta(toDate(d.createdAt) ?? new Date()),
-          paidAt:    d.paymentReceivedTime ? formatDateJakarta(toDate(d.paymentReceivedTime)!) : '',
+        let status = d.status;
+        const expTime = toDate(d.trxExpirationTime);
+        const isSettled = [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(status);
+
+        // ❌ Jangan ubah PENDING jadi EXPIRED kalau belum waktunya
+        if (status === ORDER_STATUS.PENDING && expTime && expTime < now) {
+          status = ORDER_STATUS.EXPIRED;
+        }
+
+        sheet.addRow({
+          name: idToName[String(d.partnerClientId)] || String(d.partnerClientId),
+          id: String(d.id),
+          rrn: d.rrn ? String(d.rrn) : '',
+          player: String(d.playerId),
+          amt: Number(d.amount ?? 0),
+          pend: status === ORDER_STATUS.PENDING ? Number(d.pendingAmount ?? d.amount ?? 0) : 0,
+          sett: isSettled ? Number(d.settlementAmount ?? 0) : 0,
+          fee: Number(d.feeLauncx ?? 0),
+          stat: isSettled ? ORDER_STATUS.SUCCESS : status,
+          date: formatDateJakarta(toDate(d.createdAt) ?? new Date()),
+          paidAt: d.paymentReceivedTime ? formatDateJakarta(toDate(d.paymentReceivedTime)!) : '',
           settledAt: d.settlementTime ? formatDateJakarta(toDate(d.settlementTime)!) : '',
           expiresAt: d.trxExpirationTime ? formatDateJakarta(toDate(d.trxExpirationTime)!) : '',
         }).commit();
@@ -604,23 +620,20 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
 
       skipped += batch.length;
       totalRows += batch.length;
-
-      // Clear references to batch data immediately
-      batch.length = 0;
     }
 
     console.log(`[Export] Completed: ${totalRows} rows`);
-
-    // 9) finalize workbook
-    await all.commit()
-    await wb.commit()
-    res.end()
+    await sheet.commit();
+    await wb.commit();
+    res.end();
   } catch (err: any) {
-    console.error('[exportClientTransactions]', err)
+    console.error('[exportClientTransactions]', err);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to export data' })
+      res.status(500).json({ error: 'Failed to export data' });
     } else {
-      try { res.end() } catch {}
+      try {
+        res.end();
+      } catch {}
     }
   }
 }

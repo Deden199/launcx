@@ -7,6 +7,7 @@ import { requireClientAuth } from '../../middleware/clientAuth'
 import {
   getClientDashboard,
   exportClientTransactions,
+  exportClientTransactions2,
   getClientCallbackUrl,
 
   updateClientCallbackUrl,
@@ -37,7 +38,7 @@ r.post('/change-password', express.json(), changeClientPassword)
 
 // Dashboard (saldo + transaksi)
 r.get('/dashboard', getClientDashboard)
-r.get('/dashboard/export', exportClientTransactions)
+r.get('/dashboard/export', exportClientTransactions2)
 r.post('/callbacks/:id/retry', retryTransactionCallback)
 
 // Callback API logs
