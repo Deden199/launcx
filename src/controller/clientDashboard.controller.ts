@@ -1,7 +1,7 @@
 // src/controllers/clientDashboard.controller.ts
 
 import { Response } from 'express'
-import { prisma } from '../core/prisma'
+import { prisma, prismaReadOnly } from '../core/prisma'
 import { DisbursementStatus } from '@prisma/client'
 import { ClientAuthRequest } from '../middleware/clientAuth'
 import ExcelJS from 'exceljs'
@@ -117,7 +117,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     }
 
     // (3) Load user + partnerClient(+children)
-    const user = await prisma.clientUser.findUnique({
+    const user = await prismaReadOnly.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
         partnerClient: {
@@ -244,7 +244,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       orders,
       totalRows
     ] = await Promise.all([
-      prisma.order.groupBy({
+      prismaReadOnly.order.groupBy({
         by: ['status'],
         where: {
           partnerClientId: { in: clientIds },
@@ -258,7 +258,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         }
       }),
       // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
-      prisma.order.findMany({
+      prismaReadOnly.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
         skip: searchStr ? 0 : (pageNum - 1) * pageSize,
@@ -272,7 +272,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           trxExpirationTime: true,
         }
       }),
-      prisma.order.count({ where: whereOrders })
+      prismaReadOnly.order.count({ where: whereOrders })
     ]);
 
     // (11) Metrics extraction
@@ -349,7 +349,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 export async function exportClientTransactions(req: ClientAuthRequest, res: Response) {
   try {
     // 1) load user + children
-    const user = await prisma.clientUser.findUnique({
+    const user = await prismaReadOnly.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
         partnerClient: {
@@ -440,7 +440,7 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
     let skipped = 0
 
     while (true) {
-      const raw = await prisma.order.aggregateRaw({
+      const raw = await prismaReadOnly.order.aggregateRaw({
         pipeline: [
           { $match: {
               partnerClientId: { $in: clientIds },
