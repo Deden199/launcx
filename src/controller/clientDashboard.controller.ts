@@ -274,8 +274,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
                     pendingAmount: true,
                 },
             }),
-            // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
-            // FIX: Always apply pagination even with search to prevent memory overflow
+            // ✅ FIX: Tambahkan settlementTime ke select
             prisma.order.findMany({
                 where: whereOrders,
                 orderBy: { createdAt: 'desc' },
@@ -294,6 +293,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
                     settlementStatus: true,
                     createdAt: true,
                     paymentReceivedTime: true,
+                    settlementTime: true, // ✅ ADDED: Field yang sebelumnya missing
                     trxExpirationTime: true,
                 },
             }),
@@ -380,7 +380,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
                 settlementStatus,
                 status: status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : status,
                 paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
-                settlementTime: '',
+                settlementTime: o.settlementTime?.toISOString() ?? '', // ✅ FIX: Sekarang ada datanya
                 trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
             };
         });
@@ -596,7 +596,7 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
         const expTime = toDate(d.trxExpirationTime);
         const isSettled = [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(status);
 
-        // ❌ Jangan ubah PENDING jadi EXPIRED kalau belum waktunya
+        // ✅ Cek expired hanya jika memang sudah melewati waktu expiration
         if (status === ORDER_STATUS.PENDING && expTime && expTime < now) {
           status = ORDER_STATUS.EXPIRED;
         }
