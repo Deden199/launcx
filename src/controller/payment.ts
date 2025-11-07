@@ -54,7 +54,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
     const walletId = req.body.walletId ?? req.body.wallet_id
     const walletIdType = req.body.walletIdType ?? req.body.wallet_id_type
     const transactionDescription = req.body.transactionDescription ?? req.body.transaction_description
-    const expiredTime = req.body.expiredTime ?? req.body.expired_time
+    const expiredTime = req.body.expiredTime ?? req.body.expired_time ?? req.body.expired_at
 
     // 4) validate
     if (isNaN(price) || price <= 0) {
