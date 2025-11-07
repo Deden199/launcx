@@ -13,8 +13,7 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-
-    // ✨ tambahkan dua baris di bawah:
+    "ignoreDeprecations": "5.0",
     "baseUrl": ".",
 
     "paths": {

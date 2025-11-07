@@ -1,0 +1,464 @@
+{
+	"info": {
+		"_postman_id": "f78e2fcd-b971-4a6d-9b4e-2171d3e019f2",
+		"name": "INA Payment API - Complete Collection",
+		"description": "Complete Postman collection for testing INA payment integration on app.launcx.com",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "20555851",
+		"_collection_link": "https://grey-robot-16299.postman.co/workspace/one-am~27fb4eb0-9bc0-4083-af84-2c735a33d879/collection/20555851-f78e2fcd-b971-4a6d-9b4e-2171d3e019f2?action=share&source=collection_link&creator=20555851"
+	},
+	"item": [
+		{
+			"name": "PAYMENT OPERATIONS",
+			"item": [
+				{
+					"name": "1. Create Payment",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"// Generate timestamp in milliseconds",
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);",
+									"",
+									"// Generate unique client reference",
+									"const clientReff = 'PAY-' + timestamp + '-' + Math.random().toString(36).substr(2, 9);",
+									"pm.environment.set('clientReff', clientReff);",
+									"",
+									"// Log for debugging",
+									"console.log('Timestamp:', timestamp);",
+									"console.log('Client Reff:', clientReff);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 50000,\n  \"clientReff\": \"{{clientReff}}\",\n  \"playerId\": \"player_123\",\n  \"sourceProvider\": \"ing1\",\n  \"merchantId\": \"test-merchant\"\n}"
+						},
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/payments",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"payments"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2. Check Payment Status",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/orders/68f877a3ca4941e5d9342a8f",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"orders",
+								"68f877a3ca4941e5d9342a8f"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "3. Payment History",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/payments?page=1&limit=20",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"payments"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "WITHDRAWAL OPERATIONS",
+			"item": [
+				{
+					"name": "1. List Supported Banks",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/client/withdrawals/banks",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"client",
+								"withdrawals",
+								"banks"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2. Validate Bank Account",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"account_number\": \"1234567890\",\n  \"bank_code\": \"014\",\n  \"amount\": 50000,\n  \"sourceProvider\": \"in-1\",\n  \"merchantId\": \"test-merchant\"\n}"
+						},
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/client/withdrawals/validate",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"client",
+								"withdrawals",
+								"validate"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "3. Create Withdrawal",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"account_number\": \"1234567890\",\n  \"bank_code\": \"014\",\n  \"amount\": 50000,\n  \"account_name\": \"ACCOUNT HOLDER\",\n  \"bank_name\": \"Bank Central Asia\",\n  \"sourceProvider\": \"in-1\",\n  \"merchantId\": \"test-merchant\"\n}"
+						},
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/client/withdrawals",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"client",
+								"withdrawals"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "4. Check Withdrawal Status",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/client/withdrawals/with_abc123",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"client",
+								"withdrawals",
+								"with_abc123"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "5. Withdrawal History",
+					"event": [
+						{
+							"listen": "pre-request",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now().toString();",
+									"pm.environment.set('timestamp', timestamp);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{API_KEY}}"
+							},
+							{
+								"key": "X-Signature",
+								"value": "{{SIGNATURE}}"
+							},
+							{
+								"key": "X-Timestamp",
+								"value": "{{timestamp}}"
+							}
+						],
+						"url": {
+							"raw": "{{BASE_URL}}/api/v1/client/withdrawals?page=1&limit=20&status=PENDING",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"client",
+								"withdrawals"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "status",
+									"value": "PENDING"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "BASE_URL",
+			"value": "http://app.launcx.com",
+			"type": "string"
+		},
+		{
+			"key": "API_KEY",
+			"value": "9be3380f-8189-4232-ba1f-78e21ce60948",
+			"type": "string"
+		},
+		{
+			"key": "API_SECRET",
+			"value": "2af83bbb-e41e-40e1-b10a-3f16c00c858d",
+			"type": "string"
+		},
+		{
+			"key": "SIGNATURE",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "timestamp",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "clientReff",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

@@ -8,6 +8,7 @@ import {
   listWithdrawals,
   retryWithdrawal,
   listSubMerchants,
+  getBanks,
 } from '../controller/withdrawals.controller'
 
 /**
@@ -68,6 +69,9 @@ const router = Router()
 
 // All these need the client to be authenticated
 router.use(requireClientAuth)
+
+// 0) Get supported banks for INA withdrawals
+router.get('/banks', getBanks)
 
 // 1) Validate account
 router.post(

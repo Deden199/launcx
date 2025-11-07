@@ -47,6 +47,7 @@ export default async function apiKeyAuth(
   // --- Try to get client data from Redis cache first ---
   const cacheKey = `apikey:${gotKey}`
   let clientData = await RedisCache.get<CachedClientData>(cacheKey)
+  console.log(`[Auth] Cache hit: ${!!clientData}`)
 
   if (!clientData) {
     // 1) Cari partnerClient + parentClientId dari DB
@@ -54,6 +55,7 @@ export default async function apiKeyAuth(
       where: { apiKey: gotKey },
       select: { id: true, apiKey: true, isActive: true, parentClientId: true }
     })
+    console.log(`[Auth] DB lookup: client=${client?.id}, isActive=${client?.isActive}`)
 
     if (!client || !client.isActive) {
       return res.status(401).json({ error: 'Invalid or inactive API key' })
@@ -93,5 +95,6 @@ export default async function apiKeyAuth(
     req.childrenIds = clientData.childrenIds
   }
 
+  console.log(`[Auth] ✓ Success: clientId=${req.clientId}, method=${req.method}, path=${req.path}`)
   next()
 }

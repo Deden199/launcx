@@ -24,7 +24,7 @@ const normalizeNumber = (value: unknown): number | null => {
 
 const normalizeRc = (rc?: number | null): Ing1InternalStatus | null => {
   if (rc == null || Number.isNaN(rc)) return null;
-  if (rc === 0) return 'PAID';
+  if (rc === 0) return 'PENDING';
   if (rc === 91) return 'PENDING';
   if (rc === 99) return 'FAILED';
   return null;
@@ -49,10 +49,11 @@ export const mapIng1Status = (
   rc?: number | null,
   statusText?: string | null
 ): Ing1InternalStatus => {
-  const byRc = normalizeRc(rc);
-  if (byRc) return byRc;
+
   const byText = normalizeStatusText(statusText);
   if (byText) return byText;
+    const byRc = normalizeRc(rc);
+  if (byRc) return byRc;
   return 'FAILED';
 };
 
