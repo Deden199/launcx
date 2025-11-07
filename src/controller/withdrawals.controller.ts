@@ -46,6 +46,9 @@ const isPiroVariant = (provider?: string | null): provider is 'piro' | 'genesis'
 
 
 
+// src/controllers/withdraw.controller.ts
+// CRITICAL FIX: Balance calculation untuk listSubMerchants
+
 export const listSubMerchants = async (req: ClientAuthRequest, res: Response) => {
   const clientUserId = req.clientUserId!
 
@@ -74,7 +77,6 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
   const cacheKey = `submerchants:${partnerClientId}:${qClientId || 'all'}:${defaultProvider}`
 
   try {
-    // Use Redis caching with TTL from env (default 300s for submerchants)
     const { cacheWrapper } = await import('../core/redis')
     const result = await cacheWrapper(cacheKey, 'submerchants', async () => {
       // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
@@ -89,17 +91,25 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
 
       const subIds = subs.map(s => s.id)
 
-      // 3) Calculate balances using MongoDB aggregation (optimized for performance)
-      // Uses aggregateRaw for 10x better performance than groupBy (~500ms vs ~3000ms)
+      // ✅ FIX: Use aggregateRaw with CONSISTENT settlementTime logic
       const [inAggs, outAggs] = await Promise.all([
-        // Get settlement amounts with MongoDB aggregation
+        // Settlement IN: Orders dengan settlementTime NOT NULL atau status SUCCESS/DONE/SETTLED
         prisma.order.aggregateRaw({
           pipeline: [
             {
               $match: {
                 subMerchantId: { $in: subIds },
                 partnerClientId: { $in: clientIds },
-                settlementTime: { $ne: null }
+                $or: [
+                  // Prioritas 1: Ada settlementTime
+                  { settlementTime: { $ne: null } },
+                  // Prioritas 2: Status SUCCESS/DONE/SETTLED (untuk data lama yang settlementTime null)
+                  { 
+                    status: { 
+                      $in: ['SUCCESS', 'DONE', 'SETTLED'] 
+                    }
+                  }
+                ]
               }
             },
             {
@@ -110,7 +120,7 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
             }
           ]
         }),
-        // Get withdrawal amounts with MongoDB aggregation
+        // Withdrawal OUT: Pending + Completed withdrawals
         prisma.withdrawRequest.aggregateRaw({
           pipeline: [
             {
@@ -161,6 +171,51 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
   } catch (err: any) {
     logger.error('[listSubMerchants]', err)
     return res.status(500).json({ error: err.message || 'Internal server error' })
+  }
+}
+
+// ✅ CRITICAL: Add this function to fix existing data
+export async function migrateSettlementTime(req: Request, res: Response) {
+  try {
+    // Fix orders dengan status SUCCESS/DONE/SETTLED tapi settlementTime null
+    const result = await prisma.order.updateMany({
+      where: {
+        status: { in: ['SUCCESS', 'DONE', 'SETTLED'] },
+        settlementTime: null,
+        paymentReceivedTime: { not: null } // Gunakan paymentReceivedTime sebagai fallback
+      },
+      data: {
+        settlementTime: new Date() // Atau bisa pakai: paymentReceivedTime
+      }
+    })
+
+    // Alternative: Use paymentReceivedTime as settlementTime
+    const ordersToFix = await prisma.order.findMany({
+      where: {
+        status: { in: ['SUCCESS', 'DONE', 'SETTLED'] },
+        settlementTime: null,
+        paymentReceivedTime: { not: null }
+      },
+      select: { id: true, paymentReceivedTime: true }
+    })
+
+    // Update satu per satu dengan paymentReceivedTime
+    for (const order of ordersToFix) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { settlementTime: order.paymentReceivedTime }
+      })
+    }
+
+    return res.json({
+      success: true,
+      updatedCount: result.count,
+      fixedWithPaymentTime: ordersToFix.length,
+      message: 'Settlement time migration completed'
+    })
+  } catch (err: any) {
+    logger.error('[migrateSettlementTime]', err)
+    return res.status(500).json({ error: err.message })
   }
 }
 
