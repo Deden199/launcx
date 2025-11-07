@@ -427,67 +427,7 @@ export default function CallbackPage() {
           </div>
         </div>
 
-        {/* CARD: Minute Expired */}
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5 shadow-sm">
-          <div className="mb-5 flex items-center gap-3">
-            <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900">
-              <Clock size={20} />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold">Minute Expired Settings</h1>
-              <p className="text-xs text-neutral-400 mt-1">
-                Data disimpan di browser localStorage
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-4">
-            <div>
-              <label className="mb-1 block text-sm text-neutral-300">
-                Minute Expired
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={minuteExpiredInput}
-                  onChange={(e) => handleMinuteExpiredChange(e.target.value)}
-                  onBlur={commitMinuteExpired}
-                  className="h-11 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 pr-20 text-sm outline-none placeholder:text-neutral-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-                />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400">
-                  Minute
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-neutral-400">{localStorageStatus}</p>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              onClick={handleSaveMinuteExpired}
-              disabled={savingMinute}
-              className="inline-flex items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-2.5 text-sm font-medium transition hover:bg-neutral-800/60 disabled:opacity-50"
-            >
-              {savingMinute ? 'Saving…' : 'Save duration'}
-            </button>
-            {minuteMessage && (
-              <div
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                  minuteError
-                    ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                    : 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
-                }`}
-              >
-                {minuteError ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-                <span>{minuteMessage}</span>
-              </div>
-            )}
-          </div>
-        </div>
-
+     
         {/* CARD: 2FA */}
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
