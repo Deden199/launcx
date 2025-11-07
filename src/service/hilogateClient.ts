@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import crypto from 'crypto';
+import logger from '../logger';
 
 // Konfigurasi yang kita simpan di DB
 export interface HilogateConfig {
@@ -126,6 +127,7 @@ export class HilogateClient {
   ): Promise<any> {
     const signature = this.sign(path, body);
     const headers: any = { 'X-Signature': signature };
+    
 
     if (method === 'get') {
       const res = await this.axiosInst.get(path, { headers });

@@ -44,6 +44,7 @@ import { PiroClient, PiroConfig } from "./piroClient";
 import { GenesisClient, GenesisClientConfig } from "./genesisClient";
 import { schedulePiroFallback } from "./piroFallback";
 import { scheduleGenesisFallback } from "./genesisFallback";
+import { data } from '../../dist/controller/admin/merchant.controller';
 
 // ─── Internal checkout page hosts ──────────────────────────────────
 const checkoutHosts = [
@@ -112,13 +113,130 @@ export const createTransaction = async (
     forceSchedule = pc?.forceSchedule ?? null;
   }
 
+
   // 3) Tentukan provider akhir (forced > request.merchantName)
-  const mName = forced || request.merchantName.toLowerCase();
+  const mName = request.merchantName.toLowerCase() || forced ;
+
 
   const amount = Number(request.price);
   const pid = request.playerId ?? buyerId;
+   // ─── Hilogate branch ───────────────────────────────────
+  if (mName === "hilogate") {
+    // 1) Cari internal merchant Hilogate
+    const merchantRec = await prisma.merchant.findFirst({
+      where: { name: "hilogate" },
+    });
+    if (!merchantRec) {
+      throw new Error("Internal Hilogate merchant not found");
+    }
+
+ 
+    const minutes = request.expiredTime
+    const ms = minutes * 60 * 1000
+
+    const nowUtcMs = Date.now()
+
+    const futureTimestamp = nowUtcMs + ms
+ 
+    // 2) Simpan transaction_request
+    const trx = await prisma.transaction_request.create({
+      data: {
+        merchantId: merchantRec.id,
+        subMerchantId: request.subMerchantId, // ← connect ke sub‐merchant
+        buyerId: request.buyer,
+        playerId: pid,
+        amount,
+        status: "PENDING",
+        settlementAmount: amount,
+      },
+    });
+    const refId = trx.id;
+
+    // 3) Ambil kredensial aktif & instansiasi client
+    const hilSubs = await getActiveProviders(merchantRec.id, "hilogate", {
+      schedule: (forceSchedule as any) || undefined,
+    });
+    if (!hilSubs.length) throw new Error("No active Hilogate credentials");
+
+    // ambil HilogateConfig dari properti `config`
+    const hilCfg = hilSubs[0].config as HilogateConfig;
+    const hilClient = new HilogateClient(hilCfg);
+
+      const payload = {
+        ref_id: refId,
+        method: "qris",
+        amount,
+        expires_at: futureTimestamp,
+      };
+
+
+      const apiResp = await hilClient.createTransaction(payload);
+
+
+    // bentuk respons createTransaction (sesuai implementasi `requestFull`) biasanya:
+    // {
+    //   code: number,
+    //   status: string,
+    //   data: {
+    //     qr_string: string,
+    //     checkout_url: string,
+    //     ...
+    //   }
+    // }
+    const outer = apiResp.data;
+    const qrString = outer.data.qr_string;
+
+    // 4) Simpan audit log
+    await prisma.transaction_response.create({
+      data: {
+        referenceId: refId,
+        responseBody: apiResp,
+        playerId: pid,
+      },
+    });
+
+    // 5) Build internal checkout URL
+    const host = pickRandomHost();
+    const checkoutUrl = `${host}/order/${refId}`;
+
+    // 7) Simpan ke tabel order untuk dashboard client
+    await prisma.order.create({
+      data: {
+        id: refId,
+        userId: request.buyer,
+        merchantId: request.buyer,
+        // connect relation to PartnerClient
+        subMerchant: { connect: { id: request.subMerchantId } }, // ← connect di order juga
+        partnerClient: { connect: { id: request.buyer } },
+        playerId: pid,
+        amount,
+        channel: "hilogate",
+        status: "PENDING",
+        qrPayload: qrString,
+        checkoutUrl,
+        fee3rdParty: 0,
+        settlementAmount: null,
+        pgRefId: outer.data.ref_id,
+        providerPayload: (outer.data ?? null) as any,
+        trxExpirationTime: outer.data.expires_at,
+      },
+    });
+    await scheduleHilogateFallback(refId, hilCfg);
+
+    // 8) Return response ke client
+    return {
+      orderId: refId,
+      checkoutUrl,
+      qrPayload: qrString,
+      playerId: pid,
+      totalAmount: amount,
+      expiredTs: outer.data.expires_at,
+    };
+    
+  }
 
   if (mName === "piro" || mName === "genesis") {
+
     const merchantRec = await prisma.merchant.findFirst({
       where: { name: "piro" },
     });
@@ -341,6 +459,7 @@ export const createTransaction = async (
   }
 
   if (mName === "ing1") {
+
     const merchantRec = await prisma.merchant.findFirst({
       where: { name: "ing1" },
     });
@@ -442,111 +561,7 @@ export const createTransaction = async (
     };
   }
 
-  // ─── Hilogate branch ───────────────────────────────────
-  if (mName === "hilogate") {
-    // 1) Cari internal merchant Hilogate
-    const merchantRec = await prisma.merchant.findFirst({
-      where: { name: "hilogate" },
-    });
-    if (!merchantRec) {
-      throw new Error("Internal Hilogate merchant not found");
-    }
-
-    const ms = request.expiredTime * 60 * 1000;
-
-    const nowUtcMs = Date.now();
-    const futureTimestamp = nowUtcMs + ms;
-
-  
-    // 2) Simpan transaction_request
-    const trx = await prisma.transaction_request.create({
-      data: {
-        merchantId: merchantRec.id,
-        subMerchantId: request.subMerchantId, // ← connect ke sub‐merchant
-        buyerId: request.buyer,
-        playerId: pid,
-        amount,
-        status: "PENDING",
-        settlementAmount: amount,
-      },
-    });
-    const refId = trx.id;
-
-    // 3) Ambil kredensial aktif & instansiasi client
-    const hilSubs = await getActiveProviders(merchantRec.id, "hilogate", {
-      schedule: (forceSchedule as any) || undefined,
-    });
-    if (!hilSubs.length) throw new Error("No active Hilogate credentials");
-
-    // ambil HilogateConfig dari properti `config`
-    const hilCfg = hilSubs[0].config as HilogateConfig;
-    const hilClient = new HilogateClient(hilCfg);
-
-    // panggil transaksi
-    const apiResp = await hilClient.createTransaction({
-      ref_id: refId,
-      method: "qris",
-      amount,
-      expires_at: futureTimestamp,
-    });
-
-    // bentuk respons createTransaction (sesuai implementasi `requestFull`) biasanya:
-    // {
-    //   code: number,
-    //   status: string,
-    //   data: {
-    //     qr_string: string,
-    //     checkout_url: string,
-    //     ...
-    //   }
-    // }
-    const outer = apiResp.data;
-    const qrString = outer.data.qr_string;
-
-    // 4) Simpan audit log
-    await prisma.transaction_response.create({
-      data: {
-        referenceId: refId,
-        responseBody: apiResp,
-        playerId: pid,
-      },
-    });
-
-    // 5) Build internal checkout URL
-    const host = pickRandomHost();
-    const checkoutUrl = `${host}/order/${refId}`;
-
-    // 7) Simpan ke tabel order untuk dashboard client
-    await prisma.order.create({
-      data: {
-        id: refId,
-        userId: request.buyer,
-        merchantId: request.buyer,
-        // connect relation to PartnerClient
-        subMerchant: { connect: { id: request.subMerchantId } }, // ← connect di order juga
-        partnerClient: { connect: { id: request.buyer } },
-        playerId: pid,
-        amount,
-        channel: "hilogate",
-        status: "PENDING",
-        qrPayload: qrString,
-        checkoutUrl,
-        fee3rdParty: 0,
-        settlementAmount: null,
-      },
-    });
-    await scheduleHilogateFallback(refId, hilCfg);
-
-    // 8) Return response ke client
-    return {
-      orderId: refId,
-      checkoutUrl,
-      qrPayload: qrString,
-      playerId: pid,
-      totalAmount: amount,
-      expiredTs: outer.data.expires_at,
-    };
-  }
+ 
 
   // ─── OY QRIS branch ───────────────────────────────────
   if (mName === "oy") {

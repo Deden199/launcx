@@ -32,13 +32,13 @@ import { verifyQrisMpmCallbackSignature } from '../service/gidiQrisIntegration'
 
 export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
   try {
+    
     // 0) Ambil partner-client ID dari apiKeyAuth
     const clientId = req.clientId!
+    console.log('[INFO] req.body:', req.body.merchantName);
     
     // 1) merchantName default 'hilogate'
-    const merchantName = String(req.body.merchantName ?? 'hilogate')
-      .trim()
-      .toLowerCase()
+    const merchantName = req.body.merchantName ?? 'hilogate'
 
     // 2) price & playerId
     const price    = Number(req.body.price ?? req.body.amount)
@@ -132,6 +132,7 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
  }
     if (!subs.length) return res.status(400).json(createErrorResponse('sno'))
     const selectedSubMerchantId = subs[0].id
+  console.log("sjdnkjsndjksndkjnskj.  ======= "+merchantName)
 
     // 5) Build Transaction – buyer = partner-client ID
     const trx: Transaction = {
