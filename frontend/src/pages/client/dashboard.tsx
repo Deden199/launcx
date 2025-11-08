@@ -26,6 +26,25 @@ type Tx = {
 
 type ClientOption = { id: string; name: string }
 
+// ---------- Helpers: null-safety & formatting ----------
+const isValidDate = (d: any) => d instanceof Date && !isNaN(d.getTime())
+
+const fmtDateTime = (v?: string) => {
+  if (!v) return '-'
+  const d = new Date(v)
+  return isValidDate(d) ? d.toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-'
+}
+
+const fmtCurrency = (n?: number) =>
+  Number.isFinite(n as number)
+    ? Number(n).toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })
+    : 'Rp 0'
+
+const normalizeStatus = (s: string): string => {
+  const v = (s || '').toUpperCase()
+  return v === 'DONE' || v === 'SETTLED' ? 'SUCCESS' : v
+}
+
 export default function ClientDashboardPage() {
   const router = useRouter()
 
@@ -59,9 +78,6 @@ export default function ClientDashboardPage() {
 
   // Search
   const [search, setSearch] = useState('')
-
-  // helper: normalisasi DONE / SETTLED => SUCCESS
-  const normalizeStatus = (s: string): string => (s === 'DONE' || s === 'SETTLED' ? 'SUCCESS' : s)
 
   const handleApply = () => {
     fetchSummary()
@@ -103,10 +119,11 @@ export default function ClientDashboardPage() {
     }
 
     if (statusFilter) {
+      // NOTE: pastikan backend bisa menerima union (string | string[])
       params.status = statusFilter === 'SUCCESS' ? ['SUCCESS', 'DONE', 'SETTLED'] : statusFilter
     }
     if (selectedChild !== 'all') params.clientId = selectedChild
-    if (search.trim()) params.search = search.trim()
+    if ((search ?? '').trim()) params.search = (search ?? '').trim()
     params.page = page
     params.limit = perPage
     return params
@@ -125,12 +142,12 @@ export default function ClientDashboardPage() {
         children: ClientOption[]
       }>('/client/dashboard', { params: buildParams() })
 
-      setBalance(data.balance)
-      setTotalPend(data.totalPending)
-      setTotalSettlement(data.totalSettlement || 0)
-      setTotalPaid(data.totalPaid || 0)
-      setChildren(data.children)
-      setTotalTrans(data.totalCount)
+      setBalance(Number(data?.balance ?? 0))
+      setTotalPend(Number(data?.totalPending ?? 0))
+      setTotalSettlement(Number(data?.totalSettlement ?? 0))
+      setTotalPaid(Number(data?.totalPaid ?? 0))
+      setChildren(Array.isArray(data?.children) ? data!.children : [])
+      setTotalTrans(Number(data?.totalCount ?? 0))
     } catch (err: any) {
       if (err?.response?.status === 401) {
         router.push('/client/login')
@@ -150,8 +167,8 @@ export default function ClientDashboardPage() {
         '/client/dashboard',
         { params: buildParams() }
       )
-      setTxs(data.transactions)
-      setTotalPages(Math.max(1, Math.ceil(data.total / perPage)))
+      setTxs(Array.isArray(data?.transactions) ? data!.transactions : [])
+      setTotalPages(Math.max(1, Math.ceil(Number(data?.total ?? 0) / perPage)))
     } catch (err: any) {
       if (err?.response?.status === 401) {
         router.push('/client/login')
@@ -165,7 +182,7 @@ export default function ClientDashboardPage() {
 
   // Export Excel
   const handleExport = async () => {
-    const token = localStorage.getItem('clientToken')
+    const token = typeof window !== 'undefined' ? localStorage.getItem('clientToken') : null
     if (!token) return router.push('/client/login')
 
     setExporting(true)
@@ -185,11 +202,13 @@ export default function ClientDashboardPage() {
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
 
       const contentDisp = (resp as any).headers?.['content-disposition'] || ''
-      const match = /filename="?([^"]+)"?/.exec(contentDisp)
-      const filename = match ? match[1] : 'client-transactions.xlsx'
+      // filename*=UTF-8''nama.xlsx ATAU filename="nama.xlsx"
+      const match = /filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i.exec(contentDisp)
+      const rawName = decodeURIComponent(match?.[1] || match?.[2] || '')
+      const filename = rawName || 'client-transactions.xlsx'
 
       const blob = new Blob([resp.data], {
-        type: (resp as any).headers?.['content-type'] || undefined,
+        type: (resp as any).headers?.['content-type'] || 'application/octet-stream',
       })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -214,6 +233,10 @@ export default function ClientDashboardPage() {
 
   // Copy helper
   const copyText = (txt: string) => {
+    if (typeof navigator?.clipboard?.writeText !== 'function') {
+      alert('Clipboard tidak tersedia di browser ini')
+      return
+    }
     navigator.clipboard.writeText(txt)
       .then(() => alert('Disalin!'))
       .catch(() => alert('Gagal menyalin'))
@@ -222,19 +245,27 @@ export default function ClientDashboardPage() {
   // Trigger fetches when filters change
   useEffect(() => {
     if (range !== 'custom' || (startDate && endDate)) fetchSummary()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, selectedChild, startDate, endDate, statusFilter])
+
   useEffect(() => {
     if (range !== 'custom' || (startDate && endDate)) fetchTransactions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, selectedChild, startDate, endDate, search, page, perPage, statusFilter])
 
-  const filtered = txs.filter(t =>
-    (statusFilter === '' || normalizeStatus(t.status) === statusFilter) &&
-    (
-      t.id.toLowerCase().includes(search.toLowerCase()) ||
-      t.rrn.toLowerCase().includes(search.toLowerCase()) ||
-      t.playerId.toLowerCase().includes(search.toLowerCase())
-    )
-  )
+  // Filter aman
+  const filtered = txs.filter((t) => {
+    const norm = normalizeStatus(String(t?.status ?? ''))
+    const okStatus = statusFilter === '' || norm === statusFilter
+    const q = (search ?? '').toLowerCase()
+    const hay =
+      (t?.id ?? '').toLowerCase() +
+      ' ' +
+      (t?.rrn ?? '').toLowerCase() +
+      ' ' +
+      (t?.playerId ?? '').toLowerCase()
+    return okStatus && hay.includes(q)
+  })
 
   if (loadingSummary) {
     return (
@@ -249,7 +280,7 @@ export default function ClientDashboardPage() {
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-[1400px] p-4 sm:p-6">
         {/* Child Selector */}
-        {children.length > 0 && (
+        {(Array.isArray(children) && children.length > 0) && (
           <div className="mb-4 flex items-center gap-2">
             <span className="text-sm text-neutral-300">Pilih Child:</span>
             <select
@@ -271,7 +302,7 @@ export default function ClientDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs text-neutral-400">Transactions</div>
-                <div className="mt-1 text-xl font-semibold">{totalTrans.toLocaleString()}</div>
+                <div className="mt-1 text-xl font-semibold">{totalTrans.toLocaleString('id-ID')}</div>
               </div>
               <ListChecks className="opacity-80" />
             </div>
@@ -282,7 +313,7 @@ export default function ClientDashboardPage() {
               <div>
                 <div className="text-xs text-neutral-400">Pending Settlement</div>
                 <div className="mt-1 text-xl font-semibold">
-                  {totalPend.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
+                  {fmtCurrency(totalPend)}
                 </div>
               </div>
               <Clock className="opacity-80" />
@@ -294,7 +325,7 @@ export default function ClientDashboardPage() {
               <div>
                 <div className="text-xs text-neutral-400">Total Settlement</div>
                 <div className="mt-1 text-xl font-semibold">
-                  {totalSettlement.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
+                  {fmtCurrency(totalSettlement)}
                 </div>
               </div>
               <Wallet className="opacity-80" />
@@ -326,84 +357,75 @@ export default function ClientDashboardPage() {
                 <span className="mb-1 block text-xs text-neutral-400">Tanggal</span>
                 <div className="flex items-center gap-2">
                   <div className="relative w-full">
-<DatePicker
-  selectsRange
-  startDate={startDate}
-  endDate={endDate}
-  onChange={(upd: [Date | null, Date | null]) => setDateRange(upd)}
-  isClearable={false}
-  placeholderText="Select Date Range…"
-  maxDate={new Date()}
-  dateFormat="dd-MM-yyyy"
-  popperPlacement="bottom-start"
-  showPopperArrow={false}
-  portalId="dp-portal"
+                    <DatePicker
+                      selectsRange
+                      startDate={startDate}
+                      endDate={endDate}
+                      onChange={(upd: [Date | null, Date | null]) => setDateRange(upd)}
+                      isClearable={false}
+                      placeholderText="Select Date Range…"
+                      maxDate={new Date()}
+                      dateFormat="dd-MM-yyyy"
+                      popperPlacement="bottom-start"
+                      showPopperArrow={false}
+                      portalId="dp-portal"
 
-  /* Wrapper & popper classes */
-  wrapperClassName="w-full"
-  popperClassName="dp-popper-dark"
+                      wrapperClassName="w-full"
+                      popperClassName="dp-popper-dark"
+                      calendarClassName="react-datepicker-dark !border !border-neutral-800 !rounded-xl !shadow-lg"
 
-  /* Calendar base — cukup minimal, selebihnya di CSS file */
-  calendarClassName="react-datepicker-dark !border !border-neutral-800 !rounded-xl !shadow-lg"
+                      className="dp-input w-full h-10 rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm placeholder:text-neutral-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
 
-  /* Input look & focus */
-  className="dp-input w-full h-10 rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm placeholder:text-neutral-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                      weekDayClassName={() => '!text-neutral-400'}
 
-  /* Weekday label */
-  weekDayClassName={() => '!text-neutral-400'}
+                      dayClassName={(date: Date) => {
+                        const isSameDay = (a: Date | null, b: Date | null) =>
+                          !!a && !!b &&
+                          a.getFullYear() === b.getFullYear() &&
+                          a.getMonth() === b.getMonth() &&
+                          a.getDate() === b.getDate()
 
-  /* Day cell class dengan logika range, tetap manfaatkan CSS bawaan DP untuk state, plus hover */
-  dayClassName={(date: Date) => {
-    const isSameDay = (a: Date | null, b: Date | null) =>
-      !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+                        const inRange =
+                          startDate && endDate &&
+                          date > new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0) &&
+                          date < new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999)
 
-    const inRange =
-      startDate && endDate && date > new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate()-0, 0,0,0,0) &&
-      date < new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()-0, 23,59,59,999)
+                        const isStart = isSameDay(date, startDate)
+                        const isEnd = isSameDay(date, endDate)
 
-    const isStart = isSameDay(date, startDate)
-    const isEnd = isSameDay(date, endDate)
+                        let cls = 'rounded-md hover:!bg-neutral-800 transition-colors'
+                        if (inRange) cls += ' !rounded-none'
+                        if (isStart) cls += ' !rounded-l-md'
+                        if (isEnd) cls += ' !rounded-r-md'
+                        return cls
+                      }}
 
-    // Tambah hover & rounding halus; warna utamanya dikendalikan oleh CSS global
-    let cls = 'rounded-md hover:!bg-neutral-800 transition-colors'
-
-    // Bikin range tengah flat (dibulatkan oleh start/end)
-    if (inRange) cls += ' !rounded-none'
-
-    // Pastikan cap kiri/kanan tetap rounded enak
-    if (isStart) cls += ' !rounded-l-md'
-    if (isEnd) cls += ' !rounded-r-md'
-
-    return cls
-  }}
-
-  /* Custom header kamu sudah oke; tambahkan sedikit padding agar napas */
-  renderCustomHeader={({ date, decreaseMonth, increaseMonth, prevMonthButtonDisabled, nextMonthButtonDisabled }) => (
-    <div className="flex items-center justify-between px-2 pt-2 pb-3">
-      <button
-        type="button"
-        onClick={decreaseMonth}
-        disabled={prevMonthButtonDisabled}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60 disabled:opacity-40"
-      >
-        ‹
-      </button>
-      <div className="text-sm font-medium">
-        {date.toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
-      </div>
-      <button
-        type="button"
-        onClick={increaseMonth}
-        disabled={nextMonthButtonDisabled}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60 disabled:opacity-40"
-      >
-        ›
-      </button>
-    </div>
-  )}
-/>
-
+                      renderCustomHeader={({ date, decreaseMonth, increaseMonth, prevMonthButtonDisabled, nextMonthButtonDisabled }) => (
+                        <div className="flex items-center justify-between px-2 pt-2 pb-3">
+                          <button
+                            type="button"
+                            onClick={decreaseMonth}
+                            disabled={prevMonthButtonDisabled}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60 disabled:opacity-40"
+                          >
+                            ‹
+                          </button>
+                          <div className="text-sm font-medium">
+                            {date.toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={increaseMonth}
+                            disabled={nextMonthButtonDisabled}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60 disabled:opacity-40"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                    />
                   </div>
+
                   {(startDate || endDate) && (
                     <button
                       type="button"
@@ -502,26 +524,16 @@ export default function ClientDashboardPage() {
                 <tbody>
                   {filtered.map((t) => (
                     <tr key={t.id} className="border-b border-neutral-800 last:border-0 hover:bg-neutral-900/60">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {new Date(t.date).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {t.paymentReceivedTime
-                          ? new Date(t.paymentReceivedTime).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
-                          : '-'}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {t.settlementTime
-                          ? new Date(t.settlementTime).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
-                          : '-'}
-                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{fmtDateTime(t?.date)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{fmtDateTime(t?.paymentReceivedTime)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{fmtDateTime(t?.settlementTime)}</td>
 
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[12px]">{t.id}</code>
+                          <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[12px]">{t?.id ?? '-'}</code>
                           <button
                             title="Copy TRX ID"
-                            onClick={() => copyText(t.id)}
+                            onClick={() => copyText(t?.id ?? '')}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60"
                           >
                             <ClipboardCopy size={14} />
@@ -531,10 +543,10 @@ export default function ClientDashboardPage() {
 
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <span className="max-w-[220px] truncate">{t.rrn}</span>
+                          <span className="max-w-[220px] truncate">{t?.rrn ?? '-'}</span>
                           <button
                             title="Copy RRN"
-                            onClick={() => copyText(t.rrn)}
+                            onClick={() => copyText(t?.rrn ?? '')}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-neutral-800 hover:bg-neutral-800/60"
                           >
                             <ClipboardCopy size={14} />
@@ -542,35 +554,29 @@ export default function ClientDashboardPage() {
                         </div>
                       </td>
 
-                      <td className="px-3 py-2">{t.playerId}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-right">
-                        {t.amount.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-right">
-                        {t.feeLauncx.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-right font-semibold">
-                        {t.netSettle.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
-                      </td>
+                      <td className="px-3 py-2">{t?.playerId ?? '-'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-right">{fmtCurrency(t?.amount)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-right">{fmtCurrency(t?.feeLauncx)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-right font-semibold">{fmtCurrency(t?.netSettle)}</td>
 
                       <td className="px-3 py-2">
-                        {['SUCCESS', 'DONE', 'SETTLED'].includes(t.status)
+                        {['SUCCESS', 'DONE', 'SETTLED'].includes(String(t?.status ?? ''))
                           ? 'SUCCESS'
-                          : t.status === 'PAID'
+                          : t?.status === 'PAID'
                           ? 'PAID'
-                          : t.status === 'PENDING'
+                          : t?.status === 'PENDING'
                           ? 'PENDING'
-                          : t.status === 'EXPIRED'
+                          : t?.status === 'EXPIRED'
                           ? 'EXPIRED'
                           : '-'}
                       </td>
 
                       <td className="px-3 py-2">
-                        {t.settlementStatus === 'WAITING'
+                        {(t?.settlementStatus ?? '') === 'WAITING'
                           ? 'PENDING'
-                          : t.settlementStatus === 'UNSUCCESSFUL'
+                          : (t?.settlementStatus ?? '') === 'UNSUCCESSFUL'
                           ? 'FAILED'
-                          : t.settlementStatus || '-'}
+                          : (t?.settlementStatus ?? '-')}
                       </td>
 
                       <td className="px-3 py-2">—</td>
