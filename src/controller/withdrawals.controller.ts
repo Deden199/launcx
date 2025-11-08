@@ -1203,7 +1203,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
 
     const client = new HilogateClient(cfg)
     const payload = await client.validateAccount(account_number, bank_code)
-    if (payload.status !== 'valid') {
+    if (payload.status !== 'success') {
       return res.status(400).json({ error: 'Invalid account' })
     }
 
@@ -1474,7 +1474,7 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
 
       if (sourceProvider === 'hilogate') {
       const valid = await hilogateClient!.validateAccount(account_number, bank_code)
-      if (valid.status !== 'valid') {
+      if (valid.status !== 'success') {
         return res.status(400).json({ error: 'Akun bank tidak valid' })
       }
       acctHolder = valid.account_holder

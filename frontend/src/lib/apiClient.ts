@@ -8,7 +8,7 @@ interface ErrorPayload {
 
 const apiClient = axios.create({
   baseURL:
-    process.env.NEXT_PUBLIC_API_BASE || 'https://staging.launcx.com/api/v1', // contoh: http://localhost:5001/api/v1
+    process.env.NEXT_PUBLIC_API_BASE || 'https://staging.launcx.com/api/v1', 
   withCredentials: true, // kalau refresh token di cookie httpOnly
   headers: {
     'Content-Type': 'application/json',

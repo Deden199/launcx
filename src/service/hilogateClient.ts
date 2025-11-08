@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import crypto from 'crypto';
+import logger from '../logger';
 
 // Konfigurasi yang kita simpan di DB
 export interface HilogateConfig {
@@ -87,11 +88,13 @@ export class HilogateClient {
     ref_id: string;
     amount: number;
     method?: string;
+    expires_at?:number;
   }): Promise<any> {
     return this.requestFull('post', '/api/v1/transactions', {
       ref_id: opts.ref_id,
       amount: opts.amount,
       method: opts.method || 'qris',
+      expiredTs:opts.expires_at
     });
   }
 
@@ -124,6 +127,7 @@ export class HilogateClient {
   ): Promise<any> {
     const signature = this.sign(path, body);
     const headers: any = { 'X-Signature': signature };
+    
 
     if (method === 'get') {
       const res = await this.axiosInst.get(path, { headers });
