@@ -1,8 +1,8 @@
-'use client'
+'use client';
 
-import React, { useEffect, useState, FormEvent } from 'react'
-import apiClient from '@/lib/apiClient'
-import QRCode from 'qrcode'
+import React, { useEffect, useState, FormEvent } from 'react';
+import apiClient from '@/lib/apiClient';
+import QRCode from 'qrcode';
 import {
   Bell,
   Copy,
@@ -12,161 +12,290 @@ import {
   ScanLine,
   KeyRound,
   RefreshCw,
-} from 'lucide-react'
+  Clock,
+} from 'lucide-react';
 
 export default function CallbackPage() {
   // Callback settings
-  const [url, setUrl] = useState('')
-  const [secret, setSecret] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [isError, setIsError] = useState(false)
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [isError, setIsError] = useState(false);
+
+  // Minute Expired
+  const [minuteExpired, setMinuteExpired] = useState<number>(15);
+  const [minuteExpiredInput, setMinuteExpiredInput] = useState<string>('15');
+  const [savingMinute, setSavingMinute] = useState(false);
+  const [minuteMessage, setMinuteMessage] = useState('');
+  const [minuteError, setMinuteError] = useState(false);
+  const [localStorageStatus, setLocalStorageStatus] = useState<string>('');
 
   // Password change
-  const [oldPassword, setOldPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [pwSaving, setPwSaving] = useState(false)
-  const [pwMessage, setPwMessage] = useState('')
-  const [pwError, setPwError] = useState(false)
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMessage, setPwMessage] = useState('');
+  const [pwError, setPwError] = useState(false);
 
   // 2FA
-  const [loading2FA, setLoading2FA] = useState(true)
-  const [is2FAEnabled, setIs2FAEnabled] = useState(false)
-  const [qr, setQr] = useState('')
-  const [otp, setOtp] = useState('')
-  const [faMsg, setFaMsg] = useState('')
-  const [working, setWorking] = useState(false) // kecil buat tombol 2FA
+  const [loading2FA, setLoading2FA] = useState(true);
+  const [is2FAEnabled, setIs2FAEnabled] = useState(false);
+  const [qr, setQr] = useState('');
+  const [otp, setOtp] = useState('');
+  const [faMsg, setFaMsg] = useState('');
+  const [working, setWorking] = useState(false);
 
-  // Initial fetch
+  // Helpers
+  const LS_KEY = 'minuteExpired';
+  const clampMinute = (n: number) => (Number.isFinite(n) ? Math.max(15, n) : 15);
+
+  const updateLocalStorageStatus = () => {
+    try {
+      const savedValue = localStorage.getItem(LS_KEY);
+      if (savedValue) {
+        setLocalStorageStatus(`Tersimpan: ${savedValue} menit`);
+      } else {
+        setLocalStorageStatus('Belum ada data tersimpan');
+      }
+    } catch {
+      setLocalStorageStatus('Status penyimpanan tidak tersedia');
+    }
+  };
+
+  const flash = (msg: string, error = false) => {
+    setMessage(msg);
+    setIsError(error);
+    window.setTimeout(() => {
+      setMessage('');
+      setIsError(false);
+    }, 3500);
+  };
+
+  const minuteFlash = (msg: string, error = false) => {
+    setMinuteMessage(msg);
+    setMinuteError(error);
+    window.setTimeout(() => {
+      setMinuteMessage('');
+      setMinuteError(false);
+    }, 3500);
+  };
+
+  const pwFlash = (msg: string, error = false) => {
+    setPwMessage(msg);
+    setPwError(error);
+    window.setTimeout(() => {
+      setPwMessage('');
+      setPwError(false);
+    }, 3500);
+  };
+
+  // Initial fetch - Load localStorage dulu, lalu API
   useEffect(() => {
+    // 1) Load dari localStorage
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw != null) {
+        const parsed = clampMinute(parseInt(raw, 10));
+        setMinuteExpired(parsed);
+        setMinuteExpiredInput(String(parsed));
+      } else {
+        // default 15
+        setMinuteExpired(15);
+        setMinuteExpiredInput('15');
+      }
+    } catch {
+      setMinuteExpired(15);
+      setMinuteExpiredInput('15');
+    }
+
+    updateLocalStorageStatus();
+
+    // 2) Fetch callback & minuteExpired dari API (override kalau ada)
     apiClient
       .get('/client/callback-url')
       .then((res) => {
-        setUrl(res.data.callbackUrl || '')
-        setSecret(res.data.callbackSecret || '')
+        setUrl(res.data.callbackUrl || '');
+        setSecret(res.data.callbackSecret || '');
+        if (res.data.minuteExpired) {
+          const apiVal = clampMinute(Number(res.data.minuteExpired));
+          setMinuteExpired(apiVal);
+          setMinuteExpiredInput(String(apiVal));
+          localStorage.setItem(LS_KEY, String(apiVal));
+          updateLocalStorageStatus();
+        }
       })
       .catch(() => {
-        setMessage('Failed to load callback data')
-        setIsError(true)
-      })
+        setMessage('Failed to load callback data');
+        setIsError(true);
+      });
 
-    ;(async () => {
+    // 3) 2FA status
+    (async () => {
       try {
-        const res = await apiClient.get('/client/2fa/status')
-        setIs2FAEnabled(!!res.data.totpEnabled)
+        const res = await apiClient.get('/client/2fa/status');
+        setIs2FAEnabled(!!res.data.totpEnabled);
       } catch {
         // ignore
       } finally {
-        setLoading2FA(false)
+        setLoading2FA(false);
       }
-    })()
-  }, [])
+    })();
+  }, []);
 
-  const flash = (msg: string, error = false) => {
-    setMessage(msg)
-    setIsError(error)
-    window.setTimeout(() => {
-      setMessage('')
-      setIsError(false)
-    }, 3500)
-  }
+  // Cross-tab sync untuk minuteExpired
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LS_KEY && e.newValue != null) {
+        const parsed = clampMinute(parseInt(e.newValue, 10));
+        setMinuteExpired(parsed);
+        setMinuteExpiredInput(String(parsed));
+        updateLocalStorageStatus();
+        minuteFlash(`Minute expired updated in another tab: ${parsed} minutes`);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
-  const pwFlash = (msg: string, error = false) => {
-    setPwMessage(msg)
-    setPwError(error)
-    window.setTimeout(() => {
-      setPwMessage('')
-      setPwError(false)
-    }, 3500)
-  }
-
-  // Save callback
+  // Save callback URL dan secret
   const handleSave = async () => {
-    setSaving(true)
-    setMessage('')
-    setIsError(false)
+    setSaving(true);
+    setMessage('');
+    setIsError(false);
     try {
-      const res = await apiClient.post('/client/callback-url', { callbackUrl: url })
-      setUrl(res.data.callbackUrl)
-      if (res.data.callbackSecret) setSecret(res.data.callbackSecret)
-      flash('Callback URL & Secret saved successfully!')
+      const res = await apiClient.post('/client/callback-url', {
+        callbackUrl: url,
+      });
+      setUrl(res.data.callbackUrl);
+      if (res.data.callbackSecret) setSecret(res.data.callbackSecret);
+
+      flash('Callback URL & Secret saved successfully!');
     } catch {
-      flash('Failed to save callback URL', true)
+      flash('Failed to save callback URL', true);
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
+
+  // Minute input handlers
+  const handleMinuteExpiredChange = (val: string) => {
+    // izinkan kosong & hanya digit
+    if (/^\d*$/.test(val)) setMinuteExpiredInput(val);
+  };
+
+  const commitMinuteExpired = () => {
+    const n = parseInt(minuteExpiredInput, 10);
+    const clamped = clampMinute(n);
+    setMinuteExpired(clamped);
+    setMinuteExpiredInput(String(clamped));
+    return clamped;
+  };
+
+  // Save minute expired ke localStorage (commit dulu)
+  const handleSaveMinuteExpired = async () => {
+    const toSave = commitMinuteExpired();
+    if (toSave < 15) {
+      minuteFlash('Minute expired must be at least 15 minutes', true);
+      return;
+    }
+
+    setSavingMinute(true);
+    setMinuteMessage('');
+    setMinuteError(false);
+
+    try {
+      localStorage.setItem(LS_KEY, String(toSave));
+      // (opsional) metadata
+      localStorage.setItem(`${LS_KEY}:meta`, JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        source: 'ui',
+        version: 1,
+      }));
+
+      updateLocalStorageStatus();
+      minuteFlash(`Minute expired saved to localStorage: ${toSave} minutes!`);
+    } catch (error) {
+      console.error('Error saving to localStorage:', error);
+      minuteFlash('Failed to save minute expired', true);
+    } finally {
+      setSavingMinute(false);
+    }
+  };
 
   // Copy secret
   const copySecret = () => {
-    if (!secret) return
-    navigator.clipboard.writeText(secret)
-    flash('Secret copied to clipboard!', false)
-  }
+    if (!secret) return;
+    navigator.clipboard.writeText(secret);
+    flash('Secret copied to clipboard!', false);
+  };
 
   // Change password
   const handleChangePassword = async () => {
     if (newPassword !== confirmPassword) {
-      pwFlash('Password confirmation does not match', true)
-      return
+      pwFlash('Password confirmation does not match', true);
+      return;
     }
-    setPwSaving(true)
-    setPwMessage('')
-    setPwError(false)
+    setPwSaving(true);
+    setPwMessage('');
+    setPwError(false);
     try {
-      await apiClient.post('/client/change-password', { oldPassword, newPassword })
-      pwFlash('Password changed successfully!')
-      setOldPassword('')
-      setNewPassword('')
-      setConfirmPassword('')
+      await apiClient.post('/client/change-password', {
+        oldPassword,
+        newPassword,
+      });
+      pwFlash('Password changed successfully!');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
     } catch {
-      pwFlash('Failed to change password', true)
+      pwFlash('Failed to change password', true);
     } finally {
-      setPwSaving(false)
+      setPwSaving(false);
     }
-  }
+  };
 
   // 2FA FLOW
   const setup2FA = async () => {
     try {
-      setWorking(true)
-      const { data } = await apiClient.post('/client/2fa/setup')
-      const dataUrl = await QRCode.toDataURL(data.otpauthUrl)
-      setQr(dataUrl)
-      setFaMsg('Scan QR dengan Authenticator, lalu masukkan OTP berikutnya.')
+      setWorking(true);
+      const { data } = await apiClient.post('/client/2fa/setup');
+      const dataUrl = await QRCode.toDataURL(data.otpauthUrl);
+      setQr(dataUrl);
+      setFaMsg('Scan QR dengan Authenticator, lalu masukkan OTP berikutnya.');
     } catch {
-      setFaMsg('Failed to set up 2FA')
+      setFaMsg('Failed to set up 2FA');
     } finally {
-      setWorking(false)
+      setWorking(false);
     }
-  }
+  };
 
   const enable2FA = async () => {
     try {
-      setWorking(true)
-      await apiClient.post('/client/2fa/enable', { code: otp })
-      setFaMsg('2FA enabled successfully')
-      setIs2FAEnabled(true)
-      setQr('')
-      setOtp('')
+      setWorking(true);
+      await apiClient.post('/client/2fa/enable', { code: otp });
+      setFaMsg('2FA enabled successfully');
+      setIs2FAEnabled(true);
+      setQr('');
+      setOtp('');
     } catch {
-      setFaMsg('Invalid OTP')
+      setFaMsg('Invalid OTP');
     } finally {
-      setWorking(false)
+      setWorking(false);
     }
-  }
+  };
 
   const regenerate2FA = async () => {
-    setIs2FAEnabled(false) // masuk ke flow setup lagi
-    await setup2FA()
-    setFaMsg('New 2FA secret generated. Scan ulang QR, lalu verifikasi.')
-  }
+    setIs2FAEnabled(false);
+    await setup2FA();
+    setFaMsg('New 2FA secret generated. Scan ulang QR, lalu verifikasi.');
+  };
 
   const handleVerify = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    await enable2FA()
-  }
+    e.preventDefault();
+    await enable2FA();
+  };
 
   // Small UI helpers
   const StatusChip = ({ active }: { active: boolean }) => (
@@ -184,7 +313,7 @@ export default function CallbackPage() {
       />
       {active ? 'Aktif' : 'Belum Aktif'}
     </span>
-  )
+  );
 
   const Step = ({
     idx,
@@ -193,11 +322,11 @@ export default function CallbackPage() {
     done,
     icon,
   }: {
-    idx: number
-    title: string
-    desc: string
-    done?: boolean
-    icon: React.ReactNode
+    idx: number;
+    title: string;
+    desc: string;
+    done?: boolean;
+    icon: React.ReactNode;
   }) => (
     <div className="flex gap-3">
       <div
@@ -211,13 +340,15 @@ export default function CallbackPage() {
       </div>
       <div>
         <div className="flex items-center gap-2">
-          <p className="text-sm font-medium">{idx}. {title}</p>
+          <p className="text-sm font-medium">
+            {idx}. {title}
+          </p>
           {done && <CheckCircle2 size={16} className="text-emerald-400" />}
         </div>
         <p className="mt-0.5 text-xs text-neutral-400">{desc}</p>
       </div>
     </div>
-  )
+  );
 
   return (
     <div className="dark min-h-screen bg-neutral-950 px-4 py-6 text-neutral-100 sm:px-6 lg:px-8">
@@ -248,7 +379,9 @@ export default function CallbackPage() {
             </div>
 
             <div className="sm:col-span-2">
-              <label className="mb-1 block text-sm text-neutral-300">Callback Secret</label>
+              <label className="mb-1 block text-sm text-neutral-300">
+                Callback Secret
+              </label>
               <div className="relative">
                 <input
                   type="text"
@@ -294,6 +427,7 @@ export default function CallbackPage() {
           </div>
         </div>
 
+     
         {/* CARD: 2FA */}
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
@@ -367,9 +501,7 @@ export default function CallbackPage() {
                     </button>
                   )}
 
-                  {!!faMsg && (
-                    <span className="text-xs text-neutral-300">{faMsg}</span>
-                  )}
+                  {!!faMsg && <span className="text-xs text-neutral-300">{faMsg}</span>}
                 </div>
               </div>
 
@@ -386,7 +518,12 @@ export default function CallbackPage() {
                   <form autoComplete="off" onSubmit={handleVerify} className="space-y-4">
                     {/* dummy fields to absorb autofill */}
                     <input type="text" name="username" autoComplete="username" className="hidden" />
-                    <input type="password" name="new-password" autoComplete="new-password" className="hidden" />
+                    <input
+                      type="password"
+                      name="new-password"
+                      autoComplete="new-password"
+                      className="hidden"
+                    />
 
                     <img
                       src={qr}
@@ -416,8 +553,8 @@ export default function CallbackPage() {
                   </form>
                 ) : (
                   <div className="grid place-items-center py-10 text-center text-sm text-neutral-400">
-                    2FA belum aktif. Klik <span className="mx-1 font-medium text-neutral-200">Enable 2FA</span> untuk
-                    memulai.
+                    2FA belum aktif. Klik{' '}
+                    <span className="mx-1 font-medium text-neutral-200">Enable 2FA</span> untuk memulai.
                   </div>
                 )}
               </div>
@@ -490,5 +627,5 @@ export default function CallbackPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }

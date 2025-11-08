@@ -4,9 +4,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cors from 'cors';
-// import cron from 'node-cron'; // ❌ tidak dipakai di file ini, biar tidak bikin bingung
 import { errorHandler } from './middleware/errorHandler';
-import { scheduleSettlementChecker, getSettlementCronStatus } from './cron/settlement'; // ⬅️ tambah getSettlementCronStatus
+import { scheduleSettlementChecker, getSettlementCronStatus } from './cron/settlement'; 
 import { scheduleDashboardSummary } from './cron/dashboardSummary';
 
 import subMerchantRoutes from './route/admin/subMerchant.routes';
@@ -246,10 +245,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.use(errorHandler);
 
-// Removed duplicate immediate listen and duplicate cron bootstrap. The single server
-// start and cron bootstrap happen inside the async IIFE below to ensure graceful
-// shutdown wiring and single initialization.
-// scheduleSettlementChecker().catch(err => logger.error(err));
+scheduleSettlementChecker().catch(err => logger.error(err));
 // scheduleDashboardSummary();
 // scheduleLoanSettlementCron();
 // 🔽 Bootstrap cron lebih awal (dengan log sukses) — lalu listen

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma generate:*)",
+      "Bash(chmod +x ina-payment.sh ina-withdrawal.sh)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

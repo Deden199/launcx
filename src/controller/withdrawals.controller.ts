@@ -17,6 +17,7 @@ import { GenesisClient } from '../service/genesisClient'
 import { authenticator } from 'otplib'
 import { parseDateSafely } from '../util/time'
 import { mapIng1Status, parseIng1Date, parseIng1Number } from '../service/ing1Status'
+import { scheduleIng1WithdrawalFallback } from '../service/ing1WithdrawalFallback'
 
 const mapIng1ToDisbursement = (
   rc?: number | null,
@@ -44,6 +45,9 @@ const isPiroVariant = (provider?: string | null): provider is 'piro' | 'genesis'
   provider === 'piro' || provider === 'genesis'
 
 
+
+// src/controllers/withdraw.controller.ts
+// CRITICAL FIX: Balance calculation untuk listSubMerchants
 
 export const listSubMerchants = async (req: ClientAuthRequest, res: Response) => {
   const clientUserId = req.clientUserId!
@@ -73,7 +77,6 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
   const cacheKey = `submerchants:${partnerClientId}:${qClientId || 'all'}:${defaultProvider}`
 
   try {
-    // Use Redis caching with TTL from env
     const { cacheWrapper } = await import('../core/redis')
     const result = await cacheWrapper(cacheKey, 'submerchants', async () => {
       // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
@@ -88,36 +91,71 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
 
       const subIds = subs.map(s => s.id)
 
-      // 3) Batch calculate all balances in parallel (2 queries instead of 2N)
+      // ✅ FIX: Use aggregateRaw with CONSISTENT settlementTime logic
       const [inAggs, outAggs] = await Promise.all([
-        // Get all settlement amounts grouped by subMerchantId
-        prisma.order.groupBy({
-          by: ['subMerchantId'],
-          where: {
-            subMerchantId: { in: subIds },
-            partnerClientId: { in: clientIds },
-            settlementTime: { not: null }
-          },
-          _sum: { settlementAmount: true }
+        // Settlement IN: Orders dengan settlementTime NOT NULL atau status SUCCESS/DONE/SETTLED
+        prisma.order.aggregateRaw({
+          pipeline: [
+            {
+              $match: {
+                subMerchantId: { $in: subIds },
+                partnerClientId: { $in: clientIds },
+                $or: [
+                  // Prioritas 1: Ada settlementTime
+                  { settlementTime: { $ne: null } },
+                  // Prioritas 2: Status SUCCESS/DONE/SETTLED (untuk data lama yang settlementTime null)
+                  { 
+                    status: { 
+                      $in: ['SUCCESS', 'DONE', 'SETTLED'] 
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              $group: {
+                _id: '$subMerchantId',
+                total: { $sum: '$settlementAmount' }
+              }
+            }
+          ]
         }),
-        // Get all withdrawal amounts grouped by subMerchantId
-        prisma.withdrawRequest.groupBy({
-          by: ['subMerchantId'],
-          where: {
-            subMerchantId: { in: subIds },
-            partnerClientId: { in: clientIds },
-            status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
-          },
-          _sum: { amount: true }
+        // Withdrawal OUT: Pending + Completed withdrawals
+        prisma.withdrawRequest.aggregateRaw({
+          pipeline: [
+            {
+              $match: {
+                subMerchantId: { $in: subIds },
+                partnerClientId: { $in: clientIds },
+                status: { $in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+              }
+            },
+            {
+              $group: {
+                _id: '$subMerchantId',
+                total: { $sum: '$amount' }
+              }
+            }
+          ]
         })
       ])
 
-      // 4) Create lookup maps
+      // 4) Parse aggregateRaw results and create lookup maps
+      const inResults = (inAggs as any) || []
+      const outResults = (outAggs as any) || []
+
       const inMap = new Map(
-        inAggs.map(agg => [agg.subMerchantId!, agg._sum.settlementAmount ?? 0])
+        (Array.isArray(inResults) ? inResults : []).map((agg: any) => [
+          String(agg._id),
+          Number(agg.total) || 0
+        ])
       )
+
       const outMap = new Map(
-        outAggs.map(agg => [agg.subMerchantId!, agg._sum.amount ?? 0])
+        (Array.isArray(outResults) ? outResults : []).map((agg: any) => [
+          String(agg._id),
+          Number(agg.total) || 0
+        ])
       )
 
       // 5) Build result
@@ -133,6 +171,51 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
   } catch (err: any) {
     logger.error('[listSubMerchants]', err)
     return res.status(500).json({ error: err.message || 'Internal server error' })
+  }
+}
+
+// ✅ CRITICAL: Add this function to fix existing data
+export async function migrateSettlementTime(req: Request, res: Response) {
+  try {
+    // Fix orders dengan status SUCCESS/DONE/SETTLED tapi settlementTime null
+    const result = await prisma.order.updateMany({
+      where: {
+        status: { in: ['SUCCESS', 'DONE', 'SETTLED'] },
+        settlementTime: null,
+        paymentReceivedTime: { not: null } // Gunakan paymentReceivedTime sebagai fallback
+      },
+      data: {
+        settlementTime: new Date() // Atau bisa pakai: paymentReceivedTime
+      }
+    })
+
+    // Alternative: Use paymentReceivedTime as settlementTime
+    const ordersToFix = await prisma.order.findMany({
+      where: {
+        status: { in: ['SUCCESS', 'DONE', 'SETTLED'] },
+        settlementTime: null,
+        paymentReceivedTime: { not: null }
+      },
+      select: { id: true, paymentReceivedTime: true }
+    })
+
+    // Update satu per satu dengan paymentReceivedTime
+    for (const order of ordersToFix) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { settlementTime: order.paymentReceivedTime }
+      })
+    }
+
+    return res.json({
+      success: true,
+      updatedCount: result.count,
+      fixedWithPaymentTime: ordersToFix.length,
+      message: 'Settlement time migration completed'
+    })
+  } catch (err: any) {
+    logger.error('[migrateSettlementTime]', err)
+    return res.status(500).json({ error: err.message })
   }
 }
 
@@ -840,7 +923,13 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
       query.client_reff ?? query.clientReff ?? query.client_ref ?? query.ref_id ?? query.refId
 
     if (!clientRef) {
-      return res.status(400).json({ error: 'Missing client reference' })
+      logger.warn('[ING1 Withdrawal Callback] Missing client reference');
+      return res.status(400).json({
+        success: false,
+        error: 'MISSING_CLIENT_REF',
+        message: 'Missing client_reff or ref_id parameter in callback',
+        statusCode: 400
+      })
     }
 
     const wr = await prisma.withdrawRequest.findUnique({
@@ -849,7 +938,13 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
     })
 
     if (!wr) {
-      return res.status(404).json({ error: 'Withdrawal not found' })
+      logger.warn('[ING1 Withdrawal Callback] Withdrawal not found', { refId: clientRef });
+      return res.status(404).json({
+        success: false,
+        error: 'WITHDRAWAL_NOT_FOUND',
+        message: `Withdrawal with refId ${clientRef} not found in system`,
+        statusCode: 404
+      })
     }
 
     const rc = rcStr != null ? Number(rcStr) : null
@@ -891,7 +986,14 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
     })
 
     if (result.count === 0) {
-      return res.json({ ok: true, updated: false })
+      logger.info('[ING1 Withdrawal Callback] No updates needed', { refId: clientRef, newStatus });
+      return res.json({
+        success: true,
+        ok: true,
+        updated: false,
+        statusCode: 200,
+        message: 'Withdrawal already processed'
+      })
     }
 
     if (newStatus === DisbursementStatus.FAILED) {
@@ -899,17 +1001,67 @@ export const ing1WithdrawalCallback = async (req: Request, res: Response) => {
         where: { id: wr.partnerClientId },
         data: { balance: { increment: wr.amount } },
       })
+      logger.info('[ING1 Withdrawal Callback] Withdrawal failed, balance refunded', {
+        refId: clientRef,
+        amount: wr.amount
+      });
     } else if (wr.status === DisbursementStatus.FAILED && newStatus === DisbursementStatus.COMPLETED) {
       await prisma.partnerClient.update({
         where: { id: wr.partnerClientId },
         data: { balance: { decrement: wr.amount } },
       })
+      logger.info('[ING1 Withdrawal Callback] Withdrawal completed from failed state', {
+        refId: clientRef,
+        amount: wr.amount
+      });
     }
 
-    return res.json({ ok: true, updated: true })
+    return res.json({
+      success: true,
+      ok: true,
+      updated: true,
+      statusCode: 200,
+      message: 'Withdrawal callback processed successfully',
+      refId: clientRef,
+      status: newStatus
+    })
   } catch (err: any) {
-    logger.error('[ing1WithdrawalCallback] error', err)
-    return res.status(500).json({ error: err.message || 'Internal server error' })
+    logger.error('[ING1 Withdrawal Callback] Error:', {
+      error: err.message,
+      code: err.code,
+      stack: err.stack
+    });
+
+    // Determine status code based on error
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    let message = 'Internal server error processing withdrawal callback';
+
+    if (err.message?.includes('not found') || err.message?.includes('not exist')) {
+      statusCode = 404;
+      errorCode = 'WITHDRAWAL_NOT_FOUND';
+      message = 'Withdrawal not found in system';
+    } else if (err.message?.includes('Invalid') || err.message?.includes('Validation')) {
+      statusCode = 400;
+      errorCode = 'INVALID_PAYLOAD';
+      message = 'Invalid callback payload';
+    } else if (err.message?.includes('Duplicate')) {
+      statusCode = 409;
+      errorCode = 'DUPLICATE_CALLBACK';
+      message = 'Callback already processed';
+    } else if (err.message?.includes('Balance') || err.message?.includes('Insufficient')) {
+      statusCode = 422;
+      errorCode = 'BALANCE_ERROR';
+      message = 'Error processing balance adjustment';
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      error: errorCode,
+      message: message,
+      statusCode: statusCode,
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    })
   }
 }
 export async function validateAccount(req: ClientAuthRequest, res: Response) {
@@ -934,6 +1086,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
   }
 
   try {
+    console.log('[validateAccount] sourceProvider: =============')
     if (isPiroVariant(sourceProvider)) {
       const merchant = await prisma.merchant.findFirst({
         where: { name: 'piro' },
@@ -971,7 +1124,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
         })
       }
 
-      return res.json({
+      return res.status(200).json({
         account_number: validation.accountNumber,
         account_holder: validation.accountName ?? '',
         bank_code: validation.bankCode ?? bank_code,
@@ -1016,7 +1169,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
         })
       }
 
-      return res.json({
+      return res.status(200).json({
         account_number: inquiry.accountNumber ?? account_number,
         account_holder: inquiry.accountName ?? '',
         bank_code: inquiry.bankCode ?? bank_code,
@@ -1050,7 +1203,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
 
     const client = new HilogateClient(cfg)
     const payload = await client.validateAccount(account_number, bank_code)
-    if (payload.status !== 'valid') {
+    if (payload.status !== 'success') {
       return res.status(400).json({ error: 'Invalid account' })
     }
 
@@ -1187,6 +1340,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     bank_name,
     branch_code,
     internal_bank_code,
+    type = 'single',
+    bulk_id,
   } = req.body as {
     subMerchantId: string
     sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
@@ -1199,6 +1354,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     bank_name?: string
     branch_code?: string
     internal_bank_code?: string
+    type?: 'single' | 'bulk'
+    bulk_id?: string
 
   }
 
@@ -1317,7 +1474,7 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
 
       if (sourceProvider === 'hilogate') {
       const valid = await hilogateClient!.validateAccount(account_number, bank_code)
-      if (valid.status !== 'valid') {
+      if (valid.status !== 'success') {
         return res.status(400).json({ error: 'Akun bank tidak valid' })
       }
       acctHolder = valid.account_holder
@@ -1428,6 +1585,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
           withdrawFeePercent: pc.withdrawFeePercent,
           withdrawFeeFlat: pc.withdrawFeeFlat,
           sourceProvider,
+          type: type,
+          bulkId: bulk_id,
           partnerClient: { connect: { id: partnerClientId } },
           subMerchant:    { connect: { id: subMerchantId } },
           accountName:      acctHolder,
@@ -1570,6 +1729,12 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
           amount: inquiryAmount,
           merchantId: ingCfg.merchantId,
         })
+
+        // Schedule fallback for ING withdrawal
+        scheduleIng1WithdrawalFallback(wr.refId, ingCfg, {
+          reff: ingInquiry.reff,
+          clientReff: wr.refId,
+        })
       }
 
       // Map response code ke DisbursementStatus
@@ -1706,6 +1871,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     bank_name,
     branch_code,
     internal_bank_code,
+    type = 'single',
+    bulk_id,
   } = req.body as {
     subMerchantId: string
     sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
@@ -1717,6 +1884,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     bank_name?: string
     branch_code?: string
     internal_bank_code?: string
+    type?: 'single' | 'bulk'
+    bulk_id?: string
   }
 
   if (req.isParent) {
@@ -1917,6 +2086,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
           withdrawFeePercent: pc.withdrawFeePercent,
           withdrawFeeFlat: pc.withdrawFeeFlat,
           sourceProvider,
+          type: type,
+          bulkId: bulk_id,
           partnerClient: { connect: { id: partnerClientId } },
           subMerchant: { connect: { id: subMerchantId } },
           accountName: acctHolder,
@@ -2057,6 +2228,12 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
           amount: inquiryAmount,
           merchantId: ingCfg.merchantId,
         })
+
+        // Schedule fallback for ING withdrawal
+        scheduleIng1WithdrawalFallback(wr.refId, ingCfg, {
+          reff: ingInquiry.reff,
+          clientReff: wr.refId,
+        })
       }
 
       const newStatus =
@@ -2168,5 +2345,89 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       return res.status(400).json({ error: err.message })
     logger.error('[requestWithdrawS2S]', err)
     return res.status(500).json({ error: err.message || 'Internal server error' })
+  }
+}
+
+export async function getBanks(req: ClientAuthRequest, res: Response) {
+  try {
+    const clientUserId = req.clientUserId!
+
+    const userWithClient = await prisma.clientUser.findUnique({
+      where: { id: clientUserId },
+      select: { partnerClientId: true }
+    })
+
+    if (!userWithClient) {
+      return res.status(404).json({ error: 'User tidak ditemukan' })
+    }
+
+    const merchant = await prisma.merchant.findFirst({
+      where: { name: 'ing1' }
+    })
+
+    if (!merchant) {
+      return res.status(500).json({
+        error: 'INA merchant tidak ditemukan dalam sistem'
+      })
+    }
+
+    const now = new Date()
+    const day = now.getDay()
+    const isWeekend = day === 0 || day === 6
+    const isWeekday = !isWeekend
+
+    const subMerchant = await prisma.sub_merchant.findFirst({
+      where: {
+        merchantId: merchant.id,
+        provider: 'ing1'
+      }
+    })
+
+    if (!subMerchant) {
+      return res.status(500).json({
+        error: 'Sub-merchant INA tidak ditemukan dalam sistem'
+      })
+    }
+
+    const schedule = subMerchant.schedule as any
+    if (isWeekday && !schedule?.weekday) {
+      return res.status(503).json({
+        error: 'Layanan INA tidak aktif hari Senin-Jumat'
+      })
+    }
+    if (isWeekend && !schedule?.weekend) {
+      return res.status(503).json({
+        error: 'Layanan INA tidak aktif hari Sabtu-Minggu'
+      })
+    }
+
+    // INA Billers Engine supported banks for withdrawals
+    // These are the banks supported by the cashout/payment API endpoint
+    const inaBanks = [
+      { code: 'BCA', name: 'Bank Central Asia' },
+      { code: 'BNI', name: 'Bank Negara Indonesia' },
+      { code: 'MANDIRI', name: 'Bank Mandiri' },
+      { code: 'BRI', name: 'Bank Rakyat Indonesia' },
+      { code: 'CIMB', name: 'CIMB Niaga' },
+      { code: 'MAYBANK', name: 'Maybank' },
+      { code: 'PERMATA', name: 'Bank Permata' },
+      { code: 'DANAMON', name: 'Bank Danamon' },
+      { code: 'OKE', name: 'Bank OKE' },
+      { code: 'MEGA', name: 'Bank Mega' },
+      { code: 'BTN', name: 'Bank Tabungan Negara' },
+      { code: 'BSI', name: 'Bank Syariah Indonesia' },
+      { code: 'PANIN', name: 'Bank Panin' },
+      { code: 'OCBC', name: 'OCBC NISP' },
+      { code: 'UOB', name: 'UOB Bank' },
+      { code: 'DBS', name: 'Bank DBS' },
+      { code: 'HSBC', name: 'HSBC Bank' }
+    ]
+
+    return res.json({ banks: inaBanks })
+  } catch (err: any) {
+    logger.error('[getBanks] Unexpected error:', err)
+    return res.status(500).json({
+      error: err.message || 'Gagal mengambil daftar bank'
+    })
   }
 }
