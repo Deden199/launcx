@@ -4,9 +4,11 @@ import { Request, Response } from 'express';
 import { prisma } from '../core/prisma';
 import { HilogateClient, HilogateConfig } from '../service/hilogateClient';
 import { isJakartaWeekend } from '../util/time'
+import logger from '../logger';
 
 export async function getBanks(req: Request, res: Response) {
   try {
+    logger.info('Fetching bank codes...');
     // 1) Cari internal merchant Hilogate
     const merchant = await prisma.merchant.findFirst({
       where: { name: 'hilogate' }
@@ -33,6 +35,8 @@ export async function getBanks(req: Request, res: Response) {
     if (typeof rawCreds === 'string') {
       try {
         cfg = JSON.parse(rawCreds);
+        console.log('Fetching bank codes from JSON...');
+        console.log(cfg);
       } catch {
         return res.status(500).json({ error: 'Invalid credentials format' });
       }
@@ -42,9 +46,12 @@ export async function getBanks(req: Request, res: Response) {
 
     // 4) Panggil API untuk daftar bank
     const client = new HilogateClient(cfg);
+  
     let banks;
     try {
       banks = await client.getBankCodes();
+      console.log('Fetching bank codes from Hilogate...');
+      console.log(banks);
     } catch {
       return res.status(500).json({ error: 'Error fetching bank list from Hilogate' });
     }
