@@ -18,7 +18,7 @@ import pLimit from 'p-limit'
 const BALANCE_TTL_MS = 30_000
 
 
-import { prisma } from '../../core/prisma';
+import { prisma, prismaReadOnly } from '../../core/prisma';
 import { logAdminAction } from '../../util/adminLog';
 import { ORDER_STATUS } from '../../types/orderStatus';
 
@@ -45,14 +45,14 @@ export const createMerchant = async (req: AuthRequest, res: Response) => {
 
 export const getAllMerchants = async (_req: Request, res: Response) => {
  // sekarang ambil list partnerClient (id & name saja)
- const list = await prisma.merchant.findMany({
+ const list = await prismaReadOnly.merchant.findMany({
     select: { id: true, name: true }
   });
   res.json(list);
 };
 export const getAllClient = async (_req: Request, res: Response) => {
  // sekarang ambil list partnerClient (id & name saja)
- const list = await prisma.partnerClient.findMany({
+ const list = await prismaReadOnly.partnerClient.findMany({
     select: { id: true, name: true }
   });
   res.json(list);
@@ -77,7 +77,7 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
     }
 
     const [rows, total] = await Promise.all([
-      prisma.adminWithdraw.findMany({
+      prismaReadOnly.adminWithdraw.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: (pageNum - 1) * pageSize,
@@ -95,7 +95,7 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
           subMerchant: { select: { name: true, provider: true } },
         },
       }),
-      prisma.adminWithdraw.count({ where }),
+      prismaReadOnly.adminWithdraw.count({ where }),
     ])
 
     const data = rows.map(r => ({
@@ -122,7 +122,7 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
 // 3. Get merchant by ID
 export const getMerchantById = async (req: Request, res: Response) => {
   const { id } = req.params;
-  const merchant = await prisma.merchant.findUnique({ where: { id } });
+  const merchant = await prismaReadOnly.merchant.findUnique({ where: { id } });
   if (!merchant) {
     return res.status(404).json({ error: 'Merchant not found' });
   }
@@ -244,7 +244,7 @@ export const connectPG = async (req: AuthRequest, res: Response) => {
 // 8. List koneksi PG untuk satu merchant
 export const listPGs = async (req: Request, res: Response) => {
   const merchantId = req.params.id;
-  const list = await prisma.sub_merchant.findMany({
+  const list = await prismaReadOnly.sub_merchant.findMany({
     where: { merchantId },
   });
   res.json(list);
@@ -412,7 +412,7 @@ export async function getDashboardTransactions(req: Request, res: Response) {
 
     // Optimized: Convert 3 separate aggregates to 1 groupBy query
     const [metricsGrouped, partnerClients] = await Promise.all([
-      prisma.order.groupBy({
+      prismaReadOnly.order.groupBy({
         by: ['status'],
         where: {
           ...whereOrders,
@@ -422,7 +422,7 @@ export async function getDashboardTransactions(req: Request, res: Response) {
         },
         _sum: { pendingAmount: true, settlementAmount: true, amount: true }
       }),
-      prisma.partnerClient.findMany({
+      prismaReadOnly.partnerClient.findMany({
         where: pcWhere,
         select: { balance: true }
       })
@@ -444,8 +444,8 @@ export async function getDashboardTransactions(req: Request, res: Response) {
     const totalMerchantBalance = partnerClients.reduce((sum, pc) => sum + pc.balance, 0)
 
     // (6) ambil detail orders, termasuk ketiga timestamp
-      const [orders, total] = await Promise.all([
-      prisma.order.findMany({
+    const [orders, total] = await Promise.all([
+      prismaReadOnly.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
         ...(searchStr ? {} : {
@@ -482,7 +482,7 @@ export async function getDashboardTransactions(req: Request, res: Response) {
           }
         }
       }),
-      prisma.order.count({ where: whereOrders })
+      prismaReadOnly.order.count({ where: whereOrders })
     ])
     // (7) map ke format FE, include netSettle + timestamp ISO
     const transactions = orders.map(o => {
@@ -627,7 +627,7 @@ export async function getDashboardVolume(req: Request, res: Response) {
 
     const where = { AND: filters };
 
-    const orders = await prisma.order.findMany({
+    const orders = await prismaReadOnly.order.findMany({
       where,
       select: {
         amount: true,
@@ -710,7 +710,7 @@ export async function getDashboardWithdrawals(req: Request, res: Response) {
  
     // (3) Ambil data dari DB, select semua kolom yang diperlukan
    const [rows, total] = await Promise.all([
-      prisma.withdrawRequest.findMany({
+      prismaReadOnly.withdrawRequest.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: (pageNum - 1) * pageSize,
@@ -739,7 +739,7 @@ export async function getDashboardWithdrawals(req: Request, res: Response) {
           subMerchant: { select: { name: true, provider: true } },
         },
       }),
-      prisma.withdrawRequest.count({ where }),
+      prismaReadOnly.withdrawRequest.count({ where }),
     ])
     // (4) Format & kirim
     const data = rows.map(w => ({
@@ -884,7 +884,7 @@ export const getProfitPerSubMerchant = async (req: Request, res: Response) => {
     }
 
     // 4. Group by subMerchantId dan hitung total profit per group
-    const grouped = await prisma.order.groupBy({
+    const grouped = await prismaReadOnly.order.groupBy({
       by: ['subMerchantId'],
       where,
       _sum: {
@@ -895,7 +895,7 @@ export const getProfitPerSubMerchant = async (req: Request, res: Response) => {
 
     // 5. Ambil nama sub-merchant jika ada
     const ids = grouped.map(g => g.subMerchantId).filter(Boolean);
-    const subs = await prisma.sub_merchant.findMany({
+    const subs = await prismaReadOnly.sub_merchant.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true }
     });
@@ -927,7 +927,7 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
     if (dateTo   && !isNaN(dateTo.getTime()))   createdAtFilter.lte = dateTo
 
     // ─── 1) Sub-Merchant IDs (for aggregations) ──────────────
-    const subs = await prisma.sub_merchant.findMany({
+    const subs = await prismaReadOnly.sub_merchant.findMany({
       where: {
         ...(merchantId && merchantId !== 'all' ? { merchantId } : {}),
         provider: { in: ['hilogate', 'oy', 'gidi', 'ing1'] },
@@ -943,7 +943,7 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
       clientIds = [partnerClientId]
 
     } else {
-      const list = await prisma.partnerClient.findMany({
+      const list = await prismaReadOnly.partnerClient.findMany({
         where: { isActive: true },
         select: { id: true }
       })
@@ -982,24 +982,42 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
     ]
 
     const [orderGroup, succWdAgg, inAgg, outAgg] = await Promise.all([
-      prisma.order.groupBy({
+      prismaReadOnly.order.groupBy({
         by: ['status'],
         where: { ...whereOrders, status: { in: successStatuses } },
         _sum: { amount: true, settlementAmount: true },
       }),
-      prisma.withdrawRequest.aggregate({
+      prismaReadOnly.withdrawRequest.aggregate({
         _sum: { amount: true },
         where: whereWd,
       }),
-      prisma.order.aggregate({
-        _sum: { settlementAmount: true },
-        where: {
-          partnerClientId: { in: clientIds },
-          subMerchantId:   { in: subIds },
-          settlementTime:  { not: null }
+      // Using aggregateRaw for better performance with large IN clauses
+      prismaReadOnly.order.aggregateRaw({
+        pipeline: [
+          {
+            $match: {
+              partnerClientId: { $in: clientIds },
+              subMerchantId: { $in: subIds },
+              settlementTime: { $ne: null }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              sum_settlementAmount: { $sum: "$settlementAmount" }
+            }
+          }
+        ]
+      }).then((result: any) => {
+        // Handle raw aggregation result
+        const data = Array.isArray(result) && result.length > 0 ? result[0] : null
+        return {
+          _sum: {
+            settlementAmount: data?.sum_settlementAmount || 0
+          }
         }
       }),
-      prisma.withdrawRequest.aggregate({
+      prismaReadOnly.withdrawRequest.aggregate({
         _sum: { amount: true },
         where: {
           partnerClientId: { in: clientIds },
@@ -1058,7 +1076,7 @@ export const getMerchantBalances = async (req: Request, res: Response) => {
       let total_withdrawal = 0;
       let pending_withdrawal = 0;
 
-      const subs = await prisma.sub_merchant.findMany({
+      const subs = await prismaReadOnly.sub_merchant.findMany({
         where: {
           ...(merchantId && merchantId !== 'all' ? { merchantId } : {}),
           provider: { in: ['hilogate', 'oy', 'gidi', 'ing1'] },
@@ -1222,7 +1240,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
 
     let skipOrders = 0
     for (;;) {
-      const ordersChunk = await prisma.order.findMany({
+      const ordersChunk = await prismaReadOnly.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
         select: {
@@ -1279,7 +1297,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
     }
 
     // Fetch withdrawals
-    const withdrawals = await prisma.withdrawRequest.findMany({
+    const withdrawals = await prismaReadOnly.withdrawRequest.findMany({
       where: whereWD,
       orderBy: { createdAt: 'desc' },
       select: {
@@ -1305,7 +1323,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
 
     let skipWD = 0
     for (;;) {
-      const withdrawalsChunk = await prisma.withdrawRequest.findMany({
+      const withdrawalsChunk = await prismaReadOnly.withdrawRequest.findMany({
         where: whereWD,
         orderBy: { createdAt: 'desc' },
         select: {
@@ -1373,7 +1391,7 @@ export const getPlatformProfit = async (req: Request, res: Response) => {
     }
 
     // 3. Ambil feeLauncx & fee3rdParty
-    const profitTxs = await prisma.order.findMany({
+    const profitTxs = await prismaReadOnly.order.findMany({
       where,
       select: { feeLauncx: true, fee3rdParty: true }
     });
@@ -1397,7 +1415,7 @@ export const adminValidateAccount = async (req: Request, res: Response) => {
   }
 
   try {
-    const sub = await prisma.sub_merchant.findUnique({
+    const sub = await prismaReadOnly.sub_merchant.findUnique({
       where: { id: subMerchantId },
       select: { provider: true, credentials: true }
     })
