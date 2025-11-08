@@ -5,9 +5,9 @@ import { authenticator } from 'otplib';
 import { v4 as uuid } from 'uuid';
 import crypto from 'crypto'
 import axios from 'axios'
-import {HilogateClient ,HilogateConfig} from '../../service/hilogateClient'
+import { HilogateClient, HilogateConfig } from '../../service/hilogateClient'
 import ExcelJS from 'exceljs'
-import {OyClient,OyConfig}          from '../../service/oyClient'    // sesuaikan path
+import { OyClient, OyConfig } from '../../service/oyClient'    // sesuaikan path
 import { GidiClient, GidiError } from '../../service/gidiClient'
 import { config } from '../../config';
 import { isJakartaWeekend, formatDateJakarta, parseDateSafely, wibLast24HoursRange } from '../../util/time'
@@ -21,6 +21,7 @@ const BALANCE_TTL_MS = 30_000
 import { prisma } from '../../core/prisma';
 import { logAdminAction } from '../../util/adminLog';
 import { ORDER_STATUS } from '../../types/orderStatus';
+import logger from '../../logger';
 
 // 1. Create merchant (mdr wajib)
 export const createMerchant = async (req: AuthRequest, res: Response) => {
@@ -44,15 +45,15 @@ export const createMerchant = async (req: AuthRequest, res: Response) => {
 };
 
 export const getAllMerchants = async (_req: Request, res: Response) => {
- // sekarang ambil list partnerClient (id & name saja)
- const list = await prisma.merchant.findMany({
+  // sekarang ambil list partnerClient (id & name saja)
+  const list = await prisma.merchant.findMany({
     select: { id: true, name: true }
   });
   res.json(list);
 };
 export const getAllClient = async (_req: Request, res: Response) => {
- // sekarang ambil list partnerClient (id & name saja)
- const list = await prisma.partnerClient.findMany({
+  // sekarang ambil list partnerClient (id & name saja)
+  const list = await prisma.partnerClient.findMany({
     select: { id: true, name: true }
   });
   res.json(list);
@@ -66,10 +67,10 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
     const pageSize = Math.min(100, parseInt(limit as string, 10))
 
     const dateFrom = date_from ? new Date(String(date_from)) : undefined
-    const dateTo   = date_to   ? new Date(String(date_to))   : undefined
+    const dateTo = date_to ? new Date(String(date_to)) : undefined
     const createdAtFilter: any = {}
     if (dateFrom && !isNaN(dateFrom.getTime())) createdAtFilter.gte = dateFrom
-    if (dateTo   && !isNaN(dateTo.getTime()))   createdAtFilter.lte = dateTo
+    if (dateTo && !isNaN(dateTo.getTime())) createdAtFilter.lte = dateTo
 
     const where: any = {}
     if (dateFrom || dateTo) {
@@ -83,15 +84,15 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
         skip: (pageNum - 1) * pageSize,
         take: pageSize,
         select: {
-          id:            true,
-          amount:        true,
-          bankName:      true,
-          bankCode:      true,
+          id: true,
+          amount: true,
+          bankName: true,
+          bankCode: true,
           accountNumber: true,
-          accountName:   true,
-          pgRefId:       true,
-          status:        true,
-          createdAt:     true,
+          accountName: true,
+          pgRefId: true,
+          status: true,
+          createdAt: true,
           subMerchant: { select: { name: true, provider: true } },
         },
       }),
@@ -99,16 +100,16 @@ export async function getAdminWithdrawals(req: Request, res: Response) {
     ])
 
     const data = rows.map(r => ({
-      id:            r.id,
-      amount:        r.amount,
-      bankName:      r.bankName,
-      bankCode:      r.bankCode,
+      id: r.id,
+      amount: r.amount,
+      bankName: r.bankName,
+      bankCode: r.bankCode,
       accountNumber: r.accountNumber,
-      accountName:   r.accountName,
-      pgRefId:       r.pgRefId ?? null,
-      status:        r.status,
-      createdAt:     r.createdAt.toISOString(),
-      wallet:        r.subMerchant?.name || r.subMerchant?.provider,
+      accountName: r.accountName,
+      pgRefId: r.pgRefId ?? null,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+      wallet: r.subMerchant?.name || r.subMerchant?.provider,
     }))
 
     return res.json({ data, total })
@@ -174,7 +175,7 @@ export const setFeeRate = async (req: AuthRequest, res: Response) => {
 export const connectPG = async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.params.id;
-  const { provider, credentials: inputCreds, fee, name } = req.body;
+    const { provider, credentials: inputCreds, fee, name } = req.body;
 
     // 1) Обязательные поля
     if (!provider || !inputCreds || !name) {
@@ -190,8 +191,8 @@ export const connectPG = async (req: AuthRequest, res: Response) => {
     const rawSched = req.body.schedule;
     const schedule =
       rawSched &&
-      typeof rawSched.weekday === 'boolean' &&
-      typeof rawSched.weekend === 'boolean'
+        typeof rawSched.weekday === 'boolean' &&
+        typeof rawSched.weekend === 'boolean'
         ? rawSched
         : { weekday: true, weekend: false }; // default = weekday
 
@@ -204,20 +205,20 @@ export const connectPG = async (req: AuthRequest, res: Response) => {
       select: { schedule: true },
     });
 
-   const clash = existing.some(
-    s => (s.schedule as any)[flagKey] === true
-  )
+    const clash = existing.some(
+      s => (s.schedule as any)[flagKey] === true
+    )
 
-  if (clash && !(schedule.weekday && schedule.weekend)) {
-    return res.status(400).json({
-      error: `Sudah ada ${provider} credential untuk ${flagKey}`,
-    })
-  }
+    if (clash && !(schedule.weekday && schedule.weekend)) {
+      return res.status(400).json({
+        error: `Sudah ada ${provider} credential untuk ${flagKey}`,
+      })
+    }
 
     // 5) Сохраняем
     const created = await prisma.sub_merchant.create({
       data: {
-        merchant:   { connect: { id: merchantId } },
+        merchant: { connect: { id: merchantId } },
         provider,
         name,
         credentials,           // Prisma: Json
@@ -236,7 +237,7 @@ export const connectPG = async (req: AuthRequest, res: Response) => {
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors?.map((e: any) => e.message).join(', ') })
     }
-        return res
+    return res
       .status(500)
       .json({ error: 'Gagal connect PG, silakan coba lagi nanti.' })
   }
@@ -252,9 +253,9 @@ export const listPGs = async (req: Request, res: Response) => {
 
 // 9. Update fee koneksi PG
 export const updatePGFee = async (req: AuthRequest, res: Response) => {
-   try {
-     const merchantId = req.params.id
-    const subId       = req.params.subId
+  try {
+    const merchantId = req.params.id
+    const subId = req.params.subId
     const { provider, credentials: inputCreds, fee, name, schedule: rawSched } = req.body
 
     // 1) Pastikan record ada dan milik merchant yang sama
@@ -271,7 +272,7 @@ export const updatePGFee = async (req: AuthRequest, res: Response) => {
 
     // 2) Build objek `data` hanya dari field yang dikirim
     const data: any = {}
-        let currentProvider = existing.provider
+    let currentProvider = existing.provider
 
     if (provider) {
       data.provider = provider
@@ -308,7 +309,7 @@ export const updatePGFee = async (req: AuthRequest, res: Response) => {
     return res.json(updated)
   } catch (err: any) {
     console.error('[updateSubMerchant]', err)
-        if (err.name === 'ZodError') {
+    if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors?.map((e: any) => e.message).join(', ') })
     }
     return res
@@ -352,16 +353,16 @@ export async function getDashboardTransactions(req: Request, res: Response) {
       limit = '50',
       status,
       search
-        } = req.query as any
+    } = req.query as any
     const pageNum = Math.max(1, parseInt(page as string, 10))
     const pageSize = Math.min(100, parseInt(limit as string, 10))
     const dateFrom = date_from ? new Date(String(date_from)) : undefined
-    const dateTo   = date_to   ? new Date(String(date_to))   : undefined
+    const dateTo = date_to ? new Date(String(date_to)) : undefined
     const searchStr = typeof search === 'string' ? search.trim() : ''
 
     const createdAtFilter: any = {}
     if (dateFrom && !isNaN(dateFrom.getTime())) createdAtFilter.gte = dateFrom
-    if (dateTo   && !isNaN(dateTo.getTime()))   createdAtFilter.lte = dateTo
+    if (dateTo && !isNaN(dateTo.getTime())) createdAtFilter.lte = dateTo
     const allowedStatuses = [
       ORDER_STATUS.SUCCESS,
       ORDER_STATUS.DONE,
@@ -404,8 +405,8 @@ export async function getDashboardTransactions(req: Request, res: Response) {
     }
     if (searchStr) {
       whereOrders.OR = [
-        { id:       { contains: searchStr, mode: 'insensitive' } },
-        { rrn:      { contains: searchStr, mode: 'insensitive' } },
+        { id: { contains: searchStr, mode: 'insensitive' } },
+        { rrn: { contains: searchStr, mode: 'insensitive' } },
         { playerId: { contains: searchStr, mode: 'insensitive' } },
       ]
     }
@@ -444,49 +445,56 @@ export async function getDashboardTransactions(req: Request, res: Response) {
     const totalMerchantBalance = partnerClients.reduce((sum, pc) => sum + pc.balance, 0)
 
     // (6) ambil detail orders, termasuk ketiga timestamp
-      const [orders, total] = await Promise.all([
-      prisma.order.findMany({
-        where: whereOrders,
-        orderBy: { createdAt: 'desc' },
-        ...(searchStr ? {} : {
-          skip:  (pageNum - 1) * pageSize,
-          take:  pageSize,
-        }),
-        select: {
-          id:                   true,
-          createdAt:            true,
-          playerId:             true,
-          qrPayload:            true,
-          rrn:                  true,
-          amount:               true,
-          feeLauncx:            true,
-          fee3rdParty:          true,
-          pendingAmount:        true,
-          settlementAmount:     true,
-          status:               true,
-          settlementStatus:     true,
-          channel:              true,
-          paymentReceivedTime:  true,  // ← baru
-          settlementTime:       true,  // ← baru
-          trxExpirationTime:    true,  // ← barus
-          isLoan:               true,
-          loanAmount:           true,
-          loanAt:               true,
-          loanBy:               true,
-          loanedAt:             true,
-          loanEntry: {
-            select: {
-              amount:    true,
-              createdAt: true,
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany(
+
+        {
+
+          where: whereOrders,
+          orderBy: { createdAt: 'desc' },
+          ...(searchStr ? {} : {
+            skip: (pageNum - 1) * pageSize,
+            take: pageSize,
+          }),
+          select: {
+            id: true,
+            createdAt: true,
+            playerId: true,
+            qrPayload: true,
+            rrn: true,
+            amount: true,
+            feeLauncx: true,
+            fee3rdParty: true,
+            pendingAmount: true,
+            settlementAmount: true,
+            status: true,
+            settlementStatus: true,
+            channel: true,
+            paymentReceivedTime: true,  // ← baru
+            settlementTime: true,  // ← baru
+            trxExpirationTime: true,  // ← barus
+            isLoan: true,
+            loanAmount: true,
+            loanAt: true,
+            loanBy: true,
+            loanedAt: true,
+            loanEntry: {
+              select: {
+                amount: true,
+                createdAt: true,
+              }
             }
           }
-        }
-      }),
+        },
+
+      ),
       prisma.order.count({ where: whereOrders })
     ])
+    logger.info(`[BAYUUUUUUUUUUUUUUUUU] settlementTime ${orders[0].settlementTime}`)
     // (7) map ke format FE, include netSettle + timestamp ISO
+    const jsonOrders = orders.map(o => JSON.stringify(o, null, 2))
     const transactions = orders.map(o => {
-      const pend = o.pendingAmount    ?? 0
+      const pend = o.pendingAmount ?? 0
       const sett = o.settlementAmount ?? 0
       let netSettle = sett
       if (o.status === ORDER_STATUS.PAID) {
@@ -496,43 +504,43 @@ export async function getDashboardTransactions(req: Request, res: Response) {
       }
 
       return {
-        id:                   o.id,
-        date:                 o.createdAt.toISOString(),
-        reference:            o.qrPayload   ?? '',
-        rrn:                  o.rrn         ?? '',
-        playerId:             o.playerId,
-        amount:               o.amount,
-        feeLauncx:            o.feeLauncx   ?? 0,
-        feePg:                o.fee3rdParty ?? 0,
+        id: o.id,
+        date: o.createdAt.toISOString(),
+        reference: o.qrPayload ?? '',
+        rrn: o.rrn ?? '',
+        playerId: o.playerId,
+        amount: o.amount,
+        feeLauncx: o.feeLauncx ?? 0,
+        feePg: o.fee3rdParty ?? 0,
         netSettle,
-        status:               o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
-        settlementStatus:     o.settlementStatus ?? '',
-        channel:              o.channel     ?? '',
+        status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
+        settlementStatus: o.settlementStatus ?? '',
+        channel: o.channel ?? '',
         // tiga timestamp baru:
-        paymentReceivedTime:  o.paymentReceivedTime
-                               ? o.paymentReceivedTime.toISOString()
-                               : '',
-        settlementTime:       o.settlementTime
-                               ? o.settlementTime.toISOString()
-                               : '',
-        trxExpirationTime:    o.trxExpirationTime
-                               ? o.trxExpirationTime.toISOString()
-                               : '',
-        loanedAt:             o.loanedAt ? o.loanedAt.toISOString() : '',
-        loanAt:               o.loanAt ? o.loanAt.toISOString() : '',
-        loanBy:               o.loanBy ?? '',
-        loanAmount:           o.loanAmount ?? o.loanEntry?.amount ?? null,
-        loanCreatedAt:        o.loanAt
-                               ? o.loanAt.toISOString()
-                               : o.loanEntry?.createdAt
-                               ? o.loanEntry.createdAt.toISOString()
-                               : null,
+        paymentReceivedTime: o.paymentReceivedTime
+          ? o.paymentReceivedTime.toISOString()
+          : '',
+        settlementTime: o.settlementTime
+          ? o.settlementTime.toISOString()
+          : '',
+        trxExpirationTime: o.trxExpirationTime
+          ? o.trxExpirationTime.toISOString()
+          : '',
+        loanedAt: o.loanedAt ? o.loanedAt.toISOString() : '',
+        loanAt: o.loanAt ? o.loanAt.toISOString() : '',
+        loanBy: o.loanBy ?? '',
+        loanAmount: o.loanAmount ?? o.loanEntry?.amount ?? null,
+        loanCreatedAt: o.loanAt
+          ? o.loanAt.toISOString()
+          : o.loanEntry?.createdAt
+            ? o.loanEntry.createdAt.toISOString()
+            : null,
       }
     })
 
-   // (8) kembalikan JSON, sekarang dengan totalPaid terpisah
+    // (8) kembalikan JSON, sekarang dengan totalPaid terpisah
     return res.json({
-     transactions,
+      transactions,
       total,                  // jumlah row (untuk paging)
       totalPaid,              // total nominal semua transaksi PAID
       totalPending,
@@ -559,7 +567,7 @@ export async function getDashboardVolume(req: Request, res: Response) {
 
     const { start: defaultStart, end: defaultEnd } = wibLast24HoursRange();
     const dateFromParsed = date_from ? new Date(String(date_from)) : undefined;
-    const dateToParsed   = date_to   ? new Date(String(date_to))   : undefined;
+    const dateToParsed = date_to ? new Date(String(date_to)) : undefined;
     const dateFrom =
       dateFromParsed && !isNaN(dateFromParsed.getTime())
         ? dateFromParsed
@@ -707,35 +715,35 @@ export async function getDashboardWithdrawals(req: Request, res: Response) {
     if (status) {
       where.status = status;
     }
- 
+
     // (3) Ambil data dari DB, select semua kolom yang diperlukan
-   const [rows, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.withdrawRequest.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: (pageNum - 1) * pageSize,
         take: pageSize,
         select: {
-          id:                true,
-          refId:             true,
-          accountName:       true,
-          accountNameAlias:  true,
-          accountNumber:     true,
-          bankCode:          true,
-          bankName:          true,
-          branchName:        true,
-          amount:            true,
-          netAmount:         true,
-          pgFee:            true,
+          id: true,
+          refId: true,
+          accountName: true,
+          accountNameAlias: true,
+          accountNumber: true,
+          bankCode: true,
+          bankName: true,
+          branchName: true,
+          amount: true,
+          netAmount: true,
+          pgFee: true,
 
-          paymentGatewayId:  true,
+          paymentGatewayId: true,
           isTransferProcess: true,
-          status:            true,
-          createdAt:         true,
-          completedAt:       true,
+          status: true,
+          createdAt: true,
+          completedAt: true,
           withdrawFeePercent: true,
-          withdrawFeeFlat:    true,
-          sourceProvider:    true,
+          withdrawFeeFlat: true,
+          sourceProvider: true,
           subMerchant: { select: { name: true, provider: true } },
         },
       }),
@@ -743,29 +751,29 @@ export async function getDashboardWithdrawals(req: Request, res: Response) {
     ])
     // (4) Format & kirim
     const data = rows.map(w => ({
-      id:                w.id,
-      refId:             w.refId,
-      accountName:       w.accountName,
-      accountNameAlias:  w.accountNameAlias,
-      accountNumber:     w.accountNumber,
-      bankCode:          w.bankCode,
-      bankName:          w.bankName,
-      branchName:        w.branchName ?? null,
-      amount:            w.amount,
-      netAmount:         w.netAmount ?? null,
-      pgFee:            w.pgFee ?? null,
+      id: w.id,
+      refId: w.refId,
+      accountName: w.accountName,
+      accountNameAlias: w.accountNameAlias,
+      accountNumber: w.accountNumber,
+      bankCode: w.bankCode,
+      bankName: w.bankName,
+      branchName: w.branchName ?? null,
+      amount: w.amount,
+      netAmount: w.netAmount ?? null,
+      pgFee: w.pgFee ?? null,
       withdrawFeePercent: w.withdrawFeePercent,
-      withdrawFeeFlat:    w.withdrawFeeFlat,
-      paymentGatewayId:  w.paymentGatewayId ?? null,
+      withdrawFeeFlat: w.withdrawFeeFlat,
+      paymentGatewayId: w.paymentGatewayId ?? null,
       isTransferProcess: w.isTransferProcess,
-      status:            w.status,
-      createdAt:         w.createdAt.toISOString(),
-      completedAt:       w.completedAt?.toISOString() ?? null,
+      status: w.status,
+      createdAt: w.createdAt.toISOString(),
+      completedAt: w.completedAt?.toISOString() ?? null,
       wallet:
         w.sourceProvider === 'manual'
           ? 'Manual Entry'
           : w.subMerchant?.name || w.subMerchant?.provider,
-      sourceProvider:    w.sourceProvider,
+      sourceProvider: w.sourceProvider,
 
     }));
 
@@ -921,10 +929,10 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
       req.query as any
 
     const dateFrom = date_from ? new Date(String(date_from)) : undefined
-    const dateTo   = date_to   ? new Date(String(date_to))   : undefined
+    const dateTo = date_to ? new Date(String(date_to)) : undefined
     const createdAtFilter: any = {}
     if (dateFrom && !isNaN(dateFrom.getTime())) createdAtFilter.gte = dateFrom
-    if (dateTo   && !isNaN(dateTo.getTime()))   createdAtFilter.lte = dateTo
+    if (dateTo && !isNaN(dateTo.getTime())) createdAtFilter.lte = dateTo
 
     // ─── 1) Sub-Merchant IDs (for aggregations) ──────────────
     const subs = await prisma.sub_merchant.findMany({
@@ -995,15 +1003,15 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
         _sum: { settlementAmount: true },
         where: {
           partnerClientId: { in: clientIds },
-          subMerchantId:   { in: subIds },
-          settlementTime:  { not: null }
+          subMerchantId: { in: subIds },
+          settlementTime: { not: null }
         }
       }),
       prisma.withdrawRequest.aggregate({
         _sum: { amount: true },
         where: {
           partnerClientId: { in: clientIds },
-          subMerchantId:   { in: subIds },
+          subMerchantId: { in: subIds },
           status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
         }
       })
@@ -1033,8 +1041,8 @@ export const getDashboardSummary = async (req: Request, res: Response) => {
     return res.json({
       totalClientBalance,
       totalPaymentVolume: tpvAgg,
-      totalPaid:          paidAgg,
-      totalSettlement:    settleAgg,
+      totalPaid: paidAgg,
+      totalSettlement: settleAgg,
       totalSuccessfulWithdraw: succWdAgg._sum.amount ?? 0,
     })
 
@@ -1149,10 +1157,10 @@ export async function exportDashboardAll(req: Request, res: Response) {
   try {
     const { date_from, date_to, partnerClientId, status } = req.query as any
     const dateFrom = parseDateSafely(date_from)
-    const dateTo   = parseDateSafely(date_to)
+    const dateTo = parseDateSafely(date_to)
     const createdAtFilter: any = {}
     if (dateFrom) createdAtFilter.gte = dateFrom
-    if (dateTo)   createdAtFilter.lte = dateTo
+    if (dateTo) createdAtFilter.lte = dateTo
 
     // ▶ REVISI #1: Izinkan semua kemungkinan status
     const allowedStatuses = [
@@ -1216,12 +1224,12 @@ export async function exportDashboardAll(req: Request, res: Response) {
     // Sheet 1: Transactions
     const txSheet = wb.addWorksheet('Transactions')
     txSheet.addRow([
-      'Date','TRX ID','RRN','Player ID','Channel',
-      'Amount','Fee Launcx','Fee PG','Net Amount','Status'
+      'Date', 'TRX ID', 'RRN', 'Player ID', 'Channel',
+      'Amount', 'Fee Launcx', 'Fee PG', 'Net Amount', 'Status'
     ]).commit()
 
     let skipOrders = 0
-    for (;;) {
+    for (; ;) {
       const ordersChunk = await prisma.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
@@ -1299,12 +1307,12 @@ export async function exportDashboardAll(req: Request, res: Response) {
     // Sheet 2: Withdrawals
     const wdSheet = wb.addWorksheet('Withdrawals')
     wdSheet.addRow([
-      'Date','Ref ID','Bank','Account',
-      'Amount','Withdrawal Fee','PG Fee','Status'
+      'Date', 'Ref ID', 'Bank', 'Account',
+      'Amount', 'Withdrawal Fee', 'PG Fee', 'Status'
     ]).commit()
 
     let skipWD = 0
-    for (;;) {
+    for (; ;) {
       const withdrawalsChunk = await prisma.withdrawRequest.findMany({
         where: whereWD,
         orderBy: { createdAt: 'desc' },
@@ -1627,21 +1635,21 @@ export const adminWithdraw = async (req: AuthRequest, res: Response) => {
 
     const newStatus = provider === 'hilogate'
       ? (['WAITING', 'PENDING'].includes(resp.status)
-          ? DisbursementStatus.PENDING
-          : ['COMPLETED', 'SUCCESS'].includes(resp.status)
-            ? DisbursementStatus.COMPLETED
-            : DisbursementStatus.FAILED)
+        ? DisbursementStatus.PENDING
+        : ['COMPLETED', 'SUCCESS'].includes(resp.status)
+          ? DisbursementStatus.COMPLETED
+          : DisbursementStatus.FAILED)
       : provider === 'gidi'
         ? (resp.statusTransfer === 'Success'
-            ? DisbursementStatus.COMPLETED
-            : resp.statusTransfer === 'Failed'
-              ? DisbursementStatus.FAILED
-              : DisbursementStatus.PENDING)
+          ? DisbursementStatus.COMPLETED
+          : resp.statusTransfer === 'Failed'
+            ? DisbursementStatus.FAILED
+            : DisbursementStatus.PENDING)
         : (resp.status.code === '101'
-            ? DisbursementStatus.PENDING
-            : resp.status.code === '000'
-              ? DisbursementStatus.COMPLETED
-              : DisbursementStatus.FAILED)
+          ? DisbursementStatus.PENDING
+          : resp.status.code === '000'
+            ? DisbursementStatus.COMPLETED
+            : DisbursementStatus.FAILED)
 
     await prisma.adminWithdraw.update({
       where: { refId },
@@ -1662,7 +1670,7 @@ export const adminWithdraw = async (req: AuthRequest, res: Response) => {
           where: { refId },
           data: { status: DisbursementStatus.FAILED }
         })
-      } catch {}
+      } catch { }
     }
     if (err instanceof GidiError) {
       return res.status(400).json({ error: err.message })

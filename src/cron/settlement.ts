@@ -14,7 +14,7 @@ import { sendTelegramMessage } from '../core/telegram.axios'
 // ————————— CONFIG —————————
 const BATCH_SIZE = 1500                          // jumlah order PAID/LN_SETTLED diproses per batch
 const HTTP_CONCURRENCY = Math.max(10, os.cpus().length * 2)
-const DB_CONCURRENCY   = Number(process.env.DB_CONCURRENCY ?? os.cpus().length) // parallel DB transactions
+const DB_CONCURRENCY = Number(process.env.DB_CONCURRENCY ?? os.cpus().length) // parallel DB transactions
 const WORKER_CONCURRENCY = Number(process.env.SETTLEMENT_WORKERS ?? 1)
 const DB_TX_TIMEOUT_MS = Number(process.env.SETTLEMENT_DB_TX_TIMEOUT_MS ?? 15_000)
 const PARTNER_TX_CHUNK_SIZE = 50
@@ -201,8 +201,9 @@ async function processBatch(cursor: Cursor): Promise<BatchResult> {
                       ...(settlement.fee && { fee3rdParty: settlement.fee }),
                       rrn: settlement.rrn,
                       settlementStatus: settlement.st,
-                      settlementTime: settlement.tmt,
-                      updatedAt: new Date()
+                      settlementTime: settlement?.tmt
+                        ? String(settlement.tmt).replace(/^"|"$/g, '') 
+                        : null, updatedAt: new Date()
                     }
                   })
                   if (upd.count > 0) {
@@ -371,8 +372,8 @@ export function restartSettlementChecker(expr: string) {
   const finalExpr = (expr || settlementCronExpr || '0 16 * * *').trim()
   // stop task lama
   if (settlementTask) {
-    try { settlementTask.stop() } catch {}
-    try { settlementTask.destroy() } catch {}
+    try { settlementTask.stop() } catch { }
+    try { settlementTask.destroy() } catch { }
     settlementTask = null
   }
   settlementCronExpr = finalExpr
@@ -382,8 +383,8 @@ export function restartSettlementChecker(expr: string) {
 
 export function resetSettlementState() {
   if (settlementTask) {
-    try { settlementTask.stop() } catch {}
-    try { settlementTask.destroy() } catch {}
+    try { settlementTask.stop() } catch { }
+    try { settlementTask.destroy() } catch { }
   }
   settlementTask = null
   cutoffTime = null
