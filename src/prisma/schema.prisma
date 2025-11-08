@@ -401,6 +401,11 @@ model WithdrawRequest {
   sourceProvider     String
   withdrawFeePercent Float
   withdrawFeeFlat    Float
+
+  /// ⬇️ field baru
+  type   String @default("single")   // "single" atau "bulk"
+  bulkId String?                     // ID grup kalau bulk
+
   partnerClient      PartnerClient      @relation(fields: [partnerClientId], references: [id])
   subMerchant        sub_merchant       @relation("SubMerchantWithdrawals", fields: [subMerchantId], references: [id])
 
@@ -411,7 +416,10 @@ model WithdrawRequest {
   @@index([subMerchantId, status, createdAt])
   @@index([partnerClientId, status, createdAt])
   @@index([partnerClientId, createdAt])
+  @@index([type])
+  @@index([bulkId])
 }
+
 
 model SubMerchantBalance {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
