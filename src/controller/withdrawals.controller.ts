@@ -17,6 +17,7 @@ import { GenesisClient } from '../service/genesisClient'
 import { authenticator } from 'otplib'
 import { parseDateSafely } from '../util/time'
 import { mapIng1Status, parseIng1Date, parseIng1Number } from '../service/ing1Status'
+import { ObjectId } from 'mongodb'
 
 const mapIng1ToDisbursement = (
   rc?: number | null,
@@ -44,12 +45,159 @@ const isPiroVariant = (provider?: string | null): provider is 'piro' | 'genesis'
   provider === 'piro' || provider === 'genesis'
 
 
+// Helper untuk nyamain bentuk ID dari aggregateRaw & Prisma
+const normalizeMongoId = (raw: any): string => {
+  if (!raw) return ''
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'object') {
+    // Prisma + Mongo biasanya bentuknya { $oid: '...' }
+    if ('$oid' in raw) return (raw as any).$oid
+    // kalau _id nested atau bentuk lain, fallback ke JSON
+    return String((raw as any)._id ?? raw)
+  }
+  return String(raw)
+}
+
+const maybeObjectId = (id: string): string | ObjectId => {
+  if (typeof id !== 'string') return id as any
+  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+    return new ObjectId(id)
+  }
+  return id
+}
+
 
 // src/controllers/withdraw.controller.ts
 // CRITICAL FIX: Balance calculation untuk listSubMerchants
 
+// export const listSubMerchants = async (req: ClientAuthRequest, res: Response) => {
+//   const clientUserId = req.clientUserId!
+
+//   // 1) Ambil partnerClientId + defaultProvider dari user
+//   const userWithDp = await prisma.clientUser.findUnique({
+//     where: { id: clientUserId },
+//     select: {
+//       partnerClientId: true,
+//       partnerClient: {
+//         select: { defaultProvider: true }
+//       }
+//     }
+//   })
+//   if (!userWithDp) return res.status(404).json({ error: 'User tidak ditemukan' })
+
+//   const { partnerClientId } = userWithDp
+//   const defaultProvider = userWithDp.partnerClient.defaultProvider
+//   if (!defaultProvider) return res.status(400).json({ error: 'defaultProvider tidak diset' })
+
+//   const { clientId: qClientId } = req.query
+//   const clientIds = typeof qClientId === 'string' && qClientId !== 'all'
+//     ? [qClientId]
+//     : [partnerClientId, ...(req.childrenIds ?? [])]
+
+//   // Build cache key
+//   const cacheKey = `submerchants:${partnerClientId}:${qClientId || 'all'}:${defaultProvider}`
+
+//   try {
+//     const { cacheWrapper } = await import('../core/redis')
+//     const result = await cacheWrapper(cacheKey, 'submerchants', async () => {
+//       // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
+//       const subs = await prisma.sub_merchant.findMany({
+//         where: { provider: defaultProvider },
+//         select: { id: true, name: true, provider: true }
+//       })
+
+//       if (subs.length === 0) {
+//         return []
+//       }
+
+//       const subIds = subs.map(s => s.id)
+
+//       // ✅ FIX: Use aggregateRaw with CONSISTENT settlementTime logic
+//       const [inAggs, outAggs] = await Promise.all([
+//         // Settlement IN: Orders dengan settlementTime NOT NULL atau status SUCCESS/DONE/SETTLED
+//         prisma.order.aggregateRaw({
+//           pipeline: [
+//             {
+//               $match: {
+//                 subMerchantId: { $in: subIds },
+//                 partnerClientId: { $in: clientIds },
+//                 $or: [
+//                   // Prioritas 1: Ada settlementTime
+//                   { settlementTime: { $ne: null } },
+//                   // Prioritas 2: Status SUCCESS/DONE/SETTLED (untuk data lama yang settlementTime null)
+//                   { 
+//                     status: { 
+//                       $in: ['SUCCESS', 'DONE', 'SETTLED'] 
+//                     }
+//                   }
+//                 ]
+//               }
+//             },
+//             {
+//               $group: {
+//                 _id: '$subMerchantId',
+//                 total: { $sum: '$settlementAmount' }
+//               }
+//             }
+//           ]
+//         }),
+//         // Withdrawal OUT: Pending + Completed withdrawals
+//         prisma.withdrawRequest.aggregateRaw({
+//           pipeline: [
+//             {
+//               $match: {
+//                 subMerchantId: { $in: subIds },
+//                 partnerClientId: { $in: clientIds },
+//                 status: { $in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+//               }
+//             },
+//             {
+//               $group: {
+//                 _id: '$subMerchantId',
+//                 total: { $sum: '$amount' }
+//               }
+//             }
+//           ]
+//         })
+//       ])
+
+//       // 4) Parse aggregateRaw results and create lookup maps
+//       const inResults = (inAggs as any) || []
+//       const outResults = (outAggs as any) || []
+
+//       const inMap = new Map(
+//         (Array.isArray(inResults) ? inResults : []).map((agg: any) => [
+//           String(agg._id),
+//           Number(agg.total) || 0
+//         ])
+//       )
+
+//       const outMap = new Map(
+//         (Array.isArray(outResults) ? outResults : []).map((agg: any) => [
+//           String(agg._id),
+//           Number(agg.total) || 0
+//         ])
+//       )
+
+//       // 5) Build result
+//       return subs.map(s => ({
+//         id: s.id,
+//         name: s.name,
+//         provider: s.provider,
+//         balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
+//       }))
+//     })
+
+//     return res.json(result)
+//   } catch (err: any) {
+//     logger.error('[listSubMerchants]', err)
+//     return res.status(500).json({ error: err.message || 'Internal server error' })
+//   }
+// }
 export const listSubMerchants = async (req: ClientAuthRequest, res: Response) => {
   const clientUserId = req.clientUserId!
+
+  logger.info(`[listSubMerchants] start, clientUserId=${clientUserId}`)
 
   // 1) Ambil partnerClientId + defaultProvider dari user
   const userWithDp = await prisma.clientUser.findUnique({
@@ -61,117 +209,175 @@ export const listSubMerchants = async (req: ClientAuthRequest, res: Response) =>
       }
     }
   })
-  if (!userWithDp) return res.status(404).json({ error: 'User tidak ditemukan' })
+
+  logger.info(
+    `[listSubMerchants] userWithDp=${JSON.stringify(userWithDp)}`
+  )
+
+  if (!userWithDp) {
+    logger.warn(
+      `[listSubMerchants] user tidak ditemukan, clientUserId=${clientUserId}`
+    )
+    return res.status(404).json({ error: 'User tidak ditemukan' })
+  }
 
   const { partnerClientId } = userWithDp
-  const defaultProvider = userWithDp.partnerClient.defaultProvider
-  if (!defaultProvider) return res.status(400).json({ error: 'defaultProvider tidak diset' })
+  const defaultProvider = userWithDp.partnerClient?.defaultProvider
 
-  const { clientId: qClientId } = req.query
+  if (!defaultProvider) {
+    logger.warn(
+      `[listSubMerchants] defaultProvider tidak diset, partnerClientId=${partnerClientId}`
+    )
+    return res.status(400).json({ error: 'defaultProvider tidak diset' })
+  }
+
+  const { clientId: qClientId } = req.query as { clientId?: string }
   const clientIds = typeof qClientId === 'string' && qClientId !== 'all'
     ? [qClientId]
     : [partnerClientId, ...(req.childrenIds ?? [])]
 
+  logger.info(
+    `[listSubMerchants] context partnerClientId=${partnerClientId}, defaultProvider=${defaultProvider}, qClientId=${qClientId}, clientIds=${JSON.stringify(clientIds)}`
+  )
+
   // Build cache key
   const cacheKey = `submerchants:${partnerClientId}:${qClientId || 'all'}:${defaultProvider}`
+  logger.info(`[listSubMerchants] cacheKey=${cacheKey}`)
 
   try {
     const { cacheWrapper } = await import('../core/redis')
+
     const result = await cacheWrapper(cacheKey, 'submerchants', async () => {
+      logger.info(
+        `[listSubMerchants] cache MISS, querying DB for provider=${defaultProvider}`
+      )
+
       // 2) Ambil semua sub_merchant dengan provider matching defaultProvider
       const subs = await prisma.sub_merchant.findMany({
         where: { provider: defaultProvider },
         select: { id: true, name: true, provider: true }
       })
 
+      logger.info(
+        `[listSubMerchants] found ${subs.length} sub_merchants for provider=${defaultProvider}`
+      )
+      logger.info(
+        `[listSubMerchants] subs preview=${JSON.stringify(subs.map(s => ({ id: s.id, name: s.name })).slice(0, 5))}`
+      )
+
       if (subs.length === 0) {
         return []
       }
 
       const subIds = subs.map(s => s.id)
+      logger.info(
+        `[listSubMerchants] subIds=${JSON.stringify(subIds)}`
+      )
 
-      // ✅ FIX: Use aggregateRaw with CONSISTENT settlementTime logic
-      const [inAggs, outAggs] = await Promise.all([
-        // Settlement IN: Orders dengan settlementTime NOT NULL atau status SUCCESS/DONE/SETTLED
-        prisma.order.aggregateRaw({
-          pipeline: [
-            {
-              $match: {
-                subMerchantId: { $in: subIds },
-                partnerClientId: { $in: clientIds },
-                $or: [
-                  // Prioritas 1: Ada settlementTime
-                  { settlementTime: { $ne: null } },
-                  // Prioritas 2: Status SUCCESS/DONE/SETTLED (untuk data lama yang settlementTime null)
-                  { 
-                    status: { 
-                      $in: ['SUCCESS', 'DONE', 'SETTLED'] 
-                    }
-                  }
-                ]
-              }
-            },
-            {
-              $group: {
-                _id: '$subMerchantId',
-                total: { $sum: '$settlementAmount' }
-              }
-            }
-          ]
+      // 3) Ambil orders (IN) & withdrawals (OUT) pakai Prisma biasa
+      const [orders, withdraws] = await Promise.all([
+        prisma.order.findMany({
+          where: {
+            subMerchantId: { in: subIds },
+            partnerClientId: { in: clientIds },
+            OR: [
+              { settlementTime: { not: null } },
+              { status: { in: ['SUCCESS', 'DONE', 'SETTLED'] } }
+            ]
+          },
+          select: {
+            subMerchantId: true,
+            settlementAmount: true
+          }
         }),
-        // Withdrawal OUT: Pending + Completed withdrawals
-        prisma.withdrawRequest.aggregateRaw({
-          pipeline: [
-            {
-              $match: {
-                subMerchantId: { $in: subIds },
-                partnerClientId: { $in: clientIds },
-                status: { $in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
-              }
-            },
-            {
-              $group: {
-                _id: '$subMerchantId',
-                total: { $sum: '$amount' }
-              }
+        prisma.withdrawRequest.findMany({
+          where: {
+            subMerchantId: { in: subIds },
+            partnerClientId: { in: clientIds },
+            status: {
+              in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED]
             }
-          ]
+          },
+          select: {
+            subMerchantId: true,
+            amount: true
+          }
         })
       ])
 
-      // 4) Parse aggregateRaw results and create lookup maps
-      const inResults = (inAggs as any) || []
-      const outResults = (outAggs as any) || []
-
-      const inMap = new Map(
-        (Array.isArray(inResults) ? inResults : []).map((agg: any) => [
-          String(agg._id),
-          Number(agg.total) || 0
-        ])
+      logger.info(
+        `[listSubMerchants] orders count=${orders.length}, withdraws count=${withdraws.length}`
       )
 
-      const outMap = new Map(
-        (Array.isArray(outResults) ? outResults : []).map((agg: any) => [
-          String(agg._id),
-          Number(agg.total) || 0
-        ])
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info(
+          `[listSubMerchants] orders sample=${JSON.stringify(orders.slice(0, 3))}`
+        )
+        logger.info(
+          `[listSubMerchants] withdraws sample=${JSON.stringify(withdraws.slice(0, 3))}`
+        )
+      }
+
+      // 4) Group & sum di memory
+      const inMap = new Map<string, number>()
+      for (const o of orders) {
+        const key = o.subMerchantId
+        const amt = Number(o.settlementAmount ?? 0)
+        inMap.set(key, (inMap.get(key) ?? 0) + amt)
+      }
+
+      const outMap = new Map<string, number>()
+      for (const w of withdraws) {
+        const key = w.subMerchantId
+        const amt = Number(w.amount ?? 0)
+        outMap.set(key, (outMap.get(key) ?? 0) + amt)
+      }
+
+      logger.info(
+        `[listSubMerchants] inMap keys=${JSON.stringify(Array.from(inMap.keys()))}`
+      )
+      logger.info(
+        `[listSubMerchants] outMap keys=${JSON.stringify(Array.from(outMap.keys()))}`
       )
 
-      // 5) Build result
-      return subs.map(s => ({
-        id: s.id,
-        name: s.name,
-        provider: s.provider,
-        balance: (inMap.get(s.id) ?? 0) - (outMap.get(s.id) ?? 0)
-      }))
+      // 5) Build result untuk masing-masing sub_merchant
+      const finalResult = subs.map(s => {
+        const totalIn = inMap.get(s.id) ?? 0
+        const totalOut = outMap.get(s.id) ?? 0
+        const balance = totalIn - totalOut
+
+        logger.info(
+          `[listSubMerchants] sub=${s.name}(${s.id}) totalIn=${totalIn} totalOut=${totalOut} balance=${balance}`
+        )
+
+        return {
+          id: s.id,
+          name: s.name,
+          provider: s.provider,
+          balance
+        }
+      })
+
+      logger.info(
+        `[listSubMerchants] finalResult count=${finalResult.length}, preview=${JSON.stringify(finalResult.slice(0, 5))}`
+      )
+
+      return finalResult
     })
+
+    logger.info(
+      `[listSubMerchants] done, returning ${Array.isArray(result) ? result.length : -1} sub_merchants for clientUserId=${clientUserId}`
+    )
 
     return res.json(result)
   } catch (err: any) {
-    logger.error('[listSubMerchants]', err)
+    logger.error(
+      `[listSubMerchants] ERROR: ${err?.message} stack=${err?.stack}`
+    )
     return res.status(500).json({ error: err.message || 'Internal server error' })
   }
 }
+
 
 // ✅ CRITICAL: Add this function to fix existing data
 export async function migrateSettlementTime(req: Request, res: Response) {
