@@ -1474,7 +1474,7 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
 
       if (sourceProvider === 'hilogate') {
       const valid = await hilogateClient!.validateAccount(account_number, bank_code)
-      if (valid.status !== 'success') {
+      if (valid.status !== 'valid') {
         return res.status(400).json({ error: 'Akun bank tidak valid' })
       }
       acctHolder = valid.account_holder
