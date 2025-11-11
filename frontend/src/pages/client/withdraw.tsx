@@ -765,7 +765,7 @@ export default function WithdrawPage() {
     const exampleData = [
       subs[0]?.id || '',
       'bulk',
-      '014',
+      'TRF_BCA',
       '1234567890',
       exampleBulkId,
       50000,

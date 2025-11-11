@@ -43,6 +43,7 @@
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
     "moment-timezone": "^0.5.45",
+    "mongodb": "^7.0.0",
     "node-cron": "^4.1.1",
     "otplib": "^12.0.1",
     "qrcode": "^1.5.4",
