@@ -38,7 +38,6 @@ interface Withdrawal {
   amount: number;
   status: string;
   createdAt: string;
-  // paidAt?: string;
   completedAt?: string;
   sourceProvider?: string;
   type?: string;
@@ -209,12 +208,17 @@ export default function WithdrawPage() {
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
   const [bulkParsing, setBulkParsing] = useState(false);
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
-  const [bulkInfo, setBulkInfo] = useState<{
-    ok: number;
-    fail: number;
-    queued: number;
-  }>({ ok: 0, fail: 0, queued: 0 });
-  const [bulkError, setBulkError] = useState<string>(''); // ⬅️ error khusus modal
+  const [bulkInfo, setBulkInfo] = useState<{ ok: number; fail: number; queued: number; }>({
+    ok: 0, fail: 0, queued: 0,
+  });
+  const [bulkError, setBulkError] = useState<string>(''); // error khusus modal
+
+  // ===== OTP (Bulk) =====
+  const [bulkOtp, setBulkOtp] = useState("");
+  const [bulkOtpErr, setBulkOtpErr] = useState<string>("");
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpMsg, setOtpMsg] = useState<string>("");
+  const [otpCooldown, setOtpCooldown] = useState<number>(0);
 
   // Abort controllers for API calls
   const ctlDashboard = useRef<AbortController | null>(null);
@@ -245,6 +249,13 @@ export default function WithdrawPage() {
       setIsValid(false);
     }
   }, [open]);
+
+  // OTP cooldown tick
+  useEffect(() => {
+    if (!otpCooldown) return;
+    const t = setInterval(() => setOtpCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [otpCooldown]);
 
   // =============================================
   // UTILITY FUNCTIONS
@@ -620,7 +631,7 @@ export default function WithdrawPage() {
         }
       );
 
-      if (res.status === 200 ) {
+      if (res.status === 200) {
         const holder = String(res.data.account_holder || '').trim();
         setForm((f) => ({
           ...f,
@@ -742,6 +753,46 @@ export default function WithdrawPage() {
   // BULK WITHDRAWAL HANDLERS
   // =============================================
 
+  const handleBulkOtpChange = (v: string) => {
+    const onlyDigit = v.replace(/\D/g, "").slice(0, 6);
+    setBulkOtp(onlyDigit);
+    setBulkOtpErr(onlyDigit.length === 6 ? "" : "OTP harus 6 digit");
+  };
+
+  const requestBulkOtp = async () => {
+    const subIdForOtp = selectedSub || bulkRows[0]?.subMerchantId;
+    if (!subIdForOtp) {
+      setOtpMsg("Pilih/isi sub-wallet dulu.");
+      return;
+    }
+
+    try {
+      setOtpBusy(true);
+      setOtpMsg("");
+
+      const payload = {
+        merchantId: MERCHANT_ID,
+        subMerchantId: subIdForOtp,
+        reason: "withdrawal_bulk",
+      };
+
+      const res = await apiClient.post("/client/withdrawals/otp/request", payload, {
+        validateStatus: () => true,
+      });
+
+      if (res.status === 200 || res.status === 201) {
+        setOtpMsg("OTP dikirim. Cek kanal terdaftar.");
+        setOtpCooldown(60);
+      } else {
+        setOtpMsg(res.data?.error || res.data?.message || "Gagal mengirim OTP.");
+      }
+    } catch (e: any) {
+      setOtpMsg(e?.message || "Network error saat kirim OTP.");
+    } finally {
+      setOtpBusy(false);
+    }
+  };
+
   const downloadBulkTemplate = () => {
     if (subs.length === 0) {
       alert('Tidak ada sub-merchant yang tersedia');
@@ -791,7 +842,7 @@ export default function WithdrawPage() {
 
   const handleBulkFile = async (file: File) => {
     setBulkParsing(true);
-    setBulkError(''); // ⬅️ gunakan error khusus modal
+    setBulkError('');
     setBulkRows([]);
     recalcBulkInfo([]);
     try {
@@ -890,14 +941,20 @@ export default function WithdrawPage() {
       setBulkError(e?.message || 'Gagal memproses file');
     } finally {
       setBulkParsing(false);
-      setFilePickerKey((k) => k + 1); // force remount input agar upload file yang sama juga re-parse
+      setFilePickerKey((k) => k + 1);
     }
   };
 
   const submitBulk = async () => {
     if (!bulkRows.length) return;
+
     if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
       setBulkError('Perbaiki baris yang error sebelum submit.');
+      return;
+    }
+
+    if (!bulkOtp || bulkOtp.replace(/\D/g, "").length !== 6) {
+      setBulkError('OTP wajib diisi (6 digit).');
       return;
     }
 
@@ -916,10 +973,7 @@ export default function WithdrawPage() {
 
         if (!subWallet) {
           cloned[i].status = 'fail';
-          cloned[i].errors = [
-            ...(cloned[i].errors || []),
-            `Sub-wallet "${subId}" tidak ditemukan`,
-          ];
+          cloned[i].errors = [...(cloned[i].errors || []), `Sub-wallet "${subId}" tidak ditemukan`];
           hasError = true;
           continue;
         }
@@ -928,75 +982,63 @@ export default function WithdrawPage() {
           cloned[i].status = 'fail';
           cloned[i].errors = [
             ...(cloned[i].errors || []),
-            `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(
-              subWallet.balance
-            )}`,
+            `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(subWallet.balance)}`
           ];
           hasError = true;
           continue;
         }
 
-        const { providerKey, sourceProvider } = getSelectedProvider(
-          subs,
-          subId
-        );
-        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(
-          providerKey,
-          r.bankCode
-        );
+        const { providerKey, sourceProvider } = getSelectedProvider(subs, subId);
+        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(providerKey, r.bankCode);
         const finalBulkId = r.idBulk || `bulk-${Date.now()}-${i + 1}`;
 
         const body: any = {
           subMerchantId: subId,
           sourceProvider,
+          merchantId: MERCHANT_ID,
           account_number: r.accountNumber,
           bank_code: payloadBankCode,
           amount: +r.amount,
+          account_name: r.accountName || undefined,
+          bank_name: r.bankName || bankObj?.name || undefined,
+          otp: bulkOtp,              
           type: 'bulk',
           bulk_id: finalBulkId,
         };
 
-        if (r.accountName) body.account_name = r.accountName;
-        if (r.bankName) body.bank_name = r.bankName;
-        if (r.branchCode) body.branch_code = r.branchCode;
-        if (r.note) body.note = r.note;
-
-        if (['oy', 'gidi', 'piro'].includes(providerKey)) {
-          body.bank_name = r.bankName || bankObj?.name;
-          if (r.accountName) body.account_name = r.accountName;
-        }
         if (providerKey === 'piro') {
-          body.branch_code = r.branchCode || piroMeta?.branchCode;
+          body.branch_code = piroMeta?.branchCode;
           body.internal_bank_code = piroMeta?.bankIdentifier;
         }
 
         try {
-          // NOTE: sesuaikan endpoint ini dengan backend kamu jika perlu
-          const res = await apiClient.post('/withdrawals', body, {
+          const res = await apiClient.post('/client/withdrawals', body, {
             validateStatus: () => true,
           });
 
           if (res.status === 201) {
             cloned[i].status = 'ok';
             successCount++;
-            setSubs((prev) =>
-              prev.map((s) =>
-                s.id === subId ? { ...s, balance: s.balance - r.amount } : s
-              )
+            setSubs(prev =>
+              prev.map(s => (s.id === subId ? { ...s, balance: s.balance - r.amount } : s))
             );
+          } else if (res.status === 400) {
+            cloned[i].status = 'fail';
+            cloned[i].errors = [...(cloned[i].errors || []), res.data?.error || 'Data tidak valid'];
+            hasError = true;
+          } else if (res.status === 403) {
+            cloned[i].status = 'fail';
+            cloned[i].errors = [...(cloned[i].errors || []), 'Forbidden: Tidak dapat withdraw menggunakan akun parent'];
+            hasError = true;
           } else {
             cloned[i].status = 'fail';
-            const errorMsg =
-              res.data?.error || res.data?.message || `HTTP ${res.status}`;
-            cloned[i].errors = [...(cloned[i].errors || []), errorMsg];
+            const msg = res.data?.error || res.data?.message || `HTTP ${res.status}`;
+            cloned[i].errors = [...(cloned[i].errors || []), msg];
             hasError = true;
           }
-        } catch (apiError: any) {
+        } catch (err: any) {
           cloned[i].status = 'fail';
-          cloned[i].errors = [
-            ...(cloned[i].errors || []),
-            apiError.message || 'Network error',
-          ];
+          cloned[i].errors = [...(cloned[i].errors || []), err?.message || 'Network error'];
           hasError = true;
         }
 
@@ -1006,11 +1048,26 @@ export default function WithdrawPage() {
       }
 
       if (successCount > 0) {
-        await Promise.all([loadWithdrawals(), loadDashboard(selectedChild)]);
-        setBulkError(
-          `✅ ${successCount} transaksi berhasil diproses${hasError ? ', beberapa gagal' : ''
-          }`
-        );
+        const [dash, list] = await Promise.all([
+          apiClient.get('/client/dashboard', { params: { clientId: selectedChild } }),
+          apiClient.get<{ data: Withdrawal[]; total: number }>('/client/withdrawals', {
+            params: {
+              clientId: selectedChild,
+              page,
+              limit: perPage,
+              status: statusFilter,
+              date_from: startDate?.toISOString(),
+              date_to: endDate?.toISOString(),
+              ref: debouncedSearch,
+            },
+          }),
+        ]);
+        setBalance(dash.data.balance);
+        setPending(dash.data.totalPending ?? 0);
+        setWithdrawals(list.data.data);
+        setTotal(list.data.total);
+
+        setBulkError(`✅ ${successCount} transaksi berhasil diproses${hasError ? ', beberapa gagal' : ''}`);
       }
 
       if (!hasError) {
@@ -1019,12 +1076,10 @@ export default function WithdrawPage() {
           setBulkRows([]);
           setBulkInfo({ ok: 0, fail: 0, queued: 0 });
           setBulkError('');
+          setBulkOtp('');
         }, 2000);
       } else {
-        setBulkError(
-          `${successCount} berhasil, ${cloned.length - successCount
-          } gagal. Periksa kolom Errors.`
-        );
+        setBulkError(`${successCount} berhasil, ${cloned.length - successCount} gagal. Periksa kolom Errors.`);
       }
     } catch (e: any) {
       console.error('❌ Bulk import error:', e);
@@ -1033,10 +1088,6 @@ export default function WithdrawPage() {
       setBulkSubmitting(false);
     }
   };
-
-  // =============================================
-  // EXPORT AND PAGINATION
-  // =============================================
 
   const exportToExcel = () => {
     const rows = [
@@ -1062,30 +1113,30 @@ export default function WithdrawPage() {
         });
         const completed = w.completedAt
           ? new Date(w.completedAt).toLocaleString('id-ID', {
-            dateStyle: 'short',
-            timeStyle: 'short',
-          })
+              dateStyle: 'short',
+              timeStyle: 'short',
+            })
           : '-';
-    
+
         const walletDisplay =
           w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
         const fee = w.amount - (w.netAmount ?? 0);
         const net = w.netAmount ?? 0;
 
         return [
-          created,                 // Created At
-          completed,               // Completed At
-          w.refId,                 // Ref ID
-          w.type || 'Bulk',        // Type  <<< dipindah ke sini
-          w.bankName,              // Bank
-          w.accountNumber,         // Account
-          w.accountName,           // Account Name
-          w.bulk_id || '-',        // Bulk ID
-          walletDisplay,           // Wallet
-          w.amount,                // Amount (angka mentah biar bisa dihitung di Excel)
-          fee,                     // Fee
-          net,                     // Net Amount
-          w.status,                // Status
+          created,
+          completed,
+          w.refId,
+          w.type || 'Bulk',
+          w.bankName,
+          w.accountNumber,
+          w.accountName,
+          w.bulk_id || '-',
+          walletDisplay,
+          w.amount,
+          fee,
+          net,
+          w.status,
         ];
       }),
     ];
@@ -1095,7 +1146,6 @@ export default function WithdrawPage() {
     XLSX.utils.book_append_sheet(wb, ws, 'Withdrawals');
     XLSX.writeFile(wb, 'withdrawals.xlsx');
   };
-
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / perPage)),
@@ -1160,10 +1210,11 @@ export default function WithdrawPage() {
                     <button
                       key={s.id}
                       onClick={() => setSelectedSub(s.id)}
-                      className={`rounded-xl border px-3 py-2 text-left transition ${s.id === selectedSub
+                      className={`rounded-xl border px-3 py-2 text-left transition ${
+                        s.id === selectedSub
                           ? 'border-sky-500 bg-sky-500/10'
                           : 'border-neutral-800 hover:bg-neutral-800/60'
-                        }`}
+                      }`}
                     >
                       <div className="text-sm font-medium">
                         {s.name || `Sub ${s.id.slice(0, 6)}`}
@@ -1199,7 +1250,7 @@ export default function WithdrawPage() {
             <button
               onClick={() => {
                 setImportOpen(true);
-                setBulkError(''); // ⬅️ reset error modal saat buka
+                setBulkError('');
               }}
               className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800/60"
             >
@@ -1371,12 +1422,12 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2 whitespace-nowrap">
                           {w.completedAt
                             ? new Date(w.completedAt).toLocaleString('id-ID', {
-                              dateStyle: 'short',
-                              timeStyle: 'short',
-                            })
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })
                             : '-'}
                         </td>
-                     
+
                         <td className="px-3 py-2">{w.refId}</td>
                         <td className="px-3 py-2">{w.type || 'Bulk'}</td>
                         <td className="px-3 py-2">{w.bankName}</td>
@@ -1399,14 +1450,15 @@ export default function WithdrawPage() {
                         </td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${w.status === 'COMPLETED'
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              w.status === 'COMPLETED'
                                 ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                                 : w.status === 'PENDING'
-                                  ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
-                                  : w.status === 'FAILED'
-                                    ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                                    : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
-                              }`}
+                                ? 'border-amber-900/40 bg-amber-950/40 text-amber-300'
+                                : w.status === 'FAILED'
+                                ? 'border-rose-900/40 bg-rose-950/40 text-rose-300'
+                                : 'border-neutral-800 bg-neutral-900/60 text-neutral-300'
+                            }`}
                           >
                             {w.status}
                           </span>
@@ -1493,6 +1545,9 @@ export default function WithdrawPage() {
                     setBulkRows([]);
                     setBulkInfo({ ok: 0, fail: 0, queued: 0 });
                     setBulkError('');
+                    setBulkOtp('');
+                    setOtpMsg('');
+                    setOtpCooldown(0);
                   }}
                   className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-800/60"
                 >
@@ -1506,10 +1561,11 @@ export default function WithdrawPage() {
               <div
                 role="status"
                 aria-live="polite"
-                className={`mb-4 rounded-xl border p-3 text-sm ${bulkError.startsWith('✅')
+                className={`mb-4 rounded-xl border p-3 text-sm ${
+                  bulkError.startsWith('✅')
                     ? 'border-emerald-900/40 bg-emerald-950/40 text-emerald-300'
                     : 'border-rose-900/40 bg-rose-950/40 text-rose-300'
-                  }`}
+                }`}
               >
                 {bulkError}
               </div>
@@ -1554,6 +1610,59 @@ export default function WithdrawPage() {
               <span>
                 Fail: <b className="text-rose-300">{bulkInfo.fail}</b>
               </span>
+            </div>
+
+            {/* OTP for Bulk */}
+            <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div className="flex-1">
+                  <label className="mb-1 block text-sm text-neutral-300">
+                    OTP <span className="text-neutral-500">(wajib, 6 digit)</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      inputMode="numeric"
+                      pattern="\d{6}"
+                      placeholder="••••••"
+                      value={bulkOtp}
+                      onChange={(e) => handleBulkOtpChange(e.target.value)}
+                      className="h-11 w-44 rounded-lg border border-neutral-700 bg-neutral-800 px-3 text-center text-lg tracking-widest outline-none"
+                      aria-invalid={!!bulkOtpErr}
+                      aria-describedby="bulk-otp-help"
+                      maxLength={6}
+                      required
+                    />
+                    {bulkOtp.length === 6 && !bulkOtpErr && (
+                      <span className="pointer-events-none absolute -right-8 top-1/2 -translate-y-1/2 text-emerald-400">✓</span>
+                    )}
+                  </div>
+                  <p id="bulk-otp-help" className="mt-1 text-xs text-neutral-400">
+                    Masukkan OTP yang dikirim ke kanal terdaftar. Satu OTP untuk seluruh batch.
+                  </p>
+                  {!!bulkOtpErr && <p className="mt-1 text-xs text-rose-300">{bulkOtpErr}</p>}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={requestBulkOtp}
+                    disabled={otpBusy || otpCooldown > 0}
+                    className="rounded-lg border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800/60 disabled:opacity-50"
+                  >
+                    {otpBusy
+                      ? "Mengirim…"
+                      : otpCooldown > 0
+                        ? `Kirim ulang (${String(otpCooldown).padStart(2, "0")}s)`
+                        : "Kirim OTP"}
+                  </button>
+                </div>
+              </div>
+
+              {!!otpMsg && (
+                <div className="mt-2 text-xs text-neutral-300">
+                  {otpMsg}
+                </div>
+              )}
             </div>
 
             {/* Preview Table */}
@@ -1615,12 +1724,13 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2">{money(r.amount)}</td>
                         <td className="px-3 py-2">
                           <span
-                            className={`rounded-full px-2 py-0.5 text-xs ${r.status === 'ok'
+                            className={`rounded-full px-2 py-0.5 text-xs ${
+                              r.status === 'ok'
                                 ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
                                 : r.status === 'fail'
-                                  ? 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30'
-                                  : 'bg-neutral-500/15 text-neutral-300 ring-1 ring-neutral-500/30'
-                              }`}
+                                ? 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30'
+                                : 'bg-neutral-500/15 text-neutral-300 ring-1 ring-neutral-500/30'
+                            }`}
                           >
                             {r.status ?? 'queued'}
                           </span>
@@ -1646,23 +1756,19 @@ export default function WithdrawPage() {
             {/* Actions */}
             <div className="flex items-center justify-between">
               <div className="text-xs text-neutral-400">
-                Kolom wajib: <code>subMerchantId</code>, <code>bankCode</code>,{' '}
-                <code>accountNumber</code>, <code>amount</code>.
+                Kolom wajib: <code>subMerchantId</code>, <code>bankCode</code>, <code>accountNumber</code>, <code>amount</code>.
               </div>
               <button
                 disabled={
                   !bulkRows.length ||
                   bulkSubmitting ||
-                  bulkRows.some((r) => (r.errors?.length ?? 0) > 0)
+                  bulkRows.some((r) => (r.errors?.length ?? 0) > 0) ||
+                  bulkOtp.replace(/\D/g, "").length !== 6
                 }
                 onClick={submitBulk}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
-                {bulkSubmitting
-                  ? 'Processing…'
-                  : BULK_DUMMY_MODE
-                    ? 'Simulate Bulk'
-                    : 'Submit Bulk'}
+                {bulkSubmitting ? 'Processing…' : BULK_DUMMY_MODE ? 'Simulate Bulk' : 'Submit Bulk'}
               </button>
             </div>
           </div>
