@@ -73,6 +73,7 @@ type BulkRow = {
   errors?: string[];
   status?: 'queued' | 'ok' | 'fail';
   timestamp?: string;
+  refId: string;
 };
 
 interface JWTPayload {
@@ -659,65 +660,80 @@ export default function WithdrawPage() {
 
   const submitBulk = async () => {
     if (!bulkRows.length) return;
-
+  
     if (bulkRows.some((r) => (r.errors?.length ?? 0) > 0)) {
       setBulkError('Perbaiki baris yang error sebelum submit.');
       return;
     }
-
+  
     setBulkSubmitting(true);
     setBulkError('');
-
+  
     try {
-      // === Step 1: bila OTP belum valid, trigger permintaan OTP via Submit ===
-      if (!bulkOtp || bulkOtp.replace(/\D/g, '').length !== 6) {
+      const numericOtp = bulkOtp.replace(/\D/g, '');
+      if (!numericOtp || numericOtp.length !== 6) {
         const subIdForOtp = selectedSub || bulkRows[0]?.subMerchantId;
         if (!subIdForOtp) {
           setBulkError('Pilih/isi sub-wallet dulu sebelum request OTP.');
           setBulkSubmitting(false);
           return;
         }
-
+  
         if (otpCooldown > 0) {
-          setBulkError(`OTP sudah dikirim. Tunggu ${otpCooldown}s untuk minta ulang, lalu klik Submit lagi.`);
+          setBulkError(
+            `OTP sudah dikirim. Tunggu ${otpCooldown}s untuk minta ulang, lalu klik Submit lagi.`
+          );
           setBulkSubmitting(false);
           return;
         }
-
+  
         await requestBulkOtp(subIdForOtp);
+        setBulkError(
+          'OTP sudah dikirim. Cek WhatsApp/SMS/email, lalu masukkan OTP dan klik Submit lagi.'
+        );
         setBulkSubmitting(false);
-        return; // stop di sini; user isi OTP lalu Submit lagi
+        return;
       }
-
-      // === Step 2: OTP ada & valid format → proses baris satu2 ===
+  
       const cloned = bulkRows.map((r) => ({ ...r }));
-      let hasError = false;
-      let successCount = 0;
-
+      const withdrawalsPayload: any[] = [];
+      const ts = Date.now();
+      const batchId = `batch-${ts}`;
+  
       for (let i = 0; i < cloned.length; i++) {
         const r = cloned[i];
         const subId = r.subMerchantId || selectedSub;
         const subWallet = subs.find((s) => s.id === subId);
-
+  
+        r.errors = r.errors || [];
+  
         if (!subWallet) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [...(cloned[i].errors || []), `Sub-wallet "${subId}" tidak ditemukan`];
-          hasError = true;
+          r.status = 'fail';
+          r.errors.push(`Sub-wallet "${subId}" tidak ditemukan`);
           continue;
         }
-
+  
         if (r.amount > subWallet.balance) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [...(cloned[i].errors || []), `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(subWallet.balance)}`];
-          hasError = true;
+          r.status = 'fail';
+          r.errors.push(
+            `Saldo tidak mencukupi. Butuh: ${money(r.amount)}, Saldo: ${money(
+              subWallet.balance
+            )}`
+          );
           continue;
         }
-
+  
         const { providerKey, sourceProvider } = getSelectedProvider(subs, subId);
-        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(providerKey, r.bankCode);
-        const finalBulkId = r.idBulk || `bulk-${Date.now()}-${i + 1}`;
-
-        const body: any = {
+        const { bankObj, piroMeta, payloadBankCode } = resolveProviderBank(
+          providerKey,
+          r.bankCode
+        );
+  
+        const bulkId = r.idBulk || `bulk-${ts}-${i + 1}`;
+  
+        const item: any = {
+          bulk_id: bulkId,
+          batch_id: batchId,
           subMerchantId: subId,
           sourceProvider,
           merchantId: MERCHANT_ID,
@@ -726,84 +742,103 @@ export default function WithdrawPage() {
           amount: +r.amount,
           account_name: r.accountName || undefined,
           bank_name: r.bankName || bankObj?.name || undefined,
-          otp: bulkOtp,
+          account_name_alias: r.accountName ? aliasFrom(r.accountName) : undefined,
           type: 'bulk',
-          bulk_id: finalBulkId,
         };
-
+  
         if (providerKey === 'piro') {
-          body.branch_code = piroMeta?.branchCode;
-          body.internal_bank_code = piroMeta?.bankIdentifier;
+          item.branch_code = piroMeta?.branchCode;
+          item.internal_bank_code = piroMeta?.bankIdentifier;
         }
-
-        try {
-          const res = await apiClient.post('/client/withdrawals', body, { validateStatus: () => true });
-
-          // OTP invalid/expired → hentikan batch, kosongkan OTP, izinkan minta ulang via Submit
-          if (res.status === 400 || res.status === 401 || res.status === 403) {
-            const msg = (res.data?.error || res.data?.message || '').toLowerCase();
-            if (msg.includes('otp')) {
-              setBulkError('❌ OTP salah atau kadaluarsa. Klik Submit untuk meminta OTP baru.');
-              setBulkOtp('');
-              setOtpCooldown(0); // biar Submit berikutnya bisa request OTP lagi
-              setBulkSubmitting(false);
-              return;
-            }
-          }
-
-          if (res.status === 201) {
-            cloned[i].status = 'ok';
-            successCount++;
-            setSubs((prev) => prev.map((s) => (s.id === subId ? { ...s, balance: s.balance - r.amount } : s)));
-          } else if (res.status === 400) {
-            cloned[i].status = 'fail';
-            cloned[i].errors = [...(cloned[i].errors || []), res.data?.error || 'Data tidak valid'];
-            hasError = true;
-          } else if (res.status === 403) {
-            cloned[i].status = 'fail';
-            cloned[i].errors = [...(cloned[i].errors || []), 'Forbidden: Tidak dapat withdraw menggunakan akun parent'];
-            hasError = true;
-          } else {
-            cloned[i].status = 'fail';
-            const msg = res.data?.error || res.data?.message || `HTTP ${res.status}`;
-            cloned[i].errors = [...(cloned[i].errors || []), msg];
-            hasError = true;
-          }
-        } catch (err: any) {
-          cloned[i].status = 'fail';
-          cloned[i].errors = [...(cloned[i].errors || []), err?.message || 'Network error'];
-          hasError = true;
-        }
-
-        setBulkRows([...cloned]);
-        recalcBulkInfo(cloned);
-        await sleep(500);
+  
+        withdrawalsPayload.push(item);
+        r.status = 'queued';
       }
-
-      if (successCount > 0) {
+  
+      if (!withdrawalsPayload.length) {
+        setBulkRows(cloned);
+        recalcBulkInfo(cloned);
+        setBulkError('Tidak ada baris yang valid untuk dikirim.');
+        setBulkSubmitting(false);
+        return;
+      }
+  
+      setBulkRows(cloned);
+      recalcBulkInfo(cloned);
+  
+      const res = await apiClient.post(
+        '/client/withdrawals/bulk',
+        {
+          otp: numericOtp,
+          withdrawals: withdrawalsPayload,
+        },
+        { validateStatus: () => true }
+      );
+  
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        const msg = (res.data?.error || res.data?.message || '').toLowerCase();
+        if (msg.includes('otp')) {
+          setBulkError(
+            '❌ OTP salah atau kadaluarsa. Klik Submit untuk meminta OTP baru.'
+          );
+          setBulkOtp('');
+          setOtpCooldown(0);
+          setBulkSubmitting(false);
+          return;
+        }
+      }
+  
+      if (res.status !== 200 && res.status !== 201) {
+        setBulkError(
+          res.data?.error ||
+            res.data?.message ||
+            `Bulk API gagal: HTTP ${res.status}`
+        );
+        setBulkSubmitting(false);
+        return;
+      }
+  
+      const {
+        bulkId,
+        totalRequested,
+        successful = 0,
+        failed = 0,
+      } = res.data || {};
+  
+      if (successful > 0 || failed > 0) {
         const [dash, list] = await Promise.all([
-          apiClient.get('/client/dashboard', { params: { clientId: selectedChild } }),
-          apiClient.get<{ data: Withdrawal[]; total: number }>('/client/withdrawals', {
-            params: {
-              clientId: selectedChild,
-              page,
-              limit: perPage,
-              status: statusFilter,
-              date_from: startDate?.toISOString(),
-              date_to: endDate?.toISOString(),
-              ref: debouncedSearch,
-            },
+          apiClient.get('/client/dashboard', {
+            params: { clientId: selectedChild },
           }),
+          apiClient.get<{ data: Withdrawal[]; total: number }>(
+            '/client/withdrawals',
+            {
+              params: {
+                clientId: selectedChild,
+                page,
+                limit: perPage,
+                status: statusFilter,
+                date_from: startDate?.toISOString(),
+                date_to: endDate?.toISOString(),
+                ref: debouncedSearch,
+              },
+            }
+          ),
         ]);
+  
         setBalance(dash.data.balance);
         setPending(dash.data.totalPending ?? 0);
         setWithdrawals(list.data.data);
         setTotal(list.data.total);
-
-        setBulkError(`✅ ${successCount} transaksi berhasil diproses${hasError ? ', beberapa gagal' : ''}`);
+  
+        await loadSubMerchantsFromAPI();
       }
-
-      if (!hasError) {
+  
+      setBulkError(
+        `✅ Bulk ${bulkId || ''}: ${successful}/${totalRequested} berhasil, ${failed} gagal.`
+      );
+  
+      if (failed === 0) {
         setTimeout(() => {
           setImportOpen(false);
           setBulkRows([]);
@@ -812,8 +847,6 @@ export default function WithdrawPage() {
           setOtpCooldown(0);
           setOtpInfoMsg('');
         }, 2000);
-      } else {
-        setBulkError(`${successCount} berhasil, ${cloned.length - successCount} gagal. Periksa kolom Errors.`);
       }
     } catch (e: any) {
       console.error('❌ Bulk import error:', e);
@@ -821,7 +854,8 @@ export default function WithdrawPage() {
     } finally {
       setBulkSubmitting(false);
     }
-  };
+  };  
+  
 
   const downloadBulkTemplate = () => {
     if (subs.length === 0) {
@@ -899,6 +933,7 @@ export default function WithdrawPage() {
           status: 'queued',
           errors: [],
           timestamp: bulkTimestamp.toString(),
+          refId: ''
         };
 
         if (!row.subMerchantId) row.errors!.push('subMerchantId kosong');
