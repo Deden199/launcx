@@ -8,7 +8,8 @@ import {
   validateAccount,
   requestWithdraw,
   listWithdrawals,
-  retryWithdrawal
+  retryWithdrawal,
+  requestBulkWithdraw
 } from '../controller/withdrawals.controller'
 
 const r = Router()
@@ -36,6 +37,11 @@ r.post(
   '/withdrawals',
   express.json(),
   requestWithdraw
+)
+r.post(
+  '/withdrawals/bulk',
+  express.json(),
+  requestBulkWithdraw
 )
 r.get(
   '/withdrawals',

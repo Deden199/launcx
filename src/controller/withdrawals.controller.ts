@@ -2465,3 +2465,489 @@ export async function getBanks(req: ClientAuthRequest, res: Response) {
     })
   }
 }
+
+/**
+ * POST /api/v1/client/dashboard/withdraw/bulk
+ */
+export const requestBulkWithdraw = async (req: ClientAuthRequest, res: Response) => {
+  const { otp, withdrawals } = req.body as {
+    otp: string
+    withdrawals: Array<{
+      subMerchantId: string
+      sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+      account_number: string
+      bank_code: string
+      account_name_alias?: string
+      amount: number
+      account_name?: string
+      bank_name?: string
+      branch_code?: string
+      internal_bank_code?: string
+    }>
+  }
+
+  // Validasi parent account
+  if (req.isParent) {
+    return res.status(403).json({ error: 'Parent accounts cannot perform withdrawals' })
+  }
+
+  const clientUserId = req.clientUserId!
+
+  // Validasi input
+  if (!withdrawals || !Array.isArray(withdrawals) || withdrawals.length === 0) {
+    return res.status(400).json({ error: 'Withdrawals list is required and must not be empty' })
+  }
+
+  if (withdrawals.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 withdrawals per bulk request' })
+  }
+
+  try {
+    // 1) Ambil user data
+    const user = await prisma.clientUser.findUnique({
+      where: { id: clientUserId },
+      select: { partnerClientId: true, totpEnabled: true, totpSecret: true }
+    })
+
+    if (!user) {
+      return res.status(404).json({ error: 'User tidak ditemukan' })
+    }
+
+    // 2) Verifikasi OTP SEKALI untuk semua withdrawals
+    if (user.totpEnabled) {
+      if (!otp) {
+        return res.status(400).json({ error: 'OTP wajib diisi untuk bulk withdrawal' })
+      }
+
+      if (!user.totpSecret || !authenticator.check(String(otp), user.totpSecret)) {
+        return res.status(400).json({ error: 'OTP tidak valid' })
+      }
+
+      logger.info(`[requestBulkWithdraw] OTP verified for user ${clientUserId}`)
+    }
+
+    // 3) Generate bulk ID untuk tracking
+    const bulkId = `bulk-${Date.now()}-${crypto.randomUUID().substring(0, 8)}`
+
+    // 4) Process setiap withdrawal
+    const results: Array<{
+      index: number
+      success: boolean
+      refId?: string
+      id?: string
+      status?: string
+      error?: string
+    }> = []
+
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < withdrawals.length; i++) {
+      const item = withdrawals[i]
+      
+      try {
+        // Panggil logic yang sama dengan requestWithdraw
+        const result = await processWithdrawal({
+          ...item,
+          type: 'bulk',
+          bulk_id: bulkId,
+          clientUserId,
+          partnerClientId: user.partnerClientId,
+          skipOtpCheck: true // OTP sudah diverifikasi di awal
+        })
+
+        results.push({
+          index: i,
+          success: true,
+          ...result
+        })
+        successCount++
+
+      } catch (err: any) {
+        logger.error(`[requestBulkWithdraw] Item ${i} failed:`, err)
+        results.push({
+          index: i,
+          success: false,
+          error: err.message || 'Processing failed'
+        })
+        failCount++
+      }
+    }
+
+    // 5) Invalidate cache
+    const { cacheDelPattern } = await import('../core/redis')
+    await Promise.all([
+      cacheDelPattern(`withdrawals:*`),
+      cacheDelPattern(`submerchants:*`),
+      cacheDelPattern(`dashboard:${clientUserId}:*`)
+    ]).catch(err => logger.error('[requestBulkWithdraw] Cache invalidation failed:', err))
+
+    // 6) Return result
+    return res.status(201).json({
+      bulkId,
+      totalRequested: withdrawals.length,
+      successful: successCount,
+      failed: failCount,
+      results
+    })
+
+  } catch (err: any) {
+    logger.error('[requestBulkWithdraw]', err)
+    return res.status(500).json({ error: err.message || 'Internal server error' })
+  }
+}
+
+/**
+ * Helper function untuk memproses single withdrawal
+ */
+async function processWithdrawal(params: {
+  subMerchantId: string
+  sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+  account_number: string
+  bank_code: string
+  account_name_alias?: string
+  amount: number
+  account_name?: string
+  bank_name?: string
+  branch_code?: string
+  internal_bank_code?: string
+  type: 'single' | 'bulk'
+  bulk_id?: string
+  clientUserId: string
+  partnerClientId: string
+  skipOtpCheck?: boolean
+}) {
+  const {
+    subMerchantId,
+    sourceProvider,
+    account_number,
+    bank_code,
+    account_name_alias,
+    amount,
+    account_name,
+    bank_name,
+    branch_code,
+    internal_bank_code,
+    type,
+    bulk_id,
+    partnerClientId,
+    clientUserId
+  } = params
+
+  // Validate against global withdraw limits
+  const [minSet, maxSet] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: 'withdraw_min' } }),
+    prisma.setting.findUnique({ where: { key: 'withdraw_max' } })
+  ])
+  const minVal = parseFloat(minSet?.value ?? '0')
+  const maxVal = parseFloat(maxSet?.value ?? '0')
+  
+  if (!isNaN(minVal) && minVal > 0 && amount < minVal) {
+    throw new Error(`Minimum withdraw Rp ${minVal}`)
+  }
+  if (!isNaN(maxVal) && maxVal > 0 && amount > maxVal) {
+    throw new Error(`Maximum withdraw Rp ${maxVal}`)
+  }
+
+  // Get sub-merchant credentials
+  const sub = await prisma.sub_merchant.findUnique({
+    where: { id: subMerchantId },
+    select: { credentials: true, provider: true }
+  })
+  if (!sub) throw new Error('Credentials not found for sub-merchant')
+
+  // Initialize provider client
+  let providerCfg: any
+  let hilogateClient: HilogateClient | null = null
+  let oyClient: OyClient | null = null
+  let gidiClient: GidiClient | null = null
+  let ingClient: Ing1Client | null = null
+  let piroClient: PiroClient | null = null
+  let piroCfg: PiroConfig | null = null
+
+  if (sourceProvider === 'hilogate') {
+    const raw = sub.credentials as { merchantId: string; secretKey: string; env?: string }
+    providerCfg = {
+      merchantId: raw.merchantId,
+      secretKey: raw.secretKey,
+      env: raw.env ?? 'sandbox',
+    } as HilogateConfig
+    hilogateClient = new HilogateClient(providerCfg)
+  } else if (sourceProvider === 'oy') {
+    const raw = sub.credentials as { merchantId: string; secretKey: string }
+    providerCfg = {
+      baseUrl: 'https://partner.oyindonesia.com',
+      username: raw.merchantId,
+      apiKey: raw.secretKey,
+    } as OyConfig
+    oyClient = new OyClient(providerCfg)
+  } else if (sourceProvider === 'gidi') {
+    const raw = sub.credentials as { baseUrl: string; merchantId: string; credentialKey: string }
+    providerCfg = {
+      baseUrl: raw.baseUrl,
+      merchantId: raw.merchantId,
+      credentialKey: raw.credentialKey,
+    } as GidiDisbursementConfig
+    gidiClient = new GidiClient(providerCfg)
+  } else if (isPiroVariant(sourceProvider)) {
+    const merchant = await prisma.merchant.findFirst({ where: { name: 'piro' } })
+    if (!merchant) throw new Error('Internal Piro merchant not found')
+
+    const subs = await getActiveProviders(merchant.id, 'piro', {})
+    if (!subs.length) throw new Error('No active Piro credentials today')
+
+    const picked = subs.find((s) => s.id === subMerchantId) ?? subs[0]
+    if (!picked) throw new Error('Active Piro credentials not found for sub-merchant')
+
+    piroCfg = picked.config as PiroConfig
+    providerCfg = piroCfg
+    piroClient = new PiroClient(piroCfg)
+  } else {
+    const raw = sub.credentials as unknown as Ing1Config
+    providerCfg = {
+      baseUrl: raw.baseUrl,
+      email: raw.email,
+      password: raw.password,
+      productCode: raw.productCode,
+      callbackUrl: raw.callbackUrl,
+      permanentToken: raw.permanentToken,
+      merchantId: raw.merchantId,
+      apiVersion: raw.apiVersion,
+    }
+    ingClient = new Ing1Client(providerCfg)
+  }
+
+  const withdrawRef = `wd-${Date.now()}-${crypto.randomUUID().substring(0, 8)}`
+
+  // Validate account
+  let acctHolder: string
+  let alias: string
+  let bankNameFinal: string
+  let branchName = ''
+  let bankIdentifier: string | undefined
+
+  if (sourceProvider === 'hilogate') {
+    const valid = await hilogateClient!.validateAccount(account_number, bank_code)
+    if (valid.status !== 'valid') {
+      throw new Error('Akun bank tidak valid')
+    }
+    acctHolder = valid.account_holder
+    alias = account_name_alias || acctHolder
+    const banks = await hilogateClient!.getBankCodes()
+    const b = banks.find(b => b.code === bank_code)
+    if (!b) throw new Error('Bank code tidak dikenal')
+    bankNameFinal = b.name
+  } else if (sourceProvider === 'gidi') {
+    const inq = await gidiClient!.inquiryAccount(bank_code, account_number, Date.now().toString())
+    acctHolder = inq.beneficiaryAccountName
+    alias = account_name_alias || acctHolder
+    bankNameFinal = bank_name || ''
+  } else if (sourceProvider === 'oy') {
+    acctHolder = account_name || ''
+    alias = account_name_alias || acctHolder
+    bankNameFinal = bank_name || ''
+  } else if (isPiroVariant(sourceProvider)) {
+    if (!piroClient || !piroCfg) {
+      throw new Error('Missing Piro client configuration')
+    }
+    const validation = await piroClient.validateBankAccount({
+      accountNumber: account_number,
+      bankCode: bank_code,
+      branchCode: branch_code,
+      bankIdentifier: internal_bank_code,
+      bankName: bank_name,
+    })
+
+    if (!validation.isValid) {
+      throw new Error(validation.message || 'Akun bank tidak valid')
+    }
+
+    acctHolder = validation.accountName ?? account_name ?? ''
+    alias = account_name_alias || acctHolder
+    bankNameFinal = validation.bankName ?? bank_name ?? ''
+    branchName = validation.branchCode ?? branch_code ?? ''
+    bankIdentifier = validation.bankIdentifier ?? internal_bank_code ?? undefined
+  } else {
+    acctHolder = account_name || ''
+    alias = account_name_alias || acctHolder
+    bankNameFinal = bank_name || ''
+  }
+
+  // Create withdrawal record in transaction
+  const wr = await prisma.$transaction(async tx => {
+    const pc = await tx.partnerClient.findUniqueOrThrow({
+      where: { id: partnerClientId },
+      select: { withdrawFeePercent: true, withdrawFeeFlat: true }
+    })
+
+    const inAgg = await tx.order.aggregate({
+      _sum: { settlementAmount: true },
+      where: {
+        subMerchantId,
+        partnerClientId,
+        settlementTime: { not: null }
+      }
+    })
+    const totalIn = inAgg._sum.settlementAmount ?? 0
+
+    const outAgg = await tx.withdrawRequest.aggregate({
+      _sum: { netAmount: true, pgFee: true },
+      where: {
+        subMerchantId,
+        partnerClientId,
+        status: { in: [DisbursementStatus.PENDING, DisbursementStatus.COMPLETED] }
+      }
+    })
+    const totalOutNet = outAgg._sum.netAmount ?? 0
+    const totalOutFee = outAgg._sum.pgFee ?? 0
+    const totalOut = totalOutNet + totalOutFee
+
+    const available = totalIn - totalOut
+
+    if (available < 0) {
+      throw new Error('WalletNegativeBalance')
+    }
+
+    if (amount > available) {
+      throw new Error('InsufficientBalance')
+    }
+
+    const feePctAmt = (pc.withdrawFeePercent / 100) * amount
+    const netAmt = amount - feePctAmt - pc.withdrawFeeFlat
+
+    const w = await tx.withdrawRequest.create({
+      data: {
+        refId: withdrawRef,
+        amount,
+        netAmount: netAmt,
+        status: DisbursementStatus.PENDING,
+        withdrawFeePercent: pc.withdrawFeePercent,
+        withdrawFeeFlat: pc.withdrawFeeFlat,
+        sourceProvider,
+        type,
+        bulkId: bulk_id,
+        partnerClient: { connect: { id: partnerClientId } },
+        subMerchant: { connect: { id: subMerchantId } },
+        accountName: acctHolder,
+        accountNameAlias: alias,
+        accountNumber: account_number,
+        bankCode: bank_code,
+        bankName: bankNameFinal,
+        branchName
+      }
+    })
+
+    await tx.partnerClient.update({
+      where: { id: partnerClientId },
+      data: { balance: { decrement: amount } }
+    })
+
+    return w
+  })
+
+  // Execute provider withdrawal
+  try {
+    let resp: any
+
+    if (sourceProvider === 'hilogate') {
+      resp = await hilogateClient!.createWithdrawal({
+        ref_id: wr.refId,
+        amount: wr.netAmount,
+        currency: 'IDR',
+        account_number,
+        account_name: wr.accountName,
+        account_name_alias: wr.accountNameAlias,
+        bank_code,
+        bank_name: wr.bankName,
+        branch_name: '',
+        description: `Withdraw Rp ${wr.netAmount}`
+      })
+    } else if (sourceProvider === 'gidi') {
+      resp = await gidiClient!.createTransfer({
+        requestId: `${wr.refId}-r`,
+        transactionId: wr.refId,
+        channelId: bank_code,
+        accountNo: account_number,
+        amount: wr.netAmount,
+        transferNote: `Withdraw Rp ${wr.netAmount}`,
+      })
+    } else if (sourceProvider === 'oy') {
+      resp = await oyClient!.disburse({
+        recipient_bank: bank_code,
+        recipient_account: account_number,
+        amount: wr.netAmount,
+        note: `Withdraw Rp ${wr.netAmount}`,
+        partner_trx_id: wr.refId,
+        email: 'client@launcx.com',
+      })
+    }
+
+    // Map status
+    const newStatus = sourceProvider === 'hilogate'
+      ? (['WAITING', 'PENDING'].includes(resp.status)
+        ? DisbursementStatus.PENDING
+        : ['COMPLETED', 'SUCCESS'].includes(resp.status)
+          ? DisbursementStatus.COMPLETED
+          : DisbursementStatus.FAILED)
+      : sourceProvider === 'gidi'
+        ? (resp.statusTransfer === 'Success'
+          ? DisbursementStatus.COMPLETED
+          : resp.statusTransfer === 'Failed'
+            ? DisbursementStatus.FAILED
+            : DisbursementStatus.PENDING)
+        : sourceProvider === 'oy'
+          ? (resp.status.code === '101'
+            ? DisbursementStatus.PENDING
+            : resp.status.code === '000'
+              ? DisbursementStatus.COMPLETED
+              : DisbursementStatus.FAILED)
+          : isPiroVariant(sourceProvider)
+            ? mapPiroDisbursement(resp.status)
+            : mapIng1ToDisbursement(resp.rc, resp.status)
+
+    // Update record
+    await prisma.withdrawRequest.update({
+      where: { refId: wr.refId },
+      data: {
+        paymentGatewayId: sourceProvider === 'ing1'
+          ? resp.reff ?? null
+          : isPiroVariant(sourceProvider)
+            ? resp.withdrawalId ?? resp.referenceId ?? null
+            : resp.trx_id || resp.trxId || resp.transactionId,
+        isTransferProcess: sourceProvider === 'hilogate' ? (resp.is_transfer_process ?? false) : true,
+        status: newStatus,
+        ...(sourceProvider === 'ing1' && resp?.data?.fee ? { pgFee: parseIng1Number(resp.data.fee) } : {}),
+        ...(isPiroVariant(sourceProvider) && resp.feeAmount ? { pgFee: resp.feeAmount } : {}),
+      }
+    })
+
+    // Refund if failed
+    if (newStatus === DisbursementStatus.FAILED) {
+      await prisma.partnerClient.update({
+        where: { id: partnerClientId },
+        data: { balance: { increment: amount } }
+      })
+      throw new Error(isPiroVariant(sourceProvider) ? resp.message || 'Withdrawal failed' : 'Withdrawal failed')
+    }
+
+    return {
+      id: wr.id,
+      refId: wr.refId,
+      status: newStatus
+    }
+
+  } catch (err: any) {
+    // Rollback on error
+    await prisma.$transaction([
+      prisma.withdrawRequest.update({
+        where: { refId: wr.refId },
+        data: { status: DisbursementStatus.FAILED }
+      }),
+      prisma.partnerClient.update({
+        where: { id: partnerClientId },
+        data: { balance: { increment: amount } }
+      })
+    ])
+    throw err
+  }
+}
