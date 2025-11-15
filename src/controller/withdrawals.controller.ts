@@ -2471,131 +2471,147 @@ export async function getBanks(req: ClientAuthRequest, res: Response) {
  */
 export const requestBulkWithdraw = async (req: ClientAuthRequest, res: Response) => {
   const { otp, withdrawals } = req.body as {
-    otp: string
+    otp: string;
     withdrawals: Array<{
-      subMerchantId: string
-      sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
-      account_number: string
-      bank_code: string
-      account_name_alias?: string
-      amount: number
-      account_name?: string
-      bank_name?: string
-      branch_code?: string
-      internal_bank_code?: string
-    }>
-  }
+      subMerchantId: string;
+      sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis';
+      account_number: string;
+      bank_code: string;
+      account_name_alias?: string;
+      amount: number;
+      account_name?: string;
+      bank_name?: string;
+      branch_code?: string;
+      internal_bank_code?: string;
+      bulk_id?: string;   // ✅ opsional, dikirim FE kalau mau group
+    }>;
+  };
 
-  // Validasi parent account
+  // 0) Validasi parent account
   if (req.isParent) {
-    return res.status(403).json({ error: 'Parent accounts cannot perform withdrawals' })
+    return res
+      .status(403)
+      .json({ error: 'Parent accounts cannot perform withdrawals' });
   }
 
-  const clientUserId = req.clientUserId!
+  const clientUserId = req.clientUserId!;
 
-  // Validasi input
+  // 1) Validasi input dasar
   if (!withdrawals || !Array.isArray(withdrawals) || withdrawals.length === 0) {
-    return res.status(400).json({ error: 'Withdrawals list is required and must not be empty' })
+    return res.status(400).json({
+      error: 'Withdrawals list is required and must not be empty',
+    });
   }
 
   if (withdrawals.length > 100) {
-    return res.status(400).json({ error: 'Maximum 100 withdrawals per bulk request' })
+    return res.status(400).json({
+      error: 'Maximum 100 withdrawals per bulk request',
+    });
   }
 
   try {
-    // 1) Ambil user data
+    // 2) Ambil user data
     const user = await prisma.clientUser.findUnique({
       where: { id: clientUserId },
-      select: { partnerClientId: true, totpEnabled: true, totpSecret: true }
-    })
+      select: { partnerClientId: true, totpEnabled: true, totpSecret: true },
+    });
 
     if (!user) {
-      return res.status(404).json({ error: 'User tidak ditemukan' })
+      return res.status(404).json({ error: 'User tidak ditemukan' });
     }
 
-    // 2) Verifikasi OTP SEKALI untuk semua withdrawals
+    // 3) Verifikasi OTP SEKALI untuk semua withdrawals
     if (user.totpEnabled) {
       if (!otp) {
-        return res.status(400).json({ error: 'OTP wajib diisi untuk bulk withdrawal' })
+        return res
+          .status(400)
+          .json({ error: 'OTP wajib diisi untuk bulk withdrawal' });
       }
 
       if (!user.totpSecret || !authenticator.check(String(otp), user.totpSecret)) {
-        return res.status(400).json({ error: 'OTP tidak valid' })
+        return res.status(400).json({ error: 'OTP tidak valid' });
       }
 
-      logger.info(`[requestBulkWithdraw] OTP verified for user ${clientUserId}`)
+      logger.info(`[requestBulkWithdraw] OTP verified for user ${clientUserId}`);
     }
 
-    // 3) Generate bulk ID untuk tracking
-    const bulkId = `bulk-${Date.now()}-${crypto.randomUUID().substring(0, 8)}`
+    // 4) Ambil "representative" bulkId dari item yang punya bulk_id (jika ada)
+    const firstWithBulk = withdrawals.find(
+      (w) => typeof w.bulk_id === 'string' && w.bulk_id.trim().length > 0,
+    );
+    const bulkId = firstWithBulk?.bulk_id; // ✅ bisa undefined/null kalau FE tidak kirim
 
-    // 4) Process setiap withdrawal
+    // 5) Process setiap withdrawal
     const results: Array<{
-      index: number
-      success: boolean
-      refId?: string
-      id?: string
-      status?: string
-      error?: string
-    }> = []
+      index: number;
+      success: boolean;
+      refId?: string;
+      id?: string;
+      status?: string;
+      error?: string;
+    }> = [];
 
-    let successCount = 0
-    let failCount = 0
+    let successCount = 0;
+    let failCount = 0;
 
     for (let i = 0; i < withdrawals.length; i++) {
-      const item = withdrawals[i]
-      
+      const item = withdrawals[i];
+
       try {
-        // Panggil logic yang sama dengan requestWithdraw
         const result = await processWithdrawal({
           ...item,
           type: 'bulk',
-          bulk_id: bulkId,
+          // ✅ bulk_id di DB hanya terisi kalau FE kirim
+          bulk_id: item.bulk_id,
           clientUserId,
           partnerClientId: user.partnerClientId,
-          skipOtpCheck: true // OTP sudah diverifikasi di awal
-        })
+          skipOtpCheck: true, // OTP sudah diverifikasi di awal
+        });
 
         results.push({
           index: i,
           success: true,
-          ...result
-        })
-        successCount++
-
+          ...result,
+        });
+        successCount++;
       } catch (err: any) {
-        logger.error(`[requestBulkWithdraw] Item ${i} failed:`, err)
+        logger.error(`[requestBulkWithdraw] Item ${i} failed:`, err);
         results.push({
           index: i,
           success: false,
-          error: err.message || 'Processing failed'
-        })
-        failCount++
+          error: err.message || 'Processing failed',
+        });
+        failCount++;
       }
     }
 
-    // 5) Invalidate cache
-    const { cacheDelPattern } = await import('../core/redis')
+    // 6) Invalidate cache
+    const { cacheDelPattern } = await import('../core/redis');
     await Promise.all([
       cacheDelPattern(`withdrawals:*`),
       cacheDelPattern(`submerchants:*`),
-      cacheDelPattern(`dashboard:${clientUserId}:*`)
-    ]).catch(err => logger.error('[requestBulkWithdraw] Cache invalidation failed:', err))
+      cacheDelPattern(`dashboard:${clientUserId}:*`),
+    ]).catch((err) =>
+      logger.error('[requestBulkWithdraw] Cache invalidation failed:', err),
+    );
 
-    // 6) Return result
+    // 7) Response
     return res.status(201).json({
+      // ✅ Bisa undefined/null kalau memang semua item tidak punya bulk_id dari FE
       bulkId,
       totalRequested: withdrawals.length,
       successful: successCount,
       failed: failCount,
-      results
-    })
-
+      results,
+    });
   } catch (err: any) {
-    logger.error('[requestBulkWithdraw]', err)
-    return res.status(500).json({ error: err.message || 'Internal server error' })
+    logger.error('[requestBulkWithdraw]', err);
+    return res
+      .status(500)
+      .json({ error: err.message || 'Internal server error' });
   }
-}
+};
+
 
 /**
  * Helper function untuk memproses single withdrawal
