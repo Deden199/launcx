@@ -8,6 +8,7 @@ import {
   listWithdrawals,
   retryWithdrawal,
   listSubMerchants,
+  requestBulkWithdraw
 } from '../controller/withdrawals.controller'
 
 /**
@@ -180,5 +181,12 @@ router.post(
  *       200:
  *         description: Retry initiated
  */
+
+router.post(
+  '/bulk',
+  express.json(),
+  requestBulkWithdraw
+)
+
 
 export default router
