@@ -76,6 +76,16 @@ type BulkRow = {
   refId: string;
 };
 
+// ==== NEW: type untuk hasil dari bulk API ====
+type BulkResult = {
+  index: number;
+  success: boolean;
+  id?: string;
+  refId?: string;
+  status?: string;
+  error?: string;
+};
+
 interface JWTPayload {
   sub: string;
   id: string;
@@ -143,6 +153,20 @@ const TEMPLATE_HEADERS = [
 ] as const;
 
 const REQUIRED_HEADERS = ['submerchantid', 'bankcode', 'accountnumber', 'amount'] as const;
+
+// ==== NEW: helper buat translate error code dari BE jadi pesan ====
+const mapBulkError = (code?: string): string => {
+  switch (code) {
+    case 'InsufficientBalance':
+      return 'Saldo tidak cukup di provider (InsufficientBalance)';
+    case 'InvalidBankCode':
+      return 'Kode bank tidak valid di provider';
+    case 'AccountNotFound':
+      return 'Rekening tidak ditemukan di provider';
+    default:
+      return code || 'Gagal diproses (unknown error)';
+  }
+};
 
 // =============================================
 // MAIN COMPONENT
@@ -798,12 +822,38 @@ export default function WithdrawPage() {
         return;
       }
   
+      // ==== NEW: baca hasil per baris dari backend ====
       const {
         bulkId,
         totalRequested,
         successful = 0,
         failed = 0,
+        results = [],
       } = res.data || {};
+
+      if (Array.isArray(results) && results.length) {
+        const updatedRows = [...cloned];
+
+        (results as BulkResult[]).forEach((rRes) => {
+          // asumsi index dari BE = urutan payload
+          const row = updatedRows[rRes.index];
+          if (!row) return;
+
+          row.status = rRes.success ? 'ok' : 'fail';
+
+          if (rRes.refId) {
+            row.refId = rRes.refId;
+          }
+
+          if (!rRes.success) {
+            row.errors = row.errors || [];
+            row.errors.push(mapBulkError(rRes.error));
+          }
+        });
+
+        setBulkRows(updatedRows);
+        recalcBulkInfo(updatedRows);
+      }
   
       if (successful > 0 || failed > 0) {
         const [dash, list] = await Promise.all([
