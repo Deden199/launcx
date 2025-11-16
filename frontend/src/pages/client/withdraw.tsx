@@ -937,7 +937,7 @@ export default function WithdrawPage() {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as any[][];
       if (!rows.length) throw new Error('File kosong');
-
+  
       const validation = validateHeaders(rows[0] || []);
       if (!validation.ok) {
         setBulkRows([]);
@@ -946,7 +946,7 @@ export default function WithdrawPage() {
         fileInputRef.current && (fileInputRef.current.value = '');
         return;
       }
-
+  
       const headers = (rows[0] || []).map(headerKey);
       const required = ['submerchantid', 'bankcode', 'accountnumber', 'amount'];
       const missing = required.filter((k) => !headers.includes(k));
@@ -956,18 +956,19 @@ export default function WithdrawPage() {
         setBulkError(`Header wajib hilang: ${missing.join(', ')}`);
         return;
       }
-
+  
       const idxOf = (name: string) => headers.indexOf(name);
       const out: BulkRow[] = [];
       const bulkTimestamp = Date.now();
-
+  
+      // pakai for...of + index biar bisa await di dalam loop
       for (let i = 1; i < rows.length; i++) {
         const r = rows[i] || [];
         if (r.every((c) => c == null || String(c).trim?.() === '')) continue;
-
+  
         const idBulkFromFile = String(r[idxOf('idbulk')] ?? '').trim();
         const finalIdBulk = idBulkFromFile || `bulk-${bulkTimestamp}-${i}`;
-
+  
         const row: BulkRow = {
           idx: i,
           subMerchantId: String(r[idxOf('submerchantid')] ?? '').trim(),
@@ -983,28 +984,111 @@ export default function WithdrawPage() {
           status: 'queued',
           errors: [],
           timestamp: bulkTimestamp.toString(),
-          refId: ''
+          refId: '',
         };
-
+  
+        // === VALIDASI WAJIB DASAR (local) ===
         if (!row.subMerchantId) row.errors!.push('subMerchantId kosong');
         if (!row.bankCode) row.errors!.push('bankCode kosong');
         if (!row.accountNumber) row.errors!.push('accountNumber kosong');
-
+  
         if (!Number.isFinite(row.amount)) row.errors!.push('amount kosong atau tidak valid');
         else if (row.amount <= 0) row.errors!.push('amount harus > 0');
-
-        if (Number.isFinite(row.amount) && row.amount > 1000000) row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
-
+  
+        if (Number.isFinite(row.amount) && row.amount > 1000000)
+          row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
+  
+        // === VALIDASI SUB-WALLET & SALDO LOCAL ===
         const subWallet = subs.find((s) => s.id === row.subMerchantId);
         if (!subWallet) {
           row.errors!.push(`Sub-merchant "${row.subMerchantId}" tidak ditemukan`);
         } else if ((row.errors?.length ?? 0) === 0 && row.amount > subWallet.balance) {
-          row.errors!.push(`Saldo tidak mencukupi. Butuh: ${money(row.amount)}, Saldo: ${money(subWallet.balance)}`);
+          row.errors!.push(
+            `Saldo tidak mencukupi. Butuh: ${money(row.amount)}, Saldo: ${money(
+              subWallet.balance
+            )}`
+          );
         }
-
+  
+        // === VALIDASI ACCOUNT KE BACKEND (mirip validateAccount single) ===
+        if ((row.errors?.length ?? 0) === 0) {
+          try {
+            let providerKey: string;
+            let sourceProvider: string;
+            let bankObj: any;
+            let piroMeta: any;
+  
+            // get provider dari subWallet
+            try {
+              const sel = getSelectedProvider(subs, row.subMerchantId);
+              providerKey = sel.providerKey;
+              sourceProvider = sel.sourceProvider;
+            } catch {
+              row.errors!.push('Sub-wallet tidak valid untuk provider');
+              // jangan lanjut call API kalau provider aja gagal
+              out.push(row);
+              continue;
+            }
+  
+            // resolve bank untuk provider tsb
+            try {
+              const resolved = resolveProviderBank(providerKey, row.bankCode);
+              bankObj = resolved.bankObj;
+              piroMeta = resolved.piroMeta;
+            } catch {
+              row.errors!.push('Kode bank tidak dikenali untuk provider ini');
+              out.push(row);
+              continue;
+            }
+  
+            const body: Record<string, any> = {
+              bank_code:
+                providerKey === 'piro'
+                  ? piroMeta?.bankCode ?? row.bankCode
+                  : row.bankCode,
+              account_number: row.accountNumber,
+              sourceProvider,
+              subMerchantId: row.subMerchantId,
+            };
+  
+            if (providerKey === 'piro') {
+              body.bank_name = bankObj?.name ?? row.bankName;
+              body.branch_code = piroMeta?.branchCode;
+              body.internal_bank_code = piroMeta?.bankIdentifier;
+            }
+  
+            const res = await apiClient.post(
+              '/client/withdrawals/validate-account',
+              body,
+              {
+                validateStatus: () => true,
+                timeout: 20000,
+              }
+            );
+  
+            if (res.status === 200) {
+              const holder = String(res.data.account_holder || '').trim();
+              row.accountName = holder;
+              row.bankName = res.data.bank_name || bankObj?.name || row.bankName;
+              row.branchCode =
+                res.data.branch_code ||
+                res.data.internal_bank_code ||
+                piroMeta?.branchCode ||
+                row.branchCode;
+              // aliasFrom kalau mau ditaruh ke field lain, bisa juga
+            } else {
+              const apiErr =
+                res.data?.error || `Validasi rekening gagal (status ${res.status})`;
+              row.errors!.push(apiErr);
+            }
+          } catch {
+            row.errors!.push('Gagal validasi rekening ke server');
+          }
+        }
+  
         out.push(row);
       }
-
+  
       setBulkRows(out);
       recalcBulkInfo(out);
     } catch (e: any) {
@@ -1016,6 +1100,7 @@ export default function WithdrawPage() {
       setFilePickerKey((k) => k + 1);
     }
   };
+  
 
   const exportToExcel = () => {
     const rows = [
