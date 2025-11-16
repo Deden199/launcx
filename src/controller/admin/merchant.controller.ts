@@ -1586,7 +1586,7 @@ export const adminWithdraw = async (req: AuthRequest, res: Response) => {
         }
       })
       return { refId: ref }
-    })
+    }, { timeout: 20000 })
 
     refId = txRes.refId
 
