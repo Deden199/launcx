@@ -1291,7 +1291,6 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
   }
 
   try {
-    console.log('[validateAccount] sourceProvider: =============',sourceProvider);
     if (isPiroVariant(sourceProvider)) {
       const merchant = await prisma.merchant.findFirst({
         where: { name: 'piro' },
@@ -1409,9 +1408,10 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
     const client = new HilogateClient(cfg)
     const payload = await client.validateAccount(account_number, bank_code)
     console.log('payload:', payload)
-    if (payload.status !== 'valid') {
+    if (payload.status !== 'valid' ||  payload.account_holder === '-') {
       return res.status(400).json({ error: 'Invalid account' })
     }
+  
 
     return res.json({
       account_number: payload.account_number,
