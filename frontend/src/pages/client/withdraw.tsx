@@ -41,7 +41,7 @@ interface Withdrawal {
   completedAt?: string;
   sourceProvider?: string;
   type?: string;
-  bulk_id?: string;
+  idBulk?: string;
 }
 
 interface SubMerchant {
@@ -1111,7 +1111,7 @@ export default function WithdrawPage() {
         const walletDisplay = w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
         const fee = w.amount - (w.netAmount ?? 0);
         const net = w.netAmount ?? 0;
-        return [created, completed, w.refId, w.type || 'Bulk', w.bankName, w.accountNumber, w.accountName, w.bulk_id || '-', walletDisplay, w.amount, fee, net, w.status];
+        return [created, completed, w.refId, w.type || 'Bulk', w.bankName, w.accountNumber, w.accountName, w.idBulk || '-', walletDisplay, w.amount, fee, net, w.status];
       }),
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -1330,7 +1330,7 @@ export default function WithdrawPage() {
                         <td className="px-3 py-2">{w.bankName}</td>
                         <td className="px-3 py-2">{w.accountNumber}</td>
                         <td className="px-3 py-2">{w.accountName}</td>
-                        <td className="px-3 py-2">{w.bulk_id || '-'}</td>
+                        <td className="px-3 py-2">{w.idBulk || '-'}</td>
                         <td className="px-3 py-2">{w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{money(w.amount)}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{money(w.amount - (w.netAmount ?? 0))}</td>
