@@ -608,6 +608,7 @@ export default function WithdrawPage() {
         bank_code: payloadBankCode,
         amount: +form.amount,
         account_name: form.accountName || undefined,
+        type:'single',
         bank_name: form.bankName || bankObj?.name || undefined,
         otp: form.otp,
       };
