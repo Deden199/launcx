@@ -965,27 +965,25 @@ export default function WithdrawPage() {
       const out: BulkRow[] = [];
       const bulkTimestamp = Date.now();
   
-      // =====================================================================
-      // Siapkan daftar baris data non-kosong (di luar header) + index Excel
-      // =====================================================================
       const rawDataRows = rows.slice(1).map((r, idx) => ({
         row: r || [],
-        excelIndex: idx + 1, // header di index 0, jadi data mulai baris 1
+        excelIndex: idx + 1, // baris excel sebenarnya
       }));
-  
+
       const nonEmptyRows = rawDataRows.filter(({ row }) =>
         !(row || []).every((c) => c == null || String(c).trim?.() === '')
-      );
-  
-      let limitedRows = nonEmptyRows;
-  
-      // Limit 20 baris, tapi tetap proses 20 pertama + tampilkan pesan
+      );  
+
       if (nonEmptyRows.length > 20) {
-        setBulkError(
-          `Hanya 20 baris pertama yang diproses. Total baris: ${nonEmptyRows.length}`
-        );
-        limitedRows = nonEmptyRows.slice(0, 20);
+        setBulkRows([]);
+        recalcBulkInfo([]);
+        setBulkError(`File ditolak. Maksimal hanya 20 baris data, tetapi ditemukan ${nonEmptyRows.length}.`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
       }
+
+      // Lanjutkan proses karena <= 20
+      const limitedRows = nonEmptyRows;
   
       // =====================================================================
       // Loop baris yang sudah di-limit
