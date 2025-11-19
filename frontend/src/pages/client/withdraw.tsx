@@ -936,7 +936,10 @@ export default function WithdrawPage() {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as any[][];
+      const rows: any[][] = XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        raw: true,
+      }) as any[][];
       if (!rows.length) throw new Error('File kosong');
   
       const validation = validateHeaders(rows[0] || []);
@@ -944,7 +947,7 @@ export default function WithdrawPage() {
         setBulkRows([]);
         recalcBulkInfo([]);
         setBulkError(validation.reason || 'File tidak sesuai template.');
-        fileInputRef.current && (fileInputRef.current.value = '');
+        if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
   
@@ -962,16 +965,37 @@ export default function WithdrawPage() {
       const out: BulkRow[] = [];
       const bulkTimestamp = Date.now();
   
-      // pakai for...of + index biar bisa await di dalam loop
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i] || [];
-        if (r.every((c) => c == null || String(c).trim?.() === '')) continue;
+      const rawDataRows = rows.slice(1).map((r, idx) => ({
+        row: r || [],
+        excelIndex: idx + 1, // baris excel sebenarnya
+      }));
+
+      const nonEmptyRows = rawDataRows.filter(({ row }) =>
+        !(row || []).every((c) => c == null || String(c).trim?.() === '')
+      );  
+
+      if (nonEmptyRows.length > 20) {
+        setBulkRows([]);
+        recalcBulkInfo([]);
+        setBulkError(`File ditolak. Maksimal hanya 20 baris data, tetapi ditemukan ${nonEmptyRows.length}.`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+
+      // Lanjutkan proses karena <= 20
+      const limitedRows = nonEmptyRows;
+  
+      // =====================================================================
+      // Loop baris yang sudah di-limit
+      // =====================================================================
+      for (let j = 0; j < limitedRows.length; j++) {
+        const { row: r, excelIndex } = limitedRows[j];
   
         const idBulkFromFile = String(r[idxOf('idbulk')] ?? '').trim();
-        const finalIdBulk = idBulkFromFile || `bulk-${bulkTimestamp}-${i}`;
+        const finalIdBulk = idBulkFromFile || `bulk-${bulkTimestamp}-${excelIndex}`;
   
         const row: BulkRow = {
-          idx: i,
+          idx: excelIndex, // sesuai baris Excel (di luar header)
           subMerchantId: String(r[idxOf('submerchantid')] ?? '').trim(),
           type: 'bulk',
           bankCode: String(r[idxOf('bankcode')] ?? '').trim(),
@@ -996,8 +1020,9 @@ export default function WithdrawPage() {
         if (!Number.isFinite(row.amount)) row.errors!.push('amount kosong atau tidak valid');
         else if (row.amount <= 0) row.errors!.push('amount harus > 0');
   
-        if (Number.isFinite(row.amount) && row.amount > 1000000)
+        if (Number.isFinite(row.amount) && row.amount > 1000000) {
           row.errors!.push('amount terlalu besar. Maksimal: 1,000,000');
+        }
   
         // === VALIDASI SUB-WALLET & SALDO LOCAL ===
         const subWallet = subs.find((s) => s.id === row.subMerchantId);
@@ -1026,7 +1051,6 @@ export default function WithdrawPage() {
               sourceProvider = sel.sourceProvider;
             } catch {
               row.errors!.push('Sub-wallet tidak valid untuk provider');
-              // jangan lanjut call API kalau provider aja gagal
               out.push(row);
               continue;
             }
@@ -1076,7 +1100,6 @@ export default function WithdrawPage() {
                 res.data.internal_bank_code ||
                 piroMeta?.branchCode ||
                 row.branchCode;
-              // aliasFrom kalau mau ditaruh ke field lain, bisa juga
             } else {
               const apiErr =
                 res.data?.error || `Validasi rekening gagal (status ${res.status})`;
@@ -1101,6 +1124,7 @@ export default function WithdrawPage() {
       setFilePickerKey((k) => k + 1);
     }
   };
+  
   
 
   const exportToExcel = () => {
