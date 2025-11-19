@@ -13,6 +13,7 @@ import {
   X,
   CheckCircle,
   ArrowUpDown,
+  Loader2,
 } from 'lucide-react';
 import { oyCodeMap } from '../../utils/oyCodeMap';
 import { gidiChannelMap } from '../../utils/gidiChannelMap';
@@ -144,7 +145,6 @@ const TEMPLATE_HEADERS = [
   'type',
   'bankcode',
   'accountnumber',
-  'idbulk',
   'amount',
   'bankname',
   'accountname',
@@ -215,6 +215,7 @@ export default function WithdrawPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [total, setTotal] = useState(0);
+  const [exportingHistory, setExportingHistory] = useState(false);
   const [startDate, endDate] = dateRange;
 
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
@@ -324,7 +325,7 @@ export default function WithdrawPage() {
     if (missing.length) {
       return { ok: false, reason: `Header wajib hilang: ${missing.join(', ')}` };
     }
-    const allowed = new Set(TEMPLATE_HEADERS as readonly string[]);
+    const allowed = new Set<string>([...TEMPLATE_HEADERS, 'idbulk']);
     const unknown = headers.filter((h) => !allowed.has(h));
     if (unknown.length) {
       return { ok: false, reason: `Ditemukan header yang tidak dikenali: ${unknown.join(', ')}. Gunakan template.` };
@@ -913,9 +914,8 @@ export default function WithdrawPage() {
       alert('Tidak ada sub-merchant yang tersedia');
       return;
     }
-    const headers = ['subMerchantId','type','bankCode','accountNumber','idBulk','amount','bankName','accountName','branchCode','note'];
-    const exampleBulkId = `bulk-${Date.now()}-1`;
-    const exampleData = [subs[0]?.id || '', 'bulk', 'TRF_BCA', '1234567890', exampleBulkId, 50000, 'BCA', 'JOHN DOE', '', 'Test withdrawal bulk'];
+    const headers = ['subMerchantId','type','bankCode','accountNumber','amount','bankName','accountName','branchCode','note'];
+    const exampleData = [subs[0]?.id || '', 'bulk', 'TRF_BCA', '1234567890', 50000, 'BCA', 'JOHN DOE', '', 'Test withdrawal bulk'];
     const ws = XLSX.utils.aoa_to_sheet([headers, exampleData]);
     const csv = XLSX.utils.sheet_to_csv(ws);
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -1124,26 +1124,62 @@ export default function WithdrawPage() {
       setFilePickerKey((k) => k + 1);
     }
   };
-  
-  
+  const exportToExcel = useCallback(async () => {
+    setExportingHistory(true);
+    try {
+      const aggregated: Withdrawal[] = [];
+      const LIMIT = 100;
+      let nextPage = 1;
+      let fetched = 0;
+      let totalAvailable = 0;
 
-  const exportToExcel = () => {
-    const rows = [
-      ['Created At','Paid At','Ref ID','Type','Bank','Account','Account Name','Bulk ID','Wallet','Amount','Fee','Net Amount','Status'],
-      ...withdrawals.map((w) => {
-        const created = new Date(w.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
-        const completed = w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-';
-        const walletDisplay = w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
-        const fee = w.amount - (w.netAmount ?? 0);
-        const net = w.netAmount ?? 0;
-        return [created, completed, w.refId, w.type || 'Bulk', w.bankName, w.accountNumber, w.accountName, w.idBulk || '-', walletDisplay, w.amount, fee, net, w.status];
-      }),
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Withdrawals');
-    XLSX.writeFile(wb, 'withdrawals.xlsx');
-  };
+      const baseParams = {
+        clientId: selectedChild,
+        status: statusFilter,
+        date_from: startDate?.toISOString(),
+        date_to: endDate?.toISOString(),
+        ref: debouncedSearch,
+      };
+
+      for (;;) {
+        const { data } = await apiClient.get<{ data: Withdrawal[]; total: number }>('/client/withdrawals', {
+          params: { ...baseParams, page: nextPage, limit: LIMIT },
+        });
+        aggregated.push(...data.data);
+        fetched += data.data.length;
+        totalAvailable = data.total;
+        if (fetched >= totalAvailable || data.data.length < LIMIT) break;
+        nextPage += 1;
+      }
+
+      if (!aggregated.length) {
+        alert('Tidak ada data untuk diekspor berdasarkan filter saat ini.');
+        return;
+      }
+
+      const rows = [
+        ['Created At','Paid At','Ref ID','Type','Bank','Account','Account Name','Bulk ID','Wallet','Amount','Fee','Net Amount','Status'],
+        ...aggregated.map((w) => {
+          const created = new Date(w.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+          const completed = w.completedAt ? new Date(w.completedAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+          const walletDisplay = w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet;
+          const fee = w.amount - (w.netAmount ?? 0);
+          const net = w.netAmount ?? 0;
+          return [created, completed, w.refId, w.type || 'Bulk', w.bankName, w.accountNumber, w.accountName, w.idBulk || '-', walletDisplay, w.amount, fee, net, w.status];
+        }),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Withdrawals');
+      XLSX.writeFile(wb, 'withdrawals.xlsx');
+    } catch (err: any) {
+      console.error('❌ Export withdrawals error:', err);
+      const message = err?.response?.data?.error || err?.message || 'Gagal mengekspor data';
+      alert(message);
+    } finally {
+      setExportingHistory(false);
+    }
+  }, [selectedChild, statusFilter, startDate, endDate, debouncedSearch]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / perPage)), [total, perPage]);
 
@@ -1246,8 +1282,13 @@ export default function WithdrawPage() {
         <section className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 sm:p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-base font-semibold">Withdrawal History</h3>
-            <button onClick={exportToExcel} className="inline-flex items-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm hover:bg-neutral-800/60">
-              <FileText size={16} /> Export Excel
+            <button
+              onClick={() => void exportToExcel()}
+              disabled={exportingHistory}
+              className="inline-flex items-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {exportingHistory ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+              {exportingHistory ? 'Exporting…' : 'Export Excel'}
             </button>
           </div>
 
