@@ -54,8 +54,10 @@ export default function ClientDashboardPage() {
   const [loadingTx, setLoadingTx] = useState(true)
 
   // Date filter
-  const [range, setRange] = useState<'today' | 'yesterday' | 'week' | 'custom'>('today')
-  const [statusFilter, setStatusFilter] = useState<string>('PAID') // default PAID
+  const [range, setRange] = useState<
+    '1-3h' | '3-6h' | '6-12h' | 'today' | 'yesterday' | 'week' | 'month' | 'custom'
+  >('1-3h')
+    const [statusFilter, setStatusFilter] = useState<string>('PAID') // default PAID
 
   // Search
   const [search, setSearch] = useState('')
@@ -72,34 +74,48 @@ export default function ClientDashboardPage() {
     const tz = 'Asia/Jakarta'
     const params: any = {}
 
-    if (range === 'today') {
-      const start = new Date(); start.setHours(0, 0, 0, 0)
-      const end = new Date()
+    const setJakartaRange = (start: Date, end: Date) => {
+
       const startJakarta = new Date(start.toLocaleString('en-US', { timeZone: tz }))
       const endJakarta = new Date(end.toLocaleString('en-US', { timeZone: tz }))
       params.date_from = startJakarta.toISOString()
       params.date_to = endJakarta.toISOString()
+          }
+
+    if (range === '1-3h') {
+      const end = new Date()
+      const start = new Date()
+      start.setHours(start.getHours() - 3)
+      setJakartaRange(start, end)
+    } else if (range === '3-6h') {
+      const end = new Date(); end.setHours(end.getHours() - 3)
+      const start = new Date(); start.setHours(start.getHours() - 6)
+      setJakartaRange(start, end)
+    } else if (range === '6-12h') {
+      const end = new Date(); end.setHours(end.getHours() - 6)
+      const start = new Date(); start.setHours(start.getHours() - 12)
+      setJakartaRange(start, end)
+    } else if (range === 'today') {
+      const start = new Date(); start.setHours(0, 0, 0, 0)
+      const end = new Date()
+      setJakartaRange(start, end)
     } else if (range === 'yesterday') {
       const start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0)
       const end = new Date(); end.setDate(end.getDate() - 1); end.setHours(23, 59, 59, 999)
-      const sJak = new Date(start.toLocaleString('en-US', { timeZone: tz }))
-      const eJak = new Date(end.toLocaleString('en-US', { timeZone: tz }))
-      params.date_from = sJak.toISOString()
-      params.date_to = eJak.toISOString()
+      setJakartaRange(start, end)
     } else if (range === 'week') {
       const start = new Date(); start.setDate(start.getDate() - 6); start.setHours(0, 0, 0, 0)
       const end = new Date()
-      const startJakarta = new Date(start.toLocaleString('en-US', { timeZone: tz }))
-      const endJakarta = new Date(end.toLocaleString('en-US', { timeZone: tz }))
-      params.date_from = startJakarta.toISOString()
-      params.date_to = endJakarta.toISOString()
+      setJakartaRange(start, end)
+    } else if (range === 'month') {
+      const start = new Date(); start.setDate(start.getDate() - 29); start.setHours(0, 0, 0, 0)
+      const end = new Date()
+      setJakartaRange(start, end)
     } else if (startDate && endDate) {
       const s = new Date(startDate); s.setHours(0, 0, 0, 0)
       const e = new Date(endDate); e.setHours(23, 59, 59, 999)
-      const sJak = new Date(s.toLocaleString('en-US', { timeZone: tz }))
-      const eJak = new Date(e.toLocaleString('en-US', { timeZone: tz }))
-      params.date_from = sJak.toISOString()
-      params.date_to = eJak.toISOString()
+      setJakartaRange(s, e)
+
     }
 
     if (statusFilter) {
@@ -226,6 +242,11 @@ export default function ClientDashboardPage() {
   useEffect(() => {
     if (range !== 'custom' || (startDate && endDate)) fetchTransactions()
   }, [range, selectedChild, startDate, endDate, search, page, perPage, statusFilter])
+  useEffect(() => {
+    if (['today', 'yesterday', 'week', 'month'].includes(range)) {
+      handleExport()
+    }
+  }, [range])
 
   const filtered = txs.filter(t =>
     (statusFilter === '' || normalizeStatus(t.status) === statusFilter) &&
@@ -313,10 +334,13 @@ export default function ClientDashboardPage() {
                 onChange={e => setRange(e.target.value as any)}
                 className="h-10 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm"
               >
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday (Kemarin)</option>
-                <option value="week">7 Day</option>
-                <option value="custom">Custom</option>
+                <option value="1-3h">1–3 Jam</option>
+                <option value="3-6h">3–6 Jam</option>
+                <option value="6-12h">6–12 Jam</option>
+                <option value="today">1 Hari (auto export)</option>
+                <option value="yesterday">Yesterday (auto export)</option>
+                <option value="week">7 Day (auto export)</option>
+                <option value="month">30 Day (auto export)</option>
               </select>
             </label>
 
