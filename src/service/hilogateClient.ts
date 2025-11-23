@@ -88,13 +88,13 @@ export class HilogateClient {
     ref_id: string;
     amount: number;
     method?: string;
-    expires_at?:number;
+    expires_at?: number; // Unix ms per Hilogate docs
   }): Promise<any> {
     return this.requestFull('post', '/api/v1/transactions', {
       ref_id: opts.ref_id,
       amount: opts.amount,
       method: opts.method || 'qris',
-      expiredTs:opts.expires_at
+      expires_at: opts.expires_at,
     });
   }
 

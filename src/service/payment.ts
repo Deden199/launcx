@@ -130,13 +130,13 @@ export const createTransaction = async (
       throw new Error("Internal Hilogate merchant not found");
     }
 
- 
-    const minutes = request.expiredTime
-    const ms = minutes * 60 * 1000
-
-    const nowUtcMs = Date.now()
-
-    const futureTimestamp = nowUtcMs + ms
+    // Hitung expiry dalam milidetik (Hilogate expect Unix ms; fallback 15 menit)
+    const expiryMinutes =
+      typeof request.expiredTime === "number" && request.expiredTime > 0
+        ? request.expiredTime
+        : 15;
+    const expiryMs = Date.now() + expiryMinutes * 60 * 1000;
+    const expiryDate = new Date(expiryMs);
  
     // 2) Simpan transaction_request
     const trx = await prisma.transaction_request.create({
@@ -166,7 +166,8 @@ export const createTransaction = async (
         ref_id: refId,
         method: "qris",
         amount,
-        expires_at: futureTimestamp,
+        // Hilogate expects expires_at (Unix ms per docs)
+        expires_at: expiryMs,
       };
 
 
@@ -185,6 +186,14 @@ export const createTransaction = async (
     // }
     const outer = apiResp.data;
     const qrString = outer.data.qr_string;
+    const expiresRaw = outer.data.expires_at ?? expiryMs;
+    const expiresAtMs =
+      typeof expiresRaw === "number" && !Number.isNaN(expiresRaw)
+        ? expiresRaw < 1e12
+          ? expiresRaw * 1000
+          : expiresRaw
+        : expiryDate.getTime();
+    const expiresAtDate = new Date(expiresAtMs);
 
     // 4) Simpan audit log
     await prisma.transaction_response.create({
@@ -218,7 +227,7 @@ export const createTransaction = async (
         settlementAmount: null,
         pgRefId: outer.data.ref_id,
         providerPayload: (outer.data ?? null) as any,
-        trxExpirationTime: outer.data.expires_at,
+        trxExpirationTime: expiresAtDate,
       },
     });
     await scheduleHilogateFallback(refId, hilCfg);
@@ -230,7 +239,7 @@ export const createTransaction = async (
       qrPayload: qrString,
       playerId: pid,
       totalAmount: amount,
-      expiredTs: outer.data.expires_at,
+      expiredTs: expiresAtDate.toISOString(),
     };
     
   }
@@ -1121,9 +1130,24 @@ export const checkPaymentStatus = async (req: Request) => {
       subMerchantId: true,
       pgRefId: true,
       pgClientRef: true,
+      trxExpirationTime: true,
     },
   });
   if (order) {
+    // Tandai EXPIRED jika sudah melewati trxExpirationTime
+    if (order.trxExpirationTime) {
+      const expired = new Date() > new Date(order.trxExpirationTime);
+      if (expired) {
+        if (order.status === "PENDING") {
+          await prisma.order.update({
+            where: { id: refId },
+            data: { status: "EXPIRED" },
+          });
+          return { status: "EXPIRED" };
+        }
+        return { status: order.status };
+      }
+    }
     if (order.status === "PENDING") {
       const pc = await prisma.partnerClient.findUnique({
         where: { id: order.userId },
@@ -1216,9 +1240,27 @@ export const checkPaymentStatus = async (req: Request) => {
   return { status: cb ? "DONE" : "IN_PROGRESS" };
 };
 
-/* ═════════════ 5. Get Order ═════════════ */
-export const getOrder = async (id: string) =>
-  prisma.order.findUnique({ where: { id } });
+/* ═════════════ 5. Get Order (with expiry guard) ═════════════ */
+export const getOrder = async (id: string) => {
+  const order = await prisma.order.findUnique({
+    where: { id },
+  });
+  if (!order) return null;
+
+  // Jika sudah lewat expiry, tandai EXPIRED dan kosongkan qrPayload
+  if (order.trxExpirationTime && new Date() > new Date(order.trxExpirationTime)) {
+    if (order.status === "PENDING") {
+      await prisma.order.update({
+        where: { id },
+        data: { status: "EXPIRED", updatedAt: new Date() },
+      });
+      return { ...order, status: "EXPIRED", qrPayload: null };
+    }
+    return { ...order, qrPayload: null };
+  }
+
+  return order;
+};
 
 const paymentService = {
   createTransaction,
