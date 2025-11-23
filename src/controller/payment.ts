@@ -45,6 +45,16 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
     const price    = Number(req.body.price ?? req.body.amount)
     const playerId = String(req.body.playerId ?? 0)
 
+    // Parse and validate expiredTime (menit)
+    const rawExpiredTime = req.body.expiredTime ?? req.body.expired_time
+    const expiredTime =
+      rawExpiredTime !== undefined ? Number(rawExpiredTime) : undefined
+    if (expiredTime !== undefined && (isNaN(expiredTime) || expiredTime <= 0)) {
+      return res
+        .status(400)
+        .json(createErrorResponse('expiredTime harus lebih besar dari 0'))
+    }
+
     // 3) flow
     const flow = req.body.flow === 'redirect' ? 'redirect' : 'embed'
 
@@ -55,7 +65,6 @@ export const createTransaction = async (req: ApiKeyRequest, res: Response) => {
     const walletId = req.body.walletId ?? req.body.wallet_id
     const walletIdType = req.body.walletIdType ?? req.body.wallet_id_type
     const transactionDescription = req.body.transactionDescription ?? req.body.transaction_description
-    const expiredTime = req.body.expiredTime ?? req.body.expired_time ?? req.body.expired_at
 
     // 4) validate
     if (isNaN(price) || price <= 0) {
@@ -205,10 +214,28 @@ export const transactionCallback = async (req: Request, res: Response) => {
     })
         const orderRecord = await prisma.order.findUnique({
       where: { id: full.ref_id },
-      select: { subMerchantId: true }
+      select: { subMerchantId: true, status: true, trxExpirationTime: true }
     })
     if (!orderRecord)
       throw new Error(`Order ${full.ref_id} not found`)
+
+    // Tolak callback jika sudah melewati expiry dan masih PENDING
+    if (orderRecord.trxExpirationTime) {
+      const expired = new Date() > new Date(orderRecord.trxExpirationTime);
+      if (expired && orderRecord.status === 'PENDING') {
+        await prisma.order.update({
+          where: { id: full.ref_id },
+          data: { status: 'EXPIRED', updatedAt: wibTimestamp() },
+        });
+        return res
+          .status(400)
+          .json(createErrorResponse('Transaction expired'));
+      } else if (expired) {
+        return res
+          .status(400)
+          .json(createErrorResponse('Transaction expired'));
+      }
+    }
     const sub = await prisma.sub_merchant.findUnique({
       where: { id: orderRecord.subMerchantId! },
       select: { credentials: true }
