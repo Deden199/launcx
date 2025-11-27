@@ -494,13 +494,20 @@ export async function getDashboardTransactions(req: Request, res: Response) {
     // (7) map ke format FE, include netSettle + timestamp ISO
     const jsonOrders = orders.map(o => JSON.stringify(o, null, 2))
     const transactions = orders.map(o => {
+      // netSettle minimal = amount; settlementAmount hanya untuk status settle.
       const pend = o.pendingAmount ?? 0
       const sett = o.settlementAmount ?? 0
-      let netSettle = sett
+      let netSettle = o.amount
       if (o.status === ORDER_STATUS.PAID) {
-        netSettle = pend
+        netSettle = pend || o.amount
       } else if (o.status === ORDER_STATUS.LN_SETTLED) {
-        netSettle = o.loanEntry?.amount ?? 0
+        // Hindari campur ?? dan || tanpa kurung
+        netSettle = o.loanEntry?.amount ?? (pend || o.amount)
+      } else if (
+        o.settlementAmount != null &&
+        ([ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED] as string[]).includes(o.status)
+      ) {
+        netSettle = sett
       }
 
       return {
