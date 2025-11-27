@@ -341,6 +341,7 @@ export default function ClientDashboardPage() {
                 <option value="yesterday">Yesterday (auto export)</option>
                 <option value="week">7 Day (auto export)</option>
                 <option value="month">30 Day (auto export)</option>
+                <option value="custom">Custom</option>
               </select>
             </label>
 
