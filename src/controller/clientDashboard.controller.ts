@@ -303,9 +303,16 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     // (13) Map transactions
     const transactions = orders.map(o => {
-      const netSettle = o.status === ORDER_STATUS.PAID
-        ? (o.pendingAmount ?? 0)
-        : (o.settlementAmount ?? 0);
+      const isSettledStatus = [
+        ORDER_STATUS.SUCCESS,
+        ORDER_STATUS.DONE,
+        ORDER_STATUS.SETTLED,
+      ].includes(o.status as any);
+      const netSettle = isSettledStatus
+        ? (o.settlementAmount ?? 0)
+        : (o.status === ORDER_STATUS.PAID || o.status === ORDER_STATUS.LN_SETTLED)
+          ? (o.pendingAmount ?? 0)
+          : 0;
       return {
         id: o.id,
         date: o.createdAt.toISOString(),
@@ -536,6 +543,16 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
       if (batch.length === 0) break;
 
       for (const o of batch) {
+        const isSettledStatus = [
+          ORDER_STATUS.SUCCESS,
+          ORDER_STATUS.DONE,
+          ORDER_STATUS.SETTLED,
+        ].includes(o.status as any)
+        const settledValue = isSettledStatus
+          ? (o.settlementAmount ?? 0)
+          : (o.status === ORDER_STATUS.PAID || o.status === ORDER_STATUS.LN_SETTLED)
+            ? (o.pendingAmount ?? 0)
+            : 0
         all.addRow({
           name:     idToName[o.partnerClientId] || o.partnerClientId,
           id:       o.id,
@@ -543,7 +560,7 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
           player:   o.playerId,
           amt:      o.amount,
           pend:     o.pendingAmount ?? 0,
-          sett:     o.settlementAmount ?? 0,
+          sett:     settledValue,
           fee:      o.feeLauncx ?? 0,
           stat:     o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
           date:     formatDateJakarta(o.createdAt),
