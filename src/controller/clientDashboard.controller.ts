@@ -1,7 +1,7 @@
 // src/controllers/clientDashboard.controller.ts
 
 import { Response } from 'express'
-import { prisma, prismaReadOnly } from '../core/prisma'
+import { prisma } from '../core/prisma'
 import { DisbursementStatus } from '@prisma/client'
 import { ClientAuthRequest } from '../middleware/clientAuth'
 import ExcelJS from 'exceljs'
@@ -117,7 +117,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     }
 
     // (3) Load user + partnerClient(+children)
-    const user = await prismaReadOnly.clientUser.findUnique({
+    const user = await prisma.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
         partnerClient: {
@@ -244,7 +244,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       orders,
       totalRows
     ] = await Promise.all([
-      prismaReadOnly.order.groupBy({
+      prisma.order.groupBy({
         by: ['status'],
         where: {
           partnerClientId: { in: clientIds },
@@ -258,7 +258,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         }
       }),
       // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
-      prismaReadOnly.order.findMany({
+      prisma.order.findMany({
         where: whereOrders,
         orderBy: { createdAt: 'desc' },
         skip: searchStr ? 0 : (pageNum - 1) * pageSize,
@@ -272,7 +272,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           trxExpirationTime: true,
         }
       }),
-      prismaReadOnly.order.count({ where: whereOrders })
+      prisma.order.count({ where: whereOrders })
     ]);
 
     // (11) Metrics extraction
@@ -303,16 +303,19 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     // (13) Map transactions
     const transactions = orders.map(o => {
-      const isSettledStatus = [
-        ORDER_STATUS.SUCCESS,
-        ORDER_STATUS.DONE,
-        ORDER_STATUS.SETTLED,
-      ].includes(o.status as any);
-      const netSettle = isSettledStatus
-        ? (o.settlementAmount ?? 0)
-        : (o.status === ORDER_STATUS.PAID || o.status === ORDER_STATUS.LN_SETTLED)
-          ? (o.pendingAmount ?? 0)
-          : 0;
+      // netSettle harus minimal sama dengan amount; khusus EXPIRED ikut amount.
+      let netSettle = o.amount;
+      if (o.status === ORDER_STATUS.PAID) {
+        netSettle = o.pendingAmount ?? o.amount;
+      } else if (o.status === ORDER_STATUS.LN_SETTLED) {
+        // Client dashboard tidak load loanEntry; fallback ke pending/amount.
+        netSettle = o.pendingAmount ?? o.amount;
+      } else if (
+        o.settlementAmount != null &&
+        ([ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED] as string[]).includes(o.status)
+      ) {
+        netSettle = o.settlementAmount;
+      }
       return {
         id: o.id,
         date: o.createdAt.toISOString(),
@@ -356,7 +359,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 export async function exportClientTransactions(req: ClientAuthRequest, res: Response) {
   try {
     // 1) load user + children
-    const user = await prismaReadOnly.clientUser.findUnique({
+    const user = await prisma.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
         partnerClient: {
@@ -447,7 +450,7 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
     let skipped = 0
 
     while (true) {
-      const raw = await prismaReadOnly.order.aggregateRaw({
+      const raw = await prisma.order.aggregateRaw({
         pipeline: [
           { $match: {
               partnerClientId: { $in: clientIds },
@@ -543,16 +546,17 @@ export async function exportClientTransactions(req: ClientAuthRequest, res: Resp
       if (batch.length === 0) break;
 
       for (const o of batch) {
-        const isSettledStatus = [
+        // Hanya tampilkan nilai settled untuk status yang memang sudah settle.
+        const isSettledStatus = ([
           ORDER_STATUS.SUCCESS,
           ORDER_STATUS.DONE,
           ORDER_STATUS.SETTLED,
-        ].includes(o.status as any)
+          ORDER_STATUS.LN_SETTLED,
+        ] as string[]).includes(o.status);
         const settledValue = isSettledStatus
           ? (o.settlementAmount ?? 0)
-          : (o.status === ORDER_STATUS.PAID || o.status === ORDER_STATUS.LN_SETTLED)
-            ? (o.pendingAmount ?? 0)
-            : 0
+          : (o.status === ORDER_STATUS.PAID ? (o.pendingAmount ?? 0) : 0);
+
         all.addRow({
           name:     idToName[o.partnerClientId] || o.partnerClientId,
           id:       o.id,

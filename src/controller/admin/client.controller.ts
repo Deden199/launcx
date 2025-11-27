@@ -406,7 +406,18 @@ export const getClientDashboardAdmin = async (req: Request, res: Response) => {
     const totalActive = parentBal + childrenBal
 
     const transactions = orders.map(o => {
-      const netSettle = o.status === 'PAID' ? (o.pendingAmount ?? 0) : (o.settlementAmount ?? 0)
+      // netSettle minimal = amount; settlementAmount hanya untuk status settle.
+      let netSettle = o.amount
+      if (o.status === 'PAID') {
+        netSettle = o.pendingAmount ?? o.amount
+      } else if (o.status === 'LN_SETTLED') {
+        netSettle = o.pendingAmount ?? o.amount
+      } else if (
+        o.settlementAmount != null &&
+        ['SUCCESS', 'DONE', 'SETTLED'].includes(o.status)
+      ) {
+        netSettle = o.settlementAmount
+      }
       return {
         id: o.id,
         date: o.createdAt.toISOString(),
