@@ -66,7 +66,7 @@ export default api`}</code></pre>
       </p>
       <ol className={styles.list}>
         <li><strong>Embed Flow</strong> – JSON response containing <code>qrPayload</code>.</li>
-        <li><strong>Redirect Flow</strong> – <code>303 See Other</code> response with a <code>Location</code> header.</li>
+        <li><strong>Redirect Flow</strong> – <code>303 See Other</code> response with a <code>Location</code> header.</li>
       </ol>
 
       {/* Embed Flow */}
@@ -77,6 +77,7 @@ Body:
 {
   "price": 50000,
   "playerId": "gamer_foo",
+  "expiredTime": 2,
   "flow": "embed"    // defaults to embed if omitted
 }`}</code></pre>
       <p className={styles.bodyText}>Response <code>201 Created</code>:</p>
@@ -99,6 +100,7 @@ Body:
 {
   "price": 50000,
   "playerId": "gamer_foo",
+  "expiredTime": 2,
   "flow": "redirect"
 }`}</code></pre>
       <p className={styles.bodyText}>Response <code>303 See Other</code>:</p>
@@ -112,7 +114,8 @@ Location: https://payment.launcx.com/order/685e6f36263c75af53ba84b3`}</code></pr
   -H "x-timestamp: $(($(date +%s)*1000))" \
   -d '{
         "price": 50000,
-        "playerId": "gamer_foo"
+        "playerId": "gamer_foo",
+        "expiredTime": 2
       }'`}</code></pre>
 
       <h4 className={styles.heading3}>Axios Example (Redirect)</h4>
@@ -122,6 +125,7 @@ async function payRedirect() {
   const res = await api.post('/payments', {
     price: 50000,
     playerId: 'gamer_foo',
+    expiredTime: 2,
     flow: 'redirect',
   }, { validateStatus: () => true })
 
