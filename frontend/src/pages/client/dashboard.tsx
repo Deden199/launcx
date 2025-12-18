@@ -31,7 +31,7 @@ export default function ClientDashboardPage() {
 
   // Parent–Child
   const [children, setChildren] = useState<ClientOption[]>([])
-  const [selectedChild, setSelectedChild] = useState<'all' | string>('all')
+  const [selectedChild, setSelectedChild] = useState<'' | 'all' | string>('')
 
   // Date range (custom)
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null])
@@ -50,8 +50,9 @@ export default function ClientDashboardPage() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(10)
   const [totalPages, setTotalPages] = useState(1)
-  const [loadingSummary, setLoadingSummary] = useState(true)
-  const [loadingTx, setLoadingTx] = useState(true)
+  const [loadingSummary, setLoadingSummary] = useState(false)
+  const [loadingTx, setLoadingTx] = useState(false)
+
 
   // Date filter
   const [range, setRange] = useState<
@@ -66,6 +67,7 @@ export default function ClientDashboardPage() {
   const normalizeStatus = (s: string): string => (s === 'DONE' || s === 'SETTLED' ? 'SUCCESS' : s)
 
   const handleApply = () => {
+   if (!selectedChild) return
     fetchSummary()
     fetchTransactions()
   }
@@ -121,15 +123,41 @@ export default function ClientDashboardPage() {
     if (statusFilter) {
       params.status = statusFilter === 'SUCCESS' ? ['SUCCESS', 'DONE', 'SETTLED'] : statusFilter
     }
-    if (selectedChild !== 'all') params.clientId = selectedChild
+    if (selectedChild && selectedChild !== 'all') params.clientId = selectedChild
     if (search.trim()) params.search = search.trim()
     params.page = page
     params.limit = perPage
     return params
   }
 
+// Fetch children list (once)
+  useEffect(() => {
+    let cancelled = false
+    const loadChildren = async () => {
+      try {
+        const { data } = await api.get<{ children: ClientOption[] }>('/client/dashboard')
+        if (cancelled) return
+
+        const list = data.children || []
+        setChildren(list)
+
+        // Jika akun child (tanpa daftar child), langsung set ke "all" supaya data tetap termuat
+        if (list.length === 0 && selectedChild === '') {
+          setSelectedChild('all')
+        }
+      } catch (err) {
+        console.error('Failed to fetch children', err)
+      }
+    }
+
+    loadChildren()
+    return () => { cancelled = true }
+  }, [])
+
   // Fetch summary (with children)
   const fetchSummary = async () => {
+        if (!selectedChild) return
+
     setLoadingSummary(true)
     try {
       const { data } = await api.get<{
@@ -160,6 +188,14 @@ export default function ClientDashboardPage() {
 
   // Fetch transactions
   const fetchTransactions = async () => {
+        if (!selectedChild) {
+      setTxs([])
+      setTotalPages(1)
+      setLoadingTx(false)
+      return
+    }
+
+
     setLoadingTx(true)
     try {
       const { data } = await api.get<{ transactions: Tx[]; total: number }>(
@@ -237,12 +273,18 @@ export default function ClientDashboardPage() {
 
   // Trigger fetches when filters change
   useEffect(() => {
+        if (!selectedChild) return
+
     if (range !== 'custom' || (startDate && endDate)) fetchSummary()
   }, [range, selectedChild, startDate, endDate, statusFilter])
   useEffect(() => {
+        if (!selectedChild) return
+
     if (range !== 'custom' || (startDate && endDate)) fetchTransactions()
   }, [range, selectedChild, startDate, endDate, search, page, perPage, statusFilter])
   useEffect(() => {
+        if (!selectedChild) return
+
     if (['today', 'yesterday', 'week', 'month'].includes(range)) {
       handleExport()
     }
@@ -275,10 +317,11 @@ export default function ClientDashboardPage() {
             <span className="text-sm text-neutral-300">Pilih Child:</span>
             <select
               value={selectedChild}
-              onChange={e => setSelectedChild(e.target.value as any)}
+              onChange={e => { setSelectedChild(e.target.value as any); setPage(1) }}
               className="h-10 rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm"
             >
-              <option value="all">Semua Child</option>
+              <option value="">Pilih Child</option>
+              <option value="all">All</option>
               {children.map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
@@ -286,7 +329,14 @@ export default function ClientDashboardPage() {
           </div>
         )}
 
+        {!selectedChild && (
+          <div className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 text-sm text-neutral-300">
+            Pilih child terlebih dahulu untuk memuat data transaksi dan ringkasan.
+          </div>
+        )}
+
         {/* Stats */}
+        {selectedChild && (
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -322,8 +372,11 @@ export default function ClientDashboardPage() {
             </div>
           </div>
         </section>
+        )}
 
         {/* Filters */}
+                {selectedChild && (
+
         <section className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 sm:p-5 shadow-sm mb-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {/* Range */}
@@ -492,8 +545,11 @@ export default function ClientDashboardPage() {
             </label>
           </div>
         </section>
+        )}
 
         {/* Table */}
+                {selectedChild && (
+
         <section className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 sm:p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">Transaction List &amp; Settlement</h2>
@@ -641,6 +697,8 @@ export default function ClientDashboardPage() {
             </div>
           </div>
         </section>
+                )}
+
       </div>
 
       {/* Portal target untuk react-datepicker agar popper gak ketutup */}
