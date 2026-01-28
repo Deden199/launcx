@@ -27,6 +27,7 @@ import { loadWeekendOverrideDates } from './util/time';
 
 import { withdrawalCallback, ing1WithdrawalCallback, piroWithdrawalCallback } from './controller/withdrawals.controller';
 import pivotCallbackRouter from './route/payment.callback.routes';
+import danarapayRouter from './route/danarapay.callback.routes';
 
 import webRoutes from './route/web.routes';
 import simulateRoutes from './route/simulate.routes';
@@ -206,6 +207,8 @@ app.use('/api/v1', ewalletRoutes);
 /* ========== 2. PAYMENTS ========== */
 /** ⬇⬇⬇ PENTING: pasang PIVOT CALLBACK DULU biar ga ketabrak router lain ⬇⬇⬇ */
 app.use('/api/v1/payments', pivotCallbackRouter);
+/** DanaRpay VA Aggregator routes */
+app.use('/api/v1/payments/danarapay', danarapayRouter);
 /** Legacy & V2 menyusul */
 app.use('/api/v1/payments', apiKeyAuth, paymentRouter);
 app.use('/api/v1/payments', paymentRouterV2);

@@ -144,6 +144,16 @@ oy: {
       latitude: process.env.PIRO_LATITUDE || '',
       longitude: process.env.PIRO_LONGITUDE || '',
     },
+    // DanaRpay VA Aggregator configuration
+    danarapay: {
+      baseUrl: process.env.DANARAPAY_BASE_URL || '',
+      merchantId: process.env.DANARAPAY_MERCHANT_ID || '',
+      apiKey: process.env.DANARAPAY_API_KEY || '',
+      secretKey: process.env.DANARAPAY_SECRET_KEY || '',
+      callbackUrl: process.env.DANARAPAY_CALLBACK_URL || '',
+      // Set to false to skip signature verification (not recommended for production)
+      verifyCallback: process.env.DANARAPAY_VERIFY_CALLBACK !== 'false',
+    },
     genesis: {
       enabled: /^true$/i.test(process.env.GENESIS_ENABLED || ''),
       baseUrl: process.env.GENESIS_BASE_URL || '',
