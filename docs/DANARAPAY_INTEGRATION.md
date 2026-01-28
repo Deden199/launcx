@@ -1,15 +1,40 @@
 # DanaRpay VA Aggregator Integration - Launcx
 
+Based on official API docs v1.2.4: https://api-docs.danarapay.com/#tag/VA-Aggregator
+
 ## Files Changed/Created
 
 ### New Files
 1. `src/service/danarapayClient.ts` - HTTP client untuk DanaRpay API
-2. `src/controller/danarapayVa.controller.ts` - Controller untuk create VA, callback handler, status inquiry
+2. `src/controller/danarapayVa.controller.ts` - Controller untuk VA endpoints + callback handler
 3. `src/route/danarapay.callback.routes.ts` - Express routes dengan Swagger docs
 
 ### Modified Files
 1. `src/config.ts` - Tambah config `danarapay` 
 2. `src/app.ts` - Register routes + rate limit exemption untuk callback
+
+## Environment Variables
+
+```bash
+# DanaRpay Base URL
+# Production: https://partner.danarapay.com
+# Staging: https://api-stg.danarapay.com
+DANARAPAY_BASE_URL=https://api-stg.danarapay.com
+
+# Credentials dari DanaRpay Dashboard
+DANARAPAY_USERNAME=your_username
+DANARAPAY_API_KEY=your_api_key
+```
+
+## Supported Banks
+
+| Bank Code | Bank Name | Open Amount | Closed Amount | Lifetime |
+|-----------|-----------|-------------|---------------|----------|
+| 002 | BRI | ✓ | ✓ | ✓ |
+| 008 | Mandiri | ✓ | ✓ | ✓ |
+| 009 | BNI | ✗ | ✓ | ✓ |
+| 013 | Permata | ✓ | ✓ | ✓ |
+| 022 | CIMB | ✓ | ✓ | ✓ |
 
 ## API Endpoints
 
@@ -20,57 +45,112 @@ POST /api/v1/payments/danarapay/va/callback
 
 ### Protected (API Key Auth)
 ```
-POST /api/v1/payments/danarapay/va/create    - Buat VA baru
-GET  /api/v1/payments/danarapay/va/status/:partnerTrxId - Cek status VA
-GET  /api/v1/payments/danarapay/va/banks     - List bank tersedia
+POST /api/v1/payments/danarapay/va/create         - Buat VA baru
+GET  /api/v1/payments/danarapay/va/info/:vaId     - Get VA info
+PUT  /api/v1/payments/danarapay/va/update/:vaId   - Update VA
+POST /api/v1/payments/danarapay/va/simulate-callback - Simulate payment (staging)
+GET  /api/v1/payments/danarapay/va/banks          - List bank tersedia
 ```
 
-## Environment Variables (wajib)
+## VA Status Flow
 
-```bash
-DANARAPAY_BASE_URL=https://api-sandbox.danarapay.com
-DANARAPAY_MERCHANT_ID=xxx
-DANARAPAY_API_KEY=xxx
-DANARAPAY_SECRET_KEY=xxx
-DANARAPAY_CALLBACK_URL=https://<domain>/api/v1/payments/danarapay/va/callback
+```
+WAITING_PAYMENT → PAYMENT_DETECTED → COMPLETE (if single_use=true)
+                                   → WAITING_PAYMENT (if single_use=false)
+              
+WAITING_PAYMENT → EXPIRED (after expiration_time)
+              → STATIC_TRX_EXPIRED (transaction expired, VA still active if lifetime)
 ```
 
 ## Testing
 
-### 1. Create VA
+### 1. Create VA (Closed Amount, Single Use)
 ```bash
 curl -X POST https://<domain>/api/v1/payments/danarapay/va/create \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: <your-launcx-api-key>" \
+  -H "X-API-Key: <launcx-api-key>" \
   -d '{
-    "bankCode": "BCA",
-    "customerName": "John Doe",
-    "amount": 100000,
-    "expirationMinutes": 1440
+    "partner_user_id": "user-123",
+    "bank_code": "002",
+    "amount": 20000,
+    "is_open": false,
+    "is_single_use": true,
+    "expiration_time": 30,
+    "username_display": "John Doe",
+    "partner_trx_id": "TRX-001"
   }'
 ```
 
-### 2. Check Status
+### 2. Get VA Info
 ```bash
-curl -X GET https://<domain>/api/v1/payments/danarapay/va/status/<partnerTrxId> \
-  -H "X-API-Key: <your-launcx-api-key>"
+curl -X GET https://<domain>/api/v1/payments/danarapay/va/info/<vaId> \
+  -H "X-API-Key: <launcx-api-key>"
 ```
 
-### 3. Simulate Callback (for testing)
+### 3. Update VA
 ```bash
-curl -X POST https://<domain>/api/v1/payments/danarapay/va/callback \
+curl -X PUT https://<domain>/api/v1/payments/danarapay/va/update/<vaId> \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <launcx-api-key>" \
   -d '{
-    "trx_id": "DRP123456",
-    "partner_trx_id": "<partnerTrxId>",
-    "va_number": "1234567890123456",
-    "bank_code": "BCA",
-    "amount": 100000,
-    "paid_amount": 100000,
-    "status": "PAID",
-    "paid_at": "2024-01-15T10:30:00Z"
+    "amount": 25000,
+    "expiration_time": 60
   }'
 ```
+
+### 4. Simulate Payment (Staging Only)
+```bash
+curl -X POST https://<domain>/api/v1/payments/danarapay/va/simulate-callback \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <launcx-api-key>" \
+  -d '{
+    "id": "<vaId>",
+    "amount": 20000
+  }'
+```
+
+## Callback Payload Structure
+
+DanaRpay akan mengirim callback ke endpoint yang di-set di dashboard saat:
+1. User berhasil bayar (settlement_status: WAITING)
+2. Settlement selesai (settlement_status: SUCCESS)
+
+```json
+{
+  "va_number": "910306000000000028",
+  "amount": 20000,
+  "partner_user_id": "user-123",
+  "success": "true",
+  "tx_date": "2025-07-01 20:12:30",
+  "username_display": "John Doe",
+  "trx_expiration_date": "2025-07-01 20:15:00",
+  "partner_trx_id": "TRX-001",
+  "trx_id": "2da3c897-fc31-4bd9-b729-7a7a2ead29d8",
+  "settlement_time": "2025-07-02 15:00:00",
+  "settlement_status": "SUCCESS",
+  "full_name": "John Doe"
+}
+```
+
+## Response Codes
+
+| Code | Description |
+|------|-------------|
+| 000 | Success |
+| 203 | Duplicate partner_trx_id |
+| 207 | IP address not registered |
+| 208 | API key not valid |
+| 211 | Bank code not available |
+| 212 | Amount less than minimum |
+| 213 | Amount greater than maximum |
+| 214 | Failed to generate VA |
+| 215 | Amount type not supported for bank |
+| 216 | VA ID is empty |
+| 217 | VA number still active for this user |
+| 219 | VA not enabled for this bank |
+| 226 | Transaction expiry exceeds VA expiry |
+| 246 | Failed to update VA |
+| 999 | Internal Server Error |
 
 ## Idempotency
 
@@ -79,23 +159,9 @@ Callback handler menggunakan idempotent update:
 - Mencegah backward transition (SUCCESS → PENDING tidak akan terjadi)
 - Menyimpan raw callback di `transaction_callback` untuk audit
 
-## ASSUMPTIONS
+## Setup di DanaRpay Dashboard
 
-Karena dokumentasi DanaRpay tidak accessible saat development:
-
-1. **API Structure**: Mengikuti pola standar VA aggregator Indonesia (mirip OY!, Xendit)
-2. **Signature**: HMAC-SHA256 dengan format `merchantId + timestamp + body`
-3. **Endpoints**: 
-   - Create VA: `POST /api/v1/va/create`
-   - Status: `POST /api/v1/va/status`
-   - Banks: `GET /api/v1/va/banks`
-4. **Callback Payload**: JSON dengan field standar (trx_id, partner_trx_id, status, etc.)
-
-**Jika struktur API berbeda**, adjust field mapping di `danarapayClient.ts` sesuai dokumentasi aktual.
-
-## Next Steps
-
-1. Verifikasi endpoint URL dan payload structure dengan docs DanaRpay
-2. Set environment variables dengan credentials asli
-3. Test di sandbox environment
-4. Register callback URL di DanaRpay Dashboard
+1. Login ke DanaRpay Business Dashboard
+2. Buka **Settings** → **Developer Option** → **Callback Configuration**
+3. Set callback URL: `https://<your-domain>/api/v1/payments/danarapay/va/callback`
+4. Whitelist IP server Launcx
