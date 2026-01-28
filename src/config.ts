@@ -145,14 +145,13 @@ oy: {
       longitude: process.env.PIRO_LONGITUDE || '',
     },
     // DanaRpay VA Aggregator configuration
+    // Docs: https://api-docs.danarapay.com/#tag/VA-Aggregator
     danarapay: {
+      // Production: https://partner.danarapay.com
+      // Staging: https://api-stg.danarapay.com
       baseUrl: process.env.DANARAPAY_BASE_URL || '',
-      merchantId: process.env.DANARAPAY_MERCHANT_ID || '',
+      username: process.env.DANARAPAY_USERNAME || '',
       apiKey: process.env.DANARAPAY_API_KEY || '',
-      secretKey: process.env.DANARAPAY_SECRET_KEY || '',
-      callbackUrl: process.env.DANARAPAY_CALLBACK_URL || '',
-      // Set to false to skip signature verification (not recommended for production)
-      verifyCallback: process.env.DANARAPAY_VERIFY_CALLBACK !== 'false',
     },
     genesis: {
       enabled: /^true$/i.test(process.env.GENESIS_ENABLED || ''),
