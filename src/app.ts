@@ -81,6 +81,7 @@ const rateLimitExemptPaths = new Set([
   '/api/v1/withdrawals/callback',
   '/api/v1/withdrawals/callback/piro',
   '/api/v1/withdrawals/callback/ing1',
+  '/api/v1/payments/danarapay/va/callback',
 ]);
 
 loadWeekendOverrideDates().catch(err => console.error('[init]', err));
