@@ -3,7 +3,7 @@
 
 import { Request, Response } from 'express';
 import logger from '../logger';
-import prisma from '../core/prisma';
+import { prisma } from '../core/prisma';
 import { config } from '../config';
 import {
   DanarapayClient,
