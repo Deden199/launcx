@@ -1,0 +1,21 @@
+# =====================================================
+# DanaRpay VA Aggregator - Environment Variables
+# =====================================================
+# Tambahkan ke file .env existing
+
+# DanaRpay Base URL
+# Sandbox: https://api-sandbox.danarapay.com (ASSUMPTION)
+# Production: https://api.danarapay.com (ASSUMPTION)
+DANARAPAY_BASE_URL=https://api-sandbox.danarapay.com
+
+# Merchant credentials (dari DanaRpay Dashboard)
+DANARAPAY_MERCHANT_ID=your_merchant_id_here
+DANARAPAY_API_KEY=your_api_key_here
+DANARAPAY_SECRET_KEY=your_secret_key_here
+
+# Callback URL - DanaRpay akan hit endpoint ini saat VA dibayar
+# Ganti <your-domain> dengan domain Launcx production/staging
+DANARAPAY_CALLBACK_URL=https://<your-domain>/api/v1/payments/danarapay/va/callback
+
+# Optional: Set to 'false' untuk skip signature verification (NOT recommended for production)
+# DANARAPAY_VERIFY_CALLBACK=true
