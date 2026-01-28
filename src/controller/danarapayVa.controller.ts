@@ -1,5 +1,5 @@
 // File: src/controller/danarapayVa.controller.ts
-// DanaRpay VA Aggregator Controller
+// DanaRpay VA Aggregator Controller - Based on official API docs v1.2.4
 
 import { Request, Response } from 'express';
 import logger from '../logger';
@@ -9,6 +9,8 @@ import {
   DanarapayClient,
   DanarapayVaCallbackPayload,
   CreateVaRequest,
+  UpdateVaRequest,
+  VA_BANK_CODES,
 } from '../service/danarapayClient';
 
 // ===================== CLIENT INSTANCE =====================
@@ -18,15 +20,13 @@ let danarapayClient: DanarapayClient | null = null;
 function getClient(): DanarapayClient {
   if (!danarapayClient) {
     const cfg = config.api.danarapay;
-    if (!cfg?.baseUrl || !cfg?.merchantId || !cfg?.apiKey || !cfg?.secretKey) {
-      throw new Error('DanaRpay configuration is incomplete');
+    if (!cfg?.baseUrl || !cfg?.username || !cfg?.apiKey) {
+      throw new Error('DanaRpay configuration is incomplete. Required: DANARAPAY_BASE_URL, DANARAPAY_USERNAME, DANARAPAY_API_KEY');
     }
     danarapayClient = new DanarapayClient({
       baseUrl: cfg.baseUrl,
-      merchantId: cfg.merchantId,
+      username: cfg.username,
       apiKey: cfg.apiKey,
-      secretKey: cfg.secretKey,
-      callbackUrl: cfg.callbackUrl,
     });
   }
   return danarapayClient;
@@ -56,41 +56,31 @@ function getParsedBody(req: Request): any {
   return b ?? {};
 }
 
-function getRawBody(req: Request): string {
-  const raw = (req as any).rawBody;
-  if (typeof raw === 'string') return raw;
-  if (raw instanceof Buffer) return raw.toString('utf8');
-  if (req.body && typeof req.body === 'object') {
-    return JSON.stringify(req.body);
-  }
-  return '';
-}
-
 // ===================== STATUS MAPPING =====================
 
 type InternalStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'EXPIRED' | 'CANCELLED';
 
-function mapVaStatusToInternal(providerStatus?: string): InternalStatus {
-  const status = String(providerStatus ?? '').toUpperCase();
+/**
+ * Map DanaRpay VA status to internal status
+ * DanaRpay statuses: WAITING_PAYMENT, PAYMENT_DETECTED, EXPIRED, STATIC_TRX_EXPIRED, COMPLETE
+ */
+function mapVaStatusToInternal(vaStatus?: string, settlementStatus?: string): InternalStatus {
+  const status = String(vaStatus ?? '').toUpperCase();
+  
+  // If settlement_status is SUCCESS, payment is complete
+  if (settlementStatus === 'SUCCESS') {
+    return 'SUCCESS';
+  }
+  
   switch (status) {
-    case 'PAID':
-    case 'SUCCESS':
-    case 'COMPLETED':
-    case 'SETTLEMENT':
+    case 'COMPLETE':
+    case 'PAYMENT_DETECTED':
       return 'SUCCESS';
-    case 'PENDING':
-    case 'WAITING':
-    case 'ACTIVE':
+    case 'WAITING_PAYMENT':
       return 'PENDING';
     case 'EXPIRED':
+    case 'STATIC_TRX_EXPIRED':
       return 'EXPIRED';
-    case 'CANCELLED':
-    case 'CANCELED':
-      return 'CANCELLED';
-    case 'FAILED':
-    case 'ERROR':
-    case 'REJECTED':
-      return 'FAILED';
     default:
       return 'PENDING';
   }
@@ -99,11 +89,13 @@ function mapVaStatusToInternal(providerStatus?: string): InternalStatus {
 // ===================== IDEMPOTENT UPDATE =====================
 
 interface VaUpdateData {
-  partnerTrxId: string;
+  partnerTrxId?: string;
+  partnerUserId?: string;
+  vaNumber?: string;
   trxId?: string;
-  status: string;
-  paidAmount?: number;
-  paidAt?: Date | null;
+  amount?: number;
+  txDate?: string;
+  settlementStatus?: string;
   providerPayload?: any;
 }
 
@@ -117,49 +109,58 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
   reason?: string;
   order?: any;
 }> {
-  const { partnerTrxId, trxId, status, paidAmount, paidAt, providerPayload } = data;
-  const internalStatus = mapVaStatusToInternal(status);
+  const { partnerTrxId, partnerUserId, vaNumber, trxId, amount, txDate, settlementStatus, providerPayload } = data;
 
-  // Find order by partnerTrxId (which is Order.id or custom reference)
+  // Find order by partnerTrxId or partnerUserId
+  const searchId = partnerTrxId || partnerUserId;
+  if (!searchId) {
+    logger.warn('[DanaRpay VA] No identifier in callback', { vaNumber });
+    return { updated: false, reason: 'NO_IDENTIFIER' };
+  }
+
   let order = await prisma.order.findFirst({
     where: {
       OR: [
-        { id: partnerTrxId },
-        { pgRefId: partnerTrxId },
-        { pgClientRef: partnerTrxId },
+        { id: searchId },
+        { pgRefId: searchId },
+        { pgClientRef: searchId },
+        { userId: partnerUserId || '' },
       ],
     },
   });
 
   if (!order) {
-    logger.warn('[DanaRpay VA] Order not found', { partnerTrxId, trxId });
+    logger.warn('[DanaRpay VA] Order not found', { partnerTrxId, partnerUserId, vaNumber });
     return { updated: false, reason: 'ORDER_NOT_FOUND' };
   }
 
   const currentStatus = mapVaStatusToInternal(order.status);
+  const newStatus = mapVaStatusToInternal('COMPLETE', settlementStatus);
 
   // Idempotency check: already in terminal state
   if (['SUCCESS', 'FAILED', 'CANCELLED'].includes(currentStatus)) {
-    if (currentStatus === internalStatus) {
+    if (currentStatus === newStatus) {
       logger.info('[DanaRpay VA] Duplicate callback, already processed', {
-        partnerTrxId,
+        orderId: order.id,
         status: currentStatus,
       });
       return { updated: false, reason: 'ALREADY_PROCESSED', order };
     }
 
-    // Prevent backward transition (e.g., SUCCESS -> PENDING)
-    logger.warn('[DanaRpay VA] Invalid status transition attempted', {
-      partnerTrxId,
-      currentStatus,
-      newStatus: internalStatus,
-    });
-    return { updated: false, reason: 'INVALID_TRANSITION', order };
+    // Only allow SUCCESS to override PENDING
+    if (currentStatus === 'SUCCESS' && newStatus !== 'SUCCESS') {
+      logger.warn('[DanaRpay VA] Invalid status transition attempted', {
+        orderId: order.id,
+        currentStatus,
+        newStatus,
+      });
+      return { updated: false, reason: 'INVALID_TRANSITION', order };
+    }
   }
 
   // Build update payload
   const updateData: any = {
-    status: internalStatus,
+    status: newStatus,
     providerPayload: providerPayload ?? order.providerPayload,
     updatedAt: new Date(),
   };
@@ -168,10 +169,17 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
     updateData.pgRefId = trxId;
   }
 
-  if (internalStatus === 'SUCCESS') {
-    updateData.paymentReceivedTime = paidAt ?? new Date();
-    if (paidAmount != null) {
+  if (newStatus === 'SUCCESS') {
+    updateData.paymentReceivedTime = txDate ? new Date(txDate) : new Date();
+    if (amount != null) {
       updateData.pendingAmount = 0;
+    }
+    // Set settlement time if provided
+    if (settlementStatus === 'SUCCESS') {
+      updateData.settlementTime = new Date();
+      updateData.settlementStatus = 'SETTLED';
+    } else if (settlementStatus === 'WAITING') {
+      updateData.settlementStatus = 'WAITING';
     }
   }
 
@@ -183,9 +191,9 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
 
   logger.info('[DanaRpay VA] Order updated', {
     orderId: order.id,
-    partnerTrxId,
     oldStatus: currentStatus,
-    newStatus: internalStatus,
+    newStatus,
+    settlementStatus,
   });
 
   return { updated: true, order: updatedOrder };
@@ -196,6 +204,11 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
 /**
  * DanaRpay VA Callback Handler
  * POST /api/v1/payments/danarapay/va/callback
+ * 
+ * Callback payload from DanaRpay:
+ * - va_number, amount, partner_user_id, success, tx_date
+ * - username_display, trx_expiration_date, partner_trx_id, trx_id
+ * - settlement_time, settlement_status, full_name
  */
 export async function danarapayVaCallback(req: Request, res: Response) {
   const startTime = Date.now();
@@ -203,73 +216,52 @@ export async function danarapayVaCallback(req: Request, res: Response) {
   try {
     // 1) Parse body
     const body: DanarapayVaCallbackPayload = getParsedBody(req);
-    const rawBody = getRawBody(req);
 
     logger.info('[DanaRpay VA] Callback received', {
-      trxId: body.trx_id,
-      partnerTrxId: body.partner_trx_id,
-      status: body.status,
+      va_number: body.va_number,
+      partner_trx_id: body.partner_trx_id,
+      partner_user_id: body.partner_user_id,
       amount: body.amount,
+      success: body.success,
+      settlement_status: body.settlement_status,
     });
 
-    // 2) Verify signature (if provided)
-    const signature = String(
-      req.header('X-Signature') ??
-        req.header('x-signature') ??
-        body.signature ??
-        ''
-    );
-
-    if (signature && config.api.danarapay?.verifyCallback !== false) {
-      const client = getClient();
-      const isValid =
-        client.verifyCallbackSignature(rawBody, signature) ||
-        client.verifyCallbackSignatureAlt(body, signature);
-
-      if (!isValid) {
-        logger.warn('[DanaRpay VA] Invalid callback signature', {
-          trxId: body.trx_id,
-          partnerTrxId: body.partner_trx_id,
-        });
-        return res.status(401).json({ success: false, error: 'Invalid signature' });
-      }
+    // 2) Validate required fields
+    if (!body.va_number) {
+      logger.warn('[DanaRpay VA] Missing va_number in callback');
+      return res.status(400).json({ success: false, error: 'Missing va_number' });
     }
 
-    // 3) Validate required fields
-    const partnerTrxId = body.partner_trx_id;
-    if (!partnerTrxId) {
-      logger.warn('[DanaRpay VA] Missing partner_trx_id in callback');
-      return res.status(400).json({ success: false, error: 'Missing partner_trx_id' });
-    }
-
-    // 4) ACK quickly (DanaRpay expects fast response)
+    // 3) ACK quickly (DanaRpay expects fast response)
     res.status(200).json({ success: true, message: 'Callback received' });
 
-    // 5) Process in background
+    // 4) Process in background
     setImmediate(async () => {
       try {
         // Store raw callback for audit
         await prisma.transaction_callback.create({
           data: {
-            referenceId: null, // Will be linked via partnerTrxId
+            referenceId: null,
             requestBody: body as any,
-            paymentReceivedTime: body.paid_at ? new Date(body.paid_at) : null,
+            paymentReceivedTime: body.tx_date ? new Date(body.tx_date) : new Date(),
+            settlementTime: body.settlement_time ? new Date(body.settlement_time) : null,
           },
         });
 
         // Idempotent status update
         const result = await idempotentUpdateVaTransaction({
-          partnerTrxId,
+          partnerTrxId: body.partner_trx_id,
+          partnerUserId: body.partner_user_id,
+          vaNumber: body.va_number,
           trxId: body.trx_id,
-          status: body.status ?? 'UNKNOWN',
-          paidAmount: body.paid_amount ?? body.amount,
-          paidAt: body.paid_at ? new Date(body.paid_at) : null,
+          amount: body.amount,
+          txDate: body.tx_date,
+          settlementStatus: body.settlement_status,
           providerPayload: body,
         });
 
         // TODO: Trigger partner callback if order updated successfully
         if (result.updated && result.order?.partnerClientId) {
-          // Queue callback to partner
           logger.info('[DanaRpay VA] Queuing partner callback', {
             orderId: result.order.id,
             partnerClientId: result.order.partnerClientId,
@@ -277,14 +269,15 @@ export async function danarapayVaCallback(req: Request, res: Response) {
         }
 
         logger.info('[DanaRpay VA] Callback processed', {
-          partnerTrxId,
+          va_number: body.va_number,
+          partner_trx_id: body.partner_trx_id,
           updated: result.updated,
           reason: result.reason,
           durationMs: Date.now() - startTime,
         });
       } catch (bgErr: any) {
         logger.error('[DanaRpay VA] Background processing error', {
-          partnerTrxId,
+          va_number: body.va_number,
           error: bgErr?.message ?? bgErr,
         });
       }
@@ -303,16 +296,32 @@ export async function danarapayVaCallback(req: Request, res: Response) {
 // ===================== CREATE VA ENDPOINT =====================
 
 interface CreateVaRequestBody {
-  partnerTrxId?: string;
-  orderId?: string;
-  bankCode: string;
+  /** Partner unique identifier for specific user (required) */
+  partner_user_id: string;
+  /** Bank code: 002 (BRI), 008 (Mandiri), 009 (BNI), 013 (Permata), 022 (CIMB) (required) */
+  bank_code: string;
+  /** Amount in IDR */
   amount?: number;
-  customerName: string;
-  customerEmail?: string;
-  customerPhone?: string;
-  expirationMinutes?: number;
-  description?: string;
-  metadata?: Record<string, any>;
+  /** true = open amount (default), false = closed amount */
+  is_open?: boolean;
+  /** true = close VA after payment (default: false) */
+  is_single_use?: boolean;
+  /** VA expiration time in minutes (default: 1440 = 24 hours) */
+  expiration_time?: number;
+  /** true = VA never expires */
+  is_lifetime?: boolean;
+  /** Display name shown to user, min 3 chars (required) */
+  username_display: string;
+  /** User email */
+  email?: string;
+  /** End-user full name */
+  full_name?: string;
+  /** Transaction expiration time in minutes */
+  trx_expiration_time?: number;
+  /** Partner unique transaction ID */
+  partner_trx_id?: string;
+  /** Transaction counter limit */
+  trx_counter?: number;
 }
 
 /**
@@ -324,42 +333,54 @@ export async function createDanarapayVa(req: Request, res: Response) {
     const body: CreateVaRequestBody = req.body;
 
     // Validate required fields
-    if (!body.bankCode) {
-      return res.status(400).json({ success: false, error: 'bankCode is required' });
+    if (!body.partner_user_id) {
+      return res.status(400).json({ success: false, error: 'partner_user_id is required' });
     }
-    if (!body.customerName) {
-      return res.status(400).json({ success: false, error: 'customerName is required' });
+    if (!body.bank_code) {
+      return res.status(400).json({ success: false, error: 'bank_code is required' });
+    }
+    if (!body.username_display || body.username_display.length < 3) {
+      return res.status(400).json({ success: false, error: 'username_display is required (min 3 chars)' });
     }
 
-    // Generate unique reference if not provided
-    const partnerTrxId = body.partnerTrxId ?? body.orderId ?? `VA-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Validate bank code
+    const validBankCodes = Object.values(VA_BANK_CODES);
+    if (!validBankCodes.includes(body.bank_code as any)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid bank_code. Valid values: ${validBankCodes.join(', ')} (BRI, Mandiri, BNI, Permata, CIMB)` 
+      });
+    }
 
     const client = getClient();
 
     const request: CreateVaRequest = {
-      partnerTrxId,
-      bankCode: body.bankCode.toUpperCase(),
+      partner_user_id: body.partner_user_id,
+      bank_code: body.bank_code,
       amount: body.amount,
-      customerName: body.customerName,
-      customerEmail: body.customerEmail,
-      customerPhone: body.customerPhone,
-      expirationMinutes: body.expirationMinutes ?? 1440, // Default 24 hours
-      description: body.description,
-      metadata: body.metadata,
+      is_open: body.is_open,
+      is_single_use: body.is_single_use,
+      expiration_time: body.expiration_time ?? 1440, // Default 24 hours
+      is_lifetime: body.is_lifetime,
+      username_display: body.username_display,
+      email: body.email,
+      full_name: body.full_name,
+      trx_expiration_time: body.trx_expiration_time,
+      partner_trx_id: body.partner_trx_id,
+      trx_counter: body.trx_counter,
     };
 
     const result = await client.createVa(request);
 
     if (!result.success) {
       logger.warn('[DanaRpay VA] Create VA failed', {
-        partnerTrxId,
-        message: result.message,
-        code: result.responseCode,
+        partner_user_id: body.partner_user_id,
+        status: result.status,
       });
       return res.status(400).json({
         success: false,
-        error: result.message ?? 'Failed to create VA',
-        code: result.responseCode,
+        error: result.status?.message ?? 'Failed to create VA',
+        code: result.status?.code,
       });
     }
 
@@ -367,15 +388,18 @@ export async function createDanarapayVa(req: Request, res: Response) {
     return res.status(200).json({
       success: true,
       data: {
-        partnerTrxId: result.partnerTrxId,
-        trxId: result.trxId,
-        vaNumber: result.vaNumber,
-        bankCode: result.bankCode,
-        bankName: result.bankName,
+        id: result.id,
+        va_number: result.va_number,
+        bank_code: result.bank_code,
         amount: result.amount,
-        customerName: result.customerName,
-        expiredAt: result.expiredAt,
-        status: result.status,
+        partner_user_id: result.partner_user_id,
+        partner_trx_id: result.partner_trx_id,
+        is_open: result.is_open,
+        is_single_use: result.is_single_use,
+        expiration_time: result.expiration_time,
+        trx_expiration_time: result.trx_expiration_time,
+        va_status: result.va_status,
+        username_display: result.username_display,
       },
     });
   } catch (err: any) {
@@ -386,81 +410,169 @@ export async function createDanarapayVa(req: Request, res: Response) {
   }
 }
 
-// ===================== STATUS INQUIRY ENDPOINT =====================
+// ===================== GET VA INFO ENDPOINT =====================
 
 /**
- * Get VA Status
- * GET /api/v1/payments/danarapay/va/status/:partnerTrxId
+ * Get VA Info by unique VA ID
+ * GET /api/v1/payments/danarapay/va/info/:vaId
  */
-export async function getDanarapayVaStatus(req: Request, res: Response) {
+export async function getDanarapayVaInfo(req: Request, res: Response) {
   try {
-    const { partnerTrxId } = req.params;
+    const { vaId } = req.params;
 
-    if (!partnerTrxId) {
-      return res.status(400).json({ success: false, error: 'partnerTrxId is required' });
+    if (!vaId) {
+      return res.status(400).json({ success: false, error: 'vaId is required' });
     }
 
     const client = getClient();
-    const result = await client.getVaStatus(partnerTrxId);
+    const result = await client.getVaInfo(vaId);
 
     if (!result.success) {
       return res.status(400).json({
         success: false,
-        error: result.message ?? 'Failed to get VA status',
-        code: result.responseCode,
+        error: result.status?.message ?? 'Failed to get VA info',
+        code: result.status?.code,
       });
     }
 
     return res.status(200).json({
       success: true,
       data: {
-        partnerTrxId: result.partnerTrxId,
-        trxId: result.trxId,
-        vaNumber: result.vaNumber,
-        bankCode: result.bankCode,
+        id: result.id,
+        va_number: result.va_number,
+        bank_code: result.bank_code,
+        bank_name: result.bank_name,
         amount: result.amount,
-        paidAmount: result.paidAmount,
-        status: result.status,
-        paidAt: result.paidAt,
-        expiredAt: result.expiredAt,
+        partner_user_id: result.partner_user_id,
+        partner_trx_id: result.partner_trx_id,
+        created: result.created,
+        is_open: result.is_open,
+        is_single_use: result.is_single_use,
+        expiration_time: result.expiration_time,
+        trx_expiration_time: result.trx_expiration_time,
+        va_status: result.va_status,
+        username_display: result.username_display,
+        trx_counter: result.trx_counter,
+        counter_incoming_payment: result.counter_incoming_payment,
       },
     });
   } catch (err: any) {
-    logger.error('[DanaRpay VA] Get status error', {
+    logger.error('[DanaRpay VA] Get VA info error', {
       error: err?.message ?? err,
     });
     return res.status(500).json({ success: false, error: 'Internal error' });
   }
 }
 
-// ===================== GET BANK CHANNELS =====================
+// ===================== UPDATE VA ENDPOINT =====================
 
 /**
- * Get available bank channels
- * GET /api/v1/payments/danarapay/va/banks
+ * Update VA by unique VA ID
+ * PUT /api/v1/payments/danarapay/va/update/:vaId
  */
-export async function getDanarapayVaBanks(req: Request, res: Response) {
+export async function updateDanarapayVa(req: Request, res: Response) {
   try {
+    const { vaId } = req.params;
+    const body: UpdateVaRequest = req.body;
+
+    if (!vaId) {
+      return res.status(400).json({ success: false, error: 'vaId is required' });
+    }
+
     const client = getClient();
-    const result = await client.getBankChannels();
+    const result = await client.updateVa(vaId, body);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.status?.message ?? 'Failed to update VA',
+        code: result.status?.code,
+      });
+    }
 
     return res.status(200).json({
-      success: result.success,
+      success: true,
       data: {
-        banks: result.banks,
+        id: result.id,
+        va_number: result.va_number,
+        bank_code: result.bank_code,
+        amount: result.amount,
+        partner_user_id: result.partner_user_id,
+        partner_trx_id: result.partner_trx_id,
+        is_open: result.is_open,
+        is_single_use: result.is_single_use,
+        expiration_time: result.expiration_time,
+        trx_expiration_time: result.trx_expiration_time,
+        va_status: result.va_status,
+        username_display: result.username_display,
       },
     });
   } catch (err: any) {
-    logger.error('[DanaRpay VA] Get banks error', {
+    logger.error('[DanaRpay VA] Update VA error', {
       error: err?.message ?? err,
     });
     return res.status(500).json({ success: false, error: 'Internal error' });
   }
+}
+
+// ===================== SIMULATE CALLBACK (STAGING ONLY) =====================
+
+/**
+ * Simulate VA payment callback (staging environment only)
+ * POST /api/v1/payments/danarapay/va/simulate-callback
+ */
+export async function simulateDanarapayCallback(req: Request, res: Response) {
+  try {
+    const { id, amount } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'id (VA ID) is required' });
+    }
+    if (amount === undefined || amount === null) {
+      return res.status(400).json({ success: false, error: 'amount is required' });
+    }
+
+    const client = getClient();
+    const result = await client.simulateCallback(id, amount);
+
+    return res.status(200).json({
+      success: result.success,
+      error: result.error,
+    });
+  } catch (err: any) {
+    logger.error('[DanaRpay VA] Simulate callback error', {
+      error: err?.message ?? err,
+    });
+    return res.status(500).json({ success: false, error: 'Internal error' });
+  }
+}
+
+// ===================== GET BANK CODES =====================
+
+/**
+ * Get available bank codes for VA
+ * GET /api/v1/payments/danarapay/va/banks
+ */
+export async function getDanarapayVaBanks(_req: Request, res: Response) {
+  return res.status(200).json({
+    success: true,
+    data: {
+      banks: [
+        { code: '002', name: 'BRI', features: ['open_amount', 'closed_amount', 'lifetime'] },
+        { code: '008', name: 'Mandiri', features: ['open_amount', 'closed_amount', 'lifetime'] },
+        { code: '009', name: 'BNI', features: ['closed_amount', 'lifetime'] },
+        { code: '013', name: 'Permata', features: ['open_amount', 'closed_amount', 'lifetime'] },
+        { code: '022', name: 'CIMB', features: ['open_amount', 'closed_amount', 'lifetime'] },
+      ],
+    },
+  });
 }
 
 export default {
   danarapayVaCallback,
   createDanarapayVa,
-  getDanarapayVaStatus,
+  getDanarapayVaInfo,
+  updateDanarapayVa,
+  simulateDanarapayCallback,
   getDanarapayVaBanks,
 };
