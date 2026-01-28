@@ -70,3 +70,7 @@ coverage/
 /.husky/_/
 node_modules/
 .env.save
+-e 
+# Environment files
+*.env
+*.env.*
