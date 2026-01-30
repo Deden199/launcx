@@ -228,12 +228,35 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       clientIds = [pc.id];
     }
 
-    // (8) where clause for list & count
+    // (8) Channel filter (QRIS / VA_DANARAPAY)
+    const channelFilter = typeof req.query.channel === 'string' && req.query.channel.trim()
+      ? req.query.channel.trim()
+      : '';
+
+    // (9) Bank code filter for VA
+    const bankCodeFilter = typeof req.query.bankCode === 'string' && req.query.bankCode.trim()
+      ? req.query.bankCode.trim()
+      : '';
+
+    // (10) where clause for list & count
     const whereOrders: any = {
       partnerClientId: { in: clientIds },
       status: { in: statuses },
       ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
     };
+
+    // Apply channel filter
+    if (channelFilter) {
+      whereOrders.channel = channelFilter;
+    }
+
+    // Apply bank code filter (for VA only - stored in providerPayload.bank_code)
+    if (bankCodeFilter && channelFilter === CHANNEL_TYPES.VA_DANARAPAY) {
+      whereOrders.providerPayload = {
+        path: ['bank_code'],
+        equals: bankCodeFilter
+      };
+    }
 
     if (searchStr) {
       whereOrders.OR = [
