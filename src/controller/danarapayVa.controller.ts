@@ -402,7 +402,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
       await prisma.order.create({
         data: {
           id: orderId,
-          partnerClientId: partnerClientId,
+          partnerClient: { connect: { id: partnerClientId } },
           amount: body.amount || 0,
           pendingAmount: body.amount || 0,
           feeLauncx: 0,
@@ -411,6 +411,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
           userId: body.partner_user_id,
           status: 'PENDING',
           channel: 'VA_DANARAPAY',
+          checkoutUrl: '',
           pgRefId: result.va_number,
           pgClientRef: body.partner_trx_id || null,
           trxExpirationTime: trxExpirationTime,
