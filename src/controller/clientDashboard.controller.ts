@@ -122,8 +122,8 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
 
 export async function getClientDashboard(req: ClientAuthRequest, res: Response) {
   try {
-    // (1) Build cache key
-    const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}`;
+    // (1) Build cache key - include channel and bankCode filters
+    const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}:${req.query.channel || ''}:${req.query.bankCode || ''}`;
 
     // (2) Check cache
     const cached = await cacheGet<any>(cacheKey);
