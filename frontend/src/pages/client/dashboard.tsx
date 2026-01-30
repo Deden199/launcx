@@ -890,13 +890,13 @@ export default function ClientDashboardPage() {
                       <div key={i} className="h-16 w-full animate-pulse rounded-lg bg-indigo-900/30" />
                     ))}
                   </div>
-                ) : activeVas.length === 0 ? (
+                ) : (activeVas || []).length === 0 ? (
                   <div className="text-center py-6 text-neutral-400 text-sm">
                     Tidak ada VA aktif saat ini
                   </div>
                 ) : (
                   <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    {activeVas.map(va => (
+                    {(activeVas || []).map(va => (
                       <div 
                         key={va.id} 
                         className="rounded-xl border border-indigo-800/30 bg-indigo-950/40 p-3 hover:bg-indigo-900/30 transition-colors"
