@@ -410,7 +410,7 @@ export default function ClientDashboardPage() {
 
         {/* Stats */}
         {selectedChild && (
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <section className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
@@ -442,6 +442,32 @@ export default function ClientDashboardPage() {
                 </div>
               </div>
               <Wallet className="opacity-80" />
+            </div>
+          </div>
+
+          {/* VA DanaRapay Stats */}
+          <div className="rounded-2xl border border-indigo-800/50 bg-indigo-950/30 p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-indigo-300 font-medium">VA DanaRapay</div>
+              <CreditCard className="opacity-80 text-indigo-400" size={18} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-neutral-400">Pending:</span>
+                <span className="ml-1 text-amber-400 font-medium">{vaStats.pending}</span>
+              </div>
+              <div>
+                <span className="text-neutral-400">Success:</span>
+                <span className="ml-1 text-emerald-400 font-medium">{vaStats.success}</span>
+              </div>
+              <div>
+                <span className="text-neutral-400">Expired:</span>
+                <span className="ml-1 text-red-400 font-medium">{vaStats.expired}</span>
+              </div>
+              <div>
+                <span className="text-neutral-400">Total:</span>
+                <span className="ml-1 font-medium">{vaStats.created}</span>
+              </div>
             </div>
           </div>
         </section>
