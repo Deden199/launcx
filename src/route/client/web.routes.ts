@@ -42,7 +42,8 @@ r.get('/dashboard', getClientDashboard)
 r.get('/dashboard/export', exportClientTransactions)
 r.post('/callbacks/:id/retry', retryTransactionCallback)
 
-// Active VA list
+// VA Dashboard (dedicated for VA DanaRapay)
+r.get('/va-dashboard', getVaDashboard)
 r.get('/va-active', getActiveVaList)
 
 // Callback API logs
