@@ -657,7 +657,7 @@ export default function ClientDashboardPage() {
                   className="h-10 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm"
                 >
                   <option value="">All Banks</option>
-                  {vaBanks.map(b => (
+                  {(vaBanks || []).map(b => (
                     <option key={b.code} value={b.code}>{b.name}</option>
                   ))}
                 </select>
