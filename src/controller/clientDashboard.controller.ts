@@ -25,6 +25,21 @@ const DASHBOARD_STATUSES = [
   ORDER_STATUS.EXPIRED,
 ];
 
+// VA Bank code to name mapping
+const VA_BANK_MAP: Record<string, string> = {
+  '002': 'BRI',
+  '008': 'Mandiri',
+  '009': 'BNI',
+  '013': 'Permata',
+  '022': 'CIMB',
+};
+
+// Channel types
+const CHANNEL_TYPES = {
+  QRIS: 'QRIS',
+  VA_DANARAPAY: 'VA_DANARAPAY',
+} as const;
+
 // Tipe baris untuk export (dinormalisasi → Date, number, string) agar aman dan teruji.
 type OrderExportRow = {
   partnerClientId: string;
