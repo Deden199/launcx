@@ -701,11 +701,11 @@ export default function ClientDashboardPage() {
             </div>
           ) : (
             <div className="-mx-2 overflow-x-auto px-2">
-              <table className="min-w-[1200px] w-full text-sm">
+              <table className="min-w-[1400px] w-full text-sm" data-testid="transactions-table">
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b border-neutral-800 bg-neutral-900/80 backdrop-blur">
                     {[
-                      'Date', 'Update At', 'Settled At', 'TRX ID', 'RRN', 'Player ID',
+                      'Date', 'Channel', 'VA/Bank', 'TRX ID', 'RRN', 'Player ID',
                       'Amount', 'Fee', 'Net Amount', 'Status', 'Settlement Status', 'Action',
                     ].map((h) => (
                       <th key={h} className="px-3 py-2 text-left font-medium text-neutral-300">{h}</th>
@@ -718,15 +718,41 @@ export default function ClientDashboardPage() {
                       <td className="px-3 py-2 whitespace-nowrap">
                         {new Date(t.date).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
                       </td>
+                      
+                      {/* Channel */}
                       <td className="px-3 py-2 whitespace-nowrap">
-                        {t.paymentReceivedTime
-                          ? new Date(t.paymentReceivedTime).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
-                          : '-'}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          t.channel === 'VA_DANARAPAY' 
+                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' 
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        }`}>
+                          {t.channel === 'VA_DANARAPAY' ? (
+                            <><CreditCard size={12} /> VA</>
+                          ) : (
+                            'QRIS'
+                          )}
+                        </span>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {t.settlementTime
-                          ? new Date(t.settlementTime).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
-                          : '-'}
+
+                      {/* VA Number / Bank */}
+                      <td className="px-3 py-2">
+                        {t.channel === 'VA_DANARAPAY' && t.vaNumber ? (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <code className="text-[11px] text-neutral-300">{t.vaNumber}</code>
+                              <button
+                                title="Copy VA Number"
+                                onClick={() => copyText(t.vaNumber || '')}
+                                className="inline-flex h-5 w-5 items-center justify-center rounded border border-neutral-700 hover:bg-neutral-800/60"
+                              >
+                                <ClipboardCopy size={10} />
+                              </button>
+                            </div>
+                            <span className="text-[10px] text-neutral-500">{t.bankName || t.bankCode}</span>
+                          </div>
+                        ) : (
+                          <span className="text-neutral-500">-</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2">
