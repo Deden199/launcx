@@ -454,19 +454,19 @@ export default function ClientDashboardPage() {
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
                 <span className="text-neutral-400">Pending:</span>
-                <span className="ml-1 text-amber-400 font-medium">{vaStats.pending}</span>
+                <span className="ml-1 text-amber-400 font-medium">{vaStats?.pending ?? 0}</span>
               </div>
               <div>
                 <span className="text-neutral-400">Success:</span>
-                <span className="ml-1 text-emerald-400 font-medium">{vaStats.success}</span>
+                <span className="ml-1 text-emerald-400 font-medium">{vaStats?.success ?? 0}</span>
               </div>
               <div>
                 <span className="text-neutral-400">Expired:</span>
-                <span className="ml-1 text-red-400 font-medium">{vaStats.expired}</span>
+                <span className="ml-1 text-red-400 font-medium">{vaStats?.expired ?? 0}</span>
               </div>
               <div>
                 <span className="text-neutral-400">Total:</span>
-                <span className="ml-1 font-medium">{vaStats.created}</span>
+                <span className="ml-1 font-medium">{vaStats?.created ?? 0}</span>
               </div>
             </div>
           </div>
