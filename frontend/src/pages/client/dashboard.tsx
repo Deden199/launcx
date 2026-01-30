@@ -210,6 +210,8 @@ export default function ClientDashboardPage() {
         totalSettlement?: number
         totalPaid?: number
         children: ClientOption[]
+        vaStats?: VaStats
+        vaBanks?: VaBank[]
       }>('/client/dashboard', { params: buildParams() })
 
       setBalance(data.balance)
@@ -218,6 +220,9 @@ export default function ClientDashboardPage() {
       setTotalPaid(data.totalPaid || 0)
       setChildren(data.children)
       setTotalTrans(data.totalCount)
+      // VA Stats
+      if (data.vaStats) setVaStats(data.vaStats)
+      if (data.vaBanks) setVaBanks(data.vaBanks)
     } catch (err: any) {
       if (err?.response?.status === 401) {
         router.push('/client/login')
@@ -226,6 +231,24 @@ export default function ClientDashboardPage() {
       }
     } finally {
       setLoadingSummary(false)
+    }
+  }
+
+  // Fetch Active VAs
+  const fetchActiveVas = async () => {
+    if (!selectedChild) return
+    setLoadingVa(true)
+    try {
+      const params: any = {}
+      if (selectedChild && selectedChild !== 'all') params.clientId = selectedChild
+      if (bankFilter) params.bankCode = bankFilter
+      
+      const { data } = await api.get<{ data: ActiveVa[]; total: number }>('/client/va-active', { params })
+      setActiveVas(data.data || [])
+    } catch (err: any) {
+      console.error('Failed to fetch active VAs', err)
+    } finally {
+      setLoadingVa(false)
     }
   }
 
