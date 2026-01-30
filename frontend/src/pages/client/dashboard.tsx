@@ -631,6 +631,39 @@ export default function ClientDashboardPage() {
               </select>
             </label>
 
+            {/* Channel Filter */}
+            <label className="block">
+              <span className="mb-1 block text-xs text-neutral-400">Channel</span>
+              <select
+                data-testid="channel-filter"
+                value={channelFilter}
+                onChange={e => { setChannelFilter(e.target.value); setPage(1) }}
+                className="h-10 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm"
+              >
+                <option value="">All Channels</option>
+                <option value="QRIS">QRIS</option>
+                <option value="VA_DANARAPAY">VA DanaRapay</option>
+              </select>
+            </label>
+
+            {/* Bank Filter (only for VA) */}
+            {channelFilter === 'VA_DANARAPAY' && (
+              <label className="block">
+                <span className="mb-1 block text-xs text-neutral-400">Bank VA</span>
+                <select
+                  data-testid="bank-filter"
+                  value={bankFilter}
+                  onChange={e => { setBankFilter(e.target.value); setPage(1) }}
+                  className="h-10 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm"
+                >
+                  <option value="">All Banks</option>
+                  {vaBanks.map(b => (
+                    <option key={b.code} value={b.code}>{b.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             {/* Search */}
             <label className="block">
               <span className="mb-1 block text-xs text-neutral-400">Search</span>
