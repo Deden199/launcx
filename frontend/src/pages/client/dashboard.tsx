@@ -415,7 +415,7 @@ export default function ClientDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs text-neutral-400">Transactions</div>
-                <div className="mt-1 text-xl font-semibold">{totalTrans.toLocaleString()}</div>
+                <div className="mt-1 text-xl font-semibold">{(totalTrans ?? 0).toLocaleString()}</div>
               </div>
               <ListChecks className="opacity-80" />
             </div>
@@ -426,7 +426,7 @@ export default function ClientDashboardPage() {
               <div>
                 <div className="text-xs text-neutral-400">Pending Settlement</div>
                 <div className="mt-1 text-xl font-semibold">
-                  {totalPend.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
+                  {(totalPend ?? 0).toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
                 </div>
               </div>
               <Clock className="opacity-80" />
@@ -438,7 +438,7 @@ export default function ClientDashboardPage() {
               <div>
                 <div className="text-xs text-neutral-400">Total Settlement</div>
                 <div className="mt-1 text-xl font-semibold">
-                  {totalSettlement.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
+                  {(totalSettlement ?? 0).toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
                 </div>
               </div>
               <Wallet className="opacity-80" />
