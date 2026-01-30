@@ -333,7 +333,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       })
     ]);
 
-    // (11) Metrics extraction
+    // (13) Metrics extraction
     const totalPending = metricsGrouped
       .filter(g => g.status === ORDER_STATUS.PAID)
       .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
@@ -352,18 +352,40 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     const totalCount = totalRows;
 
-    // (12) Balance
+    // (14) VA Stats extraction
+    const vaStatsMap = {
+      created: vaStats.reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      pending: vaStats
+        .filter(g => g.status === ORDER_STATUS.PENDING)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      success: vaStats
+        .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED, ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      expired: vaStats
+        .filter(g => g.status === ORDER_STATUS.EXPIRED)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      totalAmount: vaStats.reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
+    };
+
+    // (15) Balance
     const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
     const childrenBal = pc.children
       .filter(c => clientIds.includes(c.id))
       .reduce((sum, c) => sum + (c.balance ?? 0), 0);
     const totalActive = parentBal + childrenBal;
 
-    // (13) Map transactions
+    // (16) Map transactions with VA data
     const transactions = orders.map(o => {
       const netSettle = o.status === ORDER_STATUS.PAID
         ? (o.pendingAmount ?? 0)
         : (o.settlementAmount ?? 0);
+      
+      // Extract VA info from providerPayload
+      const pp = o.providerPayload as any;
+      const vaNumber = pp?.va_number ?? '';
+      const bankCode = pp?.bank_code ?? '';
+      const bankName = bankCode ? (VA_BANK_MAP[bankCode] ?? bankCode) : '';
+      
       return {
         id: o.id,
         date: o.createdAt.toISOString(),
@@ -378,6 +400,11 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
         settlementTime: '', // sementara kosong agar aman dari decode error
         trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
+        // VA specific fields
+        channel: o.channel || 'QRIS',
+        vaNumber,
+        bankCode,
+        bankName,
       };
     });
 
@@ -391,7 +418,11 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       totalTransaksi: totalCount,
       total: totalCount,
       transactions,
-      children: pc.children
+      children: pc.children,
+      // VA Stats
+      vaStats: vaStatsMap,
+      // Available banks for filter
+      vaBanks: Object.entries(VA_BANK_MAP).map(([code, name]) => ({ code, name })),
     };
 
     // (14) Cache
