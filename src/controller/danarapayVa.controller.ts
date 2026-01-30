@@ -2,6 +2,7 @@
 // DanaRpay VA Aggregator Controller - Based on official API docs v1.2.4
 
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import logger from '../logger';
 import { prisma } from '../core/prisma';
 import { config } from '../config';
