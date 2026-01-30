@@ -363,7 +363,7 @@ export default function ClientDashboardPage() {
     }
   }, [showVaSection, selectedChild, bankFilter])
 
-  const filtered = txs.filter(t =>
+  const filtered = (txs || []).filter(t =>
     (statusFilter === '' || normalizeStatus(t.status) === statusFilter) &&
     (
       t.id.toLowerCase().includes(search.toLowerCase()) ||
