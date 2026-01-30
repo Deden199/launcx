@@ -260,12 +260,72 @@ export async function danarapayVaCallback(req: Request, res: Response) {
           providerPayload: body,
         });
 
-        // TODO: Trigger partner callback if order updated successfully
+        // Forward callback to partner client if order updated successfully
         if (result.updated && result.order?.partnerClientId) {
-          logger.info('[DanaRpay VA] Queuing partner callback', {
-            orderId: result.order.id,
-            partnerClientId: result.order.partnerClientId,
-          });
+          try {
+            // Get partner client info
+            const partnerClient = await prisma.partnerClient.findUnique({
+              where: { id: result.order.partnerClientId },
+              select: { callbackUrl: true, callbackSecret: true }
+            });
+
+            if (partnerClient?.callbackUrl && partnerClient?.callbackSecret) {
+              const timestamp = new Date().toISOString();
+              const nonce = crypto.randomUUID();
+              
+              // Get bank name
+              const bankNames: Record<string, string> = {
+                '002': 'BRI', '008': 'Mandiri', '009': 'BNI', '013': 'Permata', '022': 'CIMB'
+              };
+              
+              const callbackPayload = {
+                orderId: result.order.id,
+                status: result.order.status,
+                channel: 'VA',
+                vaNumber: body.va_number,
+                bankCode: (result.order.providerPayload as any)?.bank_code || '',
+                bankName: bankNames[(result.order.providerPayload as any)?.bank_code] || '',
+                grossAmount: result.order.amount,
+                feeLauncx: result.order.feeLauncx || 0,
+                netAmount: result.order.settlementAmount || result.order.pendingAmount || 0,
+                playerId: result.order.playerId || body.partner_user_id,
+                settlementStatus: body.settlement_status || 'PENDING',
+                timestamp,
+                nonce,
+              };
+
+              const signature = crypto
+                .createHmac('sha256', partnerClient.callbackSecret)
+                .update(JSON.stringify(callbackPayload))
+                .digest('hex');
+
+              // Queue callback job
+              await prisma.callbackJob.create({
+                data: {
+                  url: partnerClient.callbackUrl,
+                  payload: callbackPayload,
+                  signature,
+                  partnerClientId: result.order.partnerClientId,
+                },
+              });
+
+              logger.info('[DanaRpay VA] Queued partner callback', {
+                orderId: result.order.id,
+                partnerClientId: result.order.partnerClientId,
+                callbackUrl: partnerClient.callbackUrl,
+              });
+            } else {
+              logger.warn('[DanaRpay VA] Partner has no callback URL configured', {
+                orderId: result.order.id,
+                partnerClientId: result.order.partnerClientId,
+              });
+            }
+          } catch (cbErr: any) {
+            logger.error('[DanaRpay VA] Failed to queue partner callback', {
+              orderId: result.order.id,
+              error: cbErr?.message,
+            });
+          }
         }
 
         logger.info('[DanaRpay VA] Callback processed', {
