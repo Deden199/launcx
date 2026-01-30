@@ -839,3 +839,191 @@ export async function getActiveVaList(req: ClientAuthRequest, res: Response) {
   }
 }
 
+
+/**
+ * GET /api/v1/client/va-dashboard
+ * Dedicated VA Dashboard - transactions + stats for VA DanaRapay only
+ */
+export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
+  try {
+    // Load user + partnerClient(+children)
+    const user = await prismaReadOnly.clientUser.findUnique({
+      where: { id: req.clientUserId! },
+      include: {
+        partnerClient: {
+          select: {
+            id: true,
+            name: true,
+            children: { select: { id: true, name: true } }
+          }
+        }
+      }
+    });
+
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
+    const pc = user.partnerClient!;
+
+    // Client IDs
+    let clientIds: string[];
+    if (typeof req.query.clientId === 'string'
+        && req.query.clientId !== 'all'
+        && req.query.clientId.trim()) {
+      clientIds = [req.query.clientId];
+    } else if (pc.children.length > 0) {
+      clientIds = [pc.id, ...pc.children.map(c => c.id)];
+    } else {
+      clientIds = [pc.id];
+    }
+
+    // Parse date range
+    const dateFrom = typeof req.query.date_from === 'string' ? new Date(req.query.date_from) : null;
+    const dateTo = typeof req.query.date_to === 'string' ? new Date(req.query.date_to) : null;
+
+    const createdAtFilter: any = {};
+    if (dateFrom) createdAtFilter.gte = dateFrom;
+    if (dateTo) createdAtFilter.lte = dateTo;
+
+    // Status filter
+    let statuses: string[] = DASHBOARD_STATUSES;
+    if (req.query.status) {
+      const statusParam = req.query.status;
+      if (Array.isArray(statusParam)) {
+        statuses = statusParam as string[];
+      } else if (typeof statusParam === 'string') {
+        statuses = [statusParam];
+      }
+    }
+
+    // Bank filter
+    const bankCodeFilter = typeof req.query.bankCode === 'string' && req.query.bankCode.trim()
+      ? req.query.bankCode.trim()
+      : '';
+
+    // Search
+    const searchStr = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+
+    // Pagination
+    const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+    const pageSize = Math.min(50, parseInt(String(req.query.limit || '10'), 10));
+
+    // Base where clause - VA_DANARAPAY only
+    const whereVa: any = {
+      partnerClientId: { in: clientIds },
+      channel: CHANNEL_TYPES.VA_DANARAPAY,
+      status: { in: statuses },
+      ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+    };
+
+    // Bank filter
+    if (bankCodeFilter) {
+      whereVa.providerPayload = {
+        path: ['bank_code'],
+        equals: bankCodeFilter
+      };
+    }
+
+    // Search filter
+    if (searchStr) {
+      whereVa.OR = [
+        { id: { contains: searchStr, mode: 'insensitive' } },
+        { playerId: { contains: searchStr, mode: 'insensitive' } },
+      ];
+    }
+
+    // Parallel queries
+    const [transactions, totalCount, statsGrouped] = await Promise.all([
+      // Transactions
+      prismaReadOnly.order.findMany({
+        where: whereVa,
+        orderBy: { createdAt: 'desc' },
+        skip: (pageNum - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          playerId: true,
+          amount: true,
+          feeLauncx: true,
+          settlementAmount: true,
+          pendingAmount: true,
+          status: true,
+          settlementStatus: true,
+          createdAt: true,
+          paymentReceivedTime: true,
+          trxExpirationTime: true,
+          providerPayload: true,
+        }
+      }),
+      // Count
+      prismaReadOnly.order.count({ where: whereVa }),
+      // Stats grouped by status
+      prismaReadOnly.order.groupBy({
+        by: ['status'],
+        where: {
+          partnerClientId: { in: clientIds },
+          channel: CHANNEL_TYPES.VA_DANARAPAY,
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        _count: { id: true },
+        _sum: { amount: true, settlementAmount: true }
+      })
+    ]);
+
+    // Calculate stats
+    const stats = {
+      total: statsGrouped.reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      pending: statsGrouped
+        .filter(g => g.status === ORDER_STATUS.PENDING)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      success: statsGrouped
+        .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED, ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      expired: statsGrouped
+        .filter(g => g.status === ORDER_STATUS.EXPIRED)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      totalAmount: statsGrouped.reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
+      totalPaid: statsGrouped
+        .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED, ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+        .reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
+    };
+
+    // Map transactions
+    const mappedTx = transactions.map(o => {
+      const pp = o.providerPayload as any;
+      const netSettle = [ORDER_STATUS.PAID].includes(o.status as any)
+        ? (o.pendingAmount ?? 0)
+        : (o.settlementAmount ?? 0);
+
+      return {
+        id: o.id,
+        date: o.createdAt.toISOString(),
+        vaNumber: pp?.va_number ?? '',
+        bankCode: pp?.bank_code ?? '',
+        bankName: pp?.bank_code ? (VA_BANK_MAP[pp.bank_code] ?? pp.bank_code) : '',
+        playerId: o.playerId ?? '',
+        usernameDisplay: pp?.username_display ?? '',
+        amount: o.amount,
+        feeLauncx: o.feeLauncx ?? 0,
+        netSettle,
+        status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
+        settlementStatus: o.settlementStatus ?? '',
+        paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
+        trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
+      };
+    });
+
+    return res.json({
+      success: true,
+      transactions: mappedTx,
+      total: totalCount,
+      page: pageNum,
+      limit: pageSize,
+      totalPages: Math.ceil(totalCount / pageSize),
+      stats,
+      children: pc.children,
+    });
+  } catch (err: any) {
+    console.error('[getVaDashboard]', err);
+    return res.status(500).json({ error: err.message || 'Internal Server Error' });
+  }
+}
+
