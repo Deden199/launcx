@@ -687,7 +687,7 @@ export default function ClientDashboardPage() {
             <h2 className="text-base font-semibold">Transaction List &amp; Settlement</h2>
             {!loadingTx && (
               <div className="text-xs text-neutral-400">
-                {filtered.length ? `${filtered.length.toLocaleString('id-ID')} baris` : '—'}
+                {(filtered || []).length ? `${(filtered || []).length.toLocaleString('id-ID')} baris` : '—'}
               </div>
             )}
           </div>
