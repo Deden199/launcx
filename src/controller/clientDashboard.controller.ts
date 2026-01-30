@@ -729,3 +729,113 @@ export async function retryTransactionCallback(
       .json({ error: err.message || 'Gagal mengirim callback' });
   }
 }
+
+
+/**
+ * GET /api/v1/client/va-active
+ * List active VA for monitoring
+ */
+export async function getActiveVaList(req: ClientAuthRequest, res: Response) {
+  try {
+    // Load user + partnerClient(+children)
+    const user = await prismaReadOnly.clientUser.findUnique({
+      where: { id: req.clientUserId! },
+      include: {
+        partnerClient: {
+          select: {
+            id: true,
+            children: { select: { id: true } }
+          }
+        }
+      }
+    });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
+    const pc = user.partnerClient!;
+
+    // Client IDs
+    let clientIds: string[];
+    if (typeof req.query.clientId === 'string'
+        && req.query.clientId !== 'all'
+        && req.query.clientId.trim()) {
+      clientIds = [req.query.clientId];
+    } else if (pc.children.length > 0) {
+      clientIds = [pc.id, ...pc.children.map(c => c.id)];
+    } else {
+      clientIds = [pc.id];
+    }
+
+    // Bank filter
+    const bankCodeFilter = typeof req.query.bankCode === 'string' && req.query.bankCode.trim()
+      ? req.query.bankCode.trim()
+      : '';
+
+    // Pagination
+    const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+    const pageSize = Math.min(50, parseInt(String(req.query.limit || '20'), 10));
+
+    // Query active VAs (PENDING status with VA_DANARAPAY channel)
+    const whereVa: any = {
+      partnerClientId: { in: clientIds },
+      channel: CHANNEL_TYPES.VA_DANARAPAY,
+      status: ORDER_STATUS.PENDING,
+    };
+
+    if (bankCodeFilter) {
+      whereVa.providerPayload = {
+        path: ['bank_code'],
+        equals: bankCodeFilter
+      };
+    }
+
+    const [vaList, totalCount] = await Promise.all([
+      prismaReadOnly.order.findMany({
+        where: whereVa,
+        orderBy: { createdAt: 'desc' },
+        skip: (pageNum - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          playerId: true,
+          amount: true,
+          status: true,
+          createdAt: true,
+          trxExpirationTime: true,
+          providerPayload: true,
+        }
+      }),
+      prismaReadOnly.order.count({ where: whereVa })
+    ]);
+
+    // Map VA data
+    const activeVas = vaList.map(va => {
+      const pp = va.providerPayload as any;
+      return {
+        id: va.id,
+        vaNumber: pp?.va_number ?? '',
+        bankCode: pp?.bank_code ?? '',
+        bankName: pp?.bank_code ? (VA_BANK_MAP[pp.bank_code] ?? pp.bank_code) : '',
+        amount: va.amount,
+        isOpen: pp?.is_open ?? true,
+        playerId: va.playerId ?? '',
+        usernameDisplay: pp?.username_display ?? '',
+        status: va.status,
+        vaStatus: pp?.va_status ?? 'WAITING_PAYMENT',
+        createdAt: va.createdAt.toISOString(),
+        expiresAt: va.trxExpirationTime?.toISOString() ?? '',
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: activeVas,
+      total: totalCount,
+      page: pageNum,
+      limit: pageSize,
+      totalPages: Math.ceil(totalCount / pageSize),
+    });
+  } catch (err: any) {
+    console.error('[getActiveVaList]', err);
+    return res.status(500).json({ error: err.message || 'Internal Server Error' });
+  }
+}
+
