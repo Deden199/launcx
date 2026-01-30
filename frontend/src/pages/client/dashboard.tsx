@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import api from '@/lib/apiClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
-import { ClipboardCopy, Wallet, Clock, ListChecks, FileText } from 'lucide-react'
+import { ClipboardCopy, Wallet, Clock, ListChecks, FileText, CreditCard, Building2, RefreshCw } from 'lucide-react'
 
 type RawStatus = '' | 'SUCCESS' | 'DONE' | 'SETTLED' | 'PAID' | 'PENDING' | 'EXPIRED'
 type Tx = {
@@ -22,6 +22,36 @@ type Tx = {
   paymentReceivedTime?: string
   settlementTime?: string
   trxExpirationTime?: string
+  // VA fields
+  channel?: string
+  vaNumber?: string
+  bankCode?: string
+  bankName?: string
+}
+
+type VaStats = {
+  created: number
+  pending: number
+  success: number
+  expired: number
+  totalAmount: number
+}
+
+type VaBank = { code: string; name: string }
+
+type ActiveVa = {
+  id: string
+  vaNumber: string
+  bankCode: string
+  bankName: string
+  amount: number
+  isOpen: boolean
+  playerId: string
+  usernameDisplay: string
+  status: string
+  vaStatus: string
+  createdAt: string
+  expiresAt: string
 }
 
 type ClientOption = { id: string; name: string }
