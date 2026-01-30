@@ -304,9 +304,9 @@ export default function VaDashboardPage() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <CreditCard className="text-indigo-400" />
-              VA DanaRapay Dashboard
+              Virtual Account Dashboard
             </h1>
-            <p className="text-sm text-neutral-400 mt-1">Monitor transaksi Virtual Account DanaRapay</p>
+            <p className="text-sm text-neutral-400 mt-1">Monitor transaksi Virtual Account</p>
           </div>
           <button
             onClick={() => router.push('/client/dashboard')}
