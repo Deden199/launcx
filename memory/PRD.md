@@ -1,83 +1,73 @@
-# Launcx - DanaRpay VA Aggregator Integration PRD
+# PRD - Client Dashboard VA DanaRapay Integration
 
 ## Original Problem Statement
-Integrasi Virtual Account (VA Aggregator) dari DanaRpay ke monorepo Launcx sesuai dokumentasi: https://api-docs.danarapay.com/#tag/VA-Aggregator
+Sesuaikan client dashboard agar menampilkan juga data dari VA DanaRapay agar mereka bisa monitor juga transaksi di danarapay.
 
-Target:
-- Launcx bisa membuat VA
-- Menerima callback/notification pembayaran
-- Meng-update status transaksi secara idempotent
+## User Requirements Gathered
+1. **Data VA yang ditampilkan**: Semua (list transaksi VA, summary stats, list VA aktif)
+2. **Cara tampil**: Digabung dengan tabel transaksi existing + section VA Aktif terpisah
+3. **Filter tambahan**: Filter by channel/provider + filter by bank VA
+4. **Fitur tambahan**: Monitor transaksi saja (create VA opsional next phase)
 
 ## Architecture
 
-### Tech Stack
-- Backend: Node.js + TypeScript + Express
-- Database: MongoDB + Prisma
-- Payment Gateway: DanaRpay VA Aggregator
+### Backend Changes (`/app/src/controller/clientDashboard.controller.ts`)
+- Added channel filter (`QRIS` / `VA_DANARAPAY`)
+- Added bank code filter for VA transactions
+- Added VA stats aggregation (created, pending, success, expired, totalAmount)
+- Added VA bank mapping (BRI, Mandiri, BNI, Permata, CIMB)
+- Added `channel`, `vaNumber`, `bankCode`, `bankName` fields to transaction response
+- Added new endpoint: `GET /api/v1/client/va-active` for active VA monitoring
 
-### Components
-```
-Launcx Backend
-├── src/service/danarapayClient.ts      # HTTP client
-├── src/controller/danarapayVa.controller.ts  # Business logic
-├── src/route/danarapay.callback.routes.ts    # API routes
-└── src/config.ts                       # Configuration
-```
+### Frontend Changes (`/app/frontend/src/pages/client/dashboard.tsx`)
+- Added VA DanaRapay stats card (Pending, Success, Expired, Total)
+- Added Channel filter dropdown (All Channels / QRIS / VA DanaRapay)
+- Added Bank VA filter dropdown (appears when VA DanaRapay selected)
+- Added columns: Channel, VA/Bank to transaction table
+- Added VA Aktif (Monitoring) collapsible section with VA cards
 
-## What's Been Implemented (Jan 2026)
+### Routes (`/app/src/route/client/web.routes.ts`)
+- Added `GET /va-active` endpoint
 
-### ✅ DanaRpay VA Integration
-- [x] Create VA (`POST /api/generate-static-va`)
-- [x] Get VA Info (`GET /api/static-virtual-account/{id}`)
-- [x] Update VA (`PUT /api/static-virtual-account/{ID}`)
-- [x] Simulate Callback (`POST /api/va-aggregator/simulate-callback`)
-- [x] Callback handler with idempotent update
-- [x] Support all 5 banks: BRI, Mandiri, BNI, Permata, CIMB
+## What's Been Implemented (Jan 30, 2026)
+- [x] Backend: Channel and bank code filters
+- [x] Backend: VA stats aggregation
+- [x] Backend: Active VA list endpoint
+- [x] Frontend: VA DanaRapay stats card
+- [x] Frontend: Channel filter dropdown
+- [x] Frontend: Bank VA filter (conditional)
+- [x] Frontend: Transaction table with Channel/VA columns
+- [x] Frontend: VA Aktif monitoring section
+- [x] TypeScript compilation successful
 
-### API Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/payments/danarapay/va/callback` | Webhook (public) |
-| POST | `/api/v1/payments/danarapay/va/create` | Create VA |
-| GET | `/api/v1/payments/danarapay/va/info/:vaId` | Get VA info |
-| PUT | `/api/v1/payments/danarapay/va/update/:vaId` | Update VA |
-| POST | `/api/v1/payments/danarapay/va/simulate-callback` | Simulate (staging) |
-| GET | `/api/v1/payments/danarapay/va/banks` | List banks |
+## User Personas
+- **Client/Merchant**: Users who need to monitor all their payment transactions (QRIS + VA) in one unified dashboard
 
 ## Core Requirements (Static)
-
-1. **Authentication**: `x-username` + `x-api-key` headers
-2. **Banks**: 002 (BRI), 008 (Mandiri), 009 (BNI), 013 (Permata), 022 (CIMB)
-3. **VA Types**: Open amount, Closed amount, Lifetime, Single-use
-4. **Callback**: Idempotent processing, audit trail
-
-## Environment Variables
-```
-DANARAPAY_BASE_URL=https://api-stg.danarapay.com
-DANARAPAY_USERNAME=xxx
-DANARAPAY_API_KEY=xxx
-```
+- Single dashboard view for all payment channels
+- Filter by channel (QRIS vs VA DanaRapay)
+- Filter by VA bank (BRI, Mandiri, BNI, Permata, CIMB)
+- VA statistics summary
+- Active VA monitoring
 
 ## Prioritized Backlog
-
 ### P0 (Done)
-- [x] Create VA API
-- [x] Callback handler
-- [x] Get VA status
-- [x] Update VA
+- [x] Transaction list with channel/VA data
+- [x] VA stats summary
+- [x] Channel & bank filters
+- [x] Active VA monitoring section
 
-### P1 (Next)
-- [ ] Partner callback forwarding after payment
-- [ ] VA expiry monitoring cron
-- [ ] Dashboard UI for VA management
+### P1 (Next Phase)
+- [ ] Create VA from dashboard
+- [ ] Manual "Refresh VA Status" button
+- [ ] Export VA transactions to Excel (separate from QRIS)
 
 ### P2 (Future)
-- [ ] Batch VA creation
-- [ ] VA reconciliation report
-- [ ] Multi-merchant VA support
+- [ ] VA payment notifications
+- [ ] VA analytics charts
+- [ ] Bulk VA creation
 
 ## Next Tasks
-1. Set ENV variables dengan credentials dari DanaRpay
-2. Register callback URL di DanaRpay Dashboard
-3. Test end-to-end di staging environment
-4. Implement partner callback forwarding
+1. Deploy to production with proper environment variables
+2. Test with real VA transactions
+3. Consider adding Create VA feature for merchants
