@@ -738,7 +738,8 @@ export default function DashboardPage() {
                   />
                   <Tooltip
                     contentStyle={{ fontSize: 12 }}
-                    formatter={(v: number, key) => {
+                    formatter={(v: number | undefined, key) => {
+                      if (v === undefined) return ['-', key === 'amount' ? 'Amount' : 'Count']
                       if (key === 'amount') {
                         return [v.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' }), 'Amount']
                       }
