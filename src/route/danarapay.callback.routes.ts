@@ -33,7 +33,7 @@ const flexibleJsonParser = json({
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/callback:
+ * /api/v1/payments/va-aggregator/va/callback:
  *   post:
  *     summary: DanaRpay VA Payment Callback
  *     description: |
@@ -108,7 +108,7 @@ danarapayRouter.post(
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/create:
+ * /api/v1/payments/va-aggregator/va/create:
  *   post:
  *     summary: Create Virtual Account
  *     description: |
@@ -184,7 +184,7 @@ danarapayRouter.post('/va/create', apiKeyAuth, createDanarapayVa);
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/info/{vaId}:
+ * /api/v1/payments/va-aggregator/va/info/{vaId}:
  *   get:
  *     summary: Get VA Info
  *     description: Get VA information by unique VA ID
@@ -211,7 +211,7 @@ danarapayRouter.get('/va/info/:vaId', apiKeyAuth, getDanarapayVaInfo);
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/update/{vaId}:
+ * /api/v1/payments/va-aggregator/va/update/{vaId}:
  *   put:
  *     summary: Update VA
  *     description: |
@@ -257,7 +257,7 @@ danarapayRouter.put('/va/update/:vaId', apiKeyAuth, updateDanarapayVa);
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/simulate-callback:
+ * /api/v1/payments/va-aggregator/va/simulate-callback:
  *   post:
  *     summary: Simulate VA Payment (Staging Only)
  *     description: Simulate VA payment callback in staging environment
@@ -296,7 +296,7 @@ danarapayRouter.post('/va/simulate-callback', apiKeyAuth, simulateDanarapayCallb
 
 /**
  * @swagger
- * /api/v1/payments/danarapay/va/banks:
+ * /api/v1/payments/va-aggregator/va/banks:
  *   get:
  *     summary: Get Available Bank Codes
  *     description: List all available banks for VA creation

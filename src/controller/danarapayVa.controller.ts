@@ -204,7 +204,7 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
 
 /**
  * DanaRpay VA Callback Handler
- * POST /api/v1/payments/danarapay/va/callback
+ * POST /api/v1/payments/va-aggregator/va/callback
  * 
  * Callback payload from DanaRpay:
  * - va_number, amount, partner_user_id, success, tx_date
@@ -387,7 +387,7 @@ interface CreateVaRequestBody {
 
 /**
  * Create VA internal endpoint
- * POST /api/v1/payments/danarapay/va/create
+ * POST /api/v1/payments/va-aggregator/va/create
  */
 export async function createDanarapayVa(req: Request, res: Response) {
   try {
@@ -558,7 +558,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
 
 /**
  * Get VA Info by unique VA ID
- * GET /api/v1/payments/danarapay/va/info/:vaId
+ * GET /api/v1/payments/va-aggregator/va/info/:vaId
  */
 export async function getDanarapayVaInfo(req: Request, res: Response) {
   try {
@@ -612,7 +612,7 @@ export async function getDanarapayVaInfo(req: Request, res: Response) {
 
 /**
  * Update VA by unique VA ID
- * PUT /api/v1/payments/danarapay/va/update/:vaId
+ * PUT /api/v1/payments/va-aggregator/va/update/:vaId
  */
 export async function updateDanarapayVa(req: Request, res: Response) {
   try {
@@ -663,7 +663,7 @@ export async function updateDanarapayVa(req: Request, res: Response) {
 
 /**
  * Simulate VA payment callback (staging environment only)
- * POST /api/v1/payments/danarapay/va/simulate-callback
+ * POST /api/v1/payments/va-aggregator/va/simulate-callback
  */
 export async function simulateDanarapayCallback(req: Request, res: Response) {
   try {
@@ -695,7 +695,7 @@ export async function simulateDanarapayCallback(req: Request, res: Response) {
 
 /**
  * Get available bank codes for VA
- * GET /api/v1/payments/danarapay/va/banks
+ * GET /api/v1/payments/va-aggregator/va/banks
  */
 export async function getDanarapayVaBanks(_req: Request, res: Response) {
   return res.status(200).json({

@@ -137,7 +137,7 @@ curl -X POST https://s2.launcx.com/api/v1/payments \\
 
       {/* 4.1 Create VA */}
       <h3 className={styles.heading3}>4.1 Create VA</h3>
-      <pre className={styles.codeBlock}><code>{`POST /api/v1/payments/danarapay/va/create
+      <pre className={styles.codeBlock}><code>{`POST /api/v1/payments/va-aggregator/va/create
 Headers:
   Content-Type: application/json
   X-API-Key: <YOUR_API_KEY>
@@ -201,7 +201,7 @@ Body:
       <h4 className={styles.heading3}>cURL Example</h4>
       <pre className={styles.codeBlock}><code>{`TS=$(date +%s000)
 
-curl -X POST https://s2.launcx.com/api/v1/payments/danarapay/va/create \\
+curl -X POST https://s2.launcx.com/api/v1/payments/va-aggregator/va/create \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: <YOUR_API_KEY>" \\
   -H "X-Timestamp: $TS" \\
@@ -218,7 +218,7 @@ curl -X POST https://s2.launcx.com/api/v1/payments/danarapay/va/create \\
 
       {/* 4.2 Get VA Info */}
       <h3 className={styles.heading3}>4.2 Get VA Info</h3>
-      <pre className={styles.codeBlock}><code>{`GET /api/v1/payments/danarapay/va/info/{vaId}
+      <pre className={styles.codeBlock}><code>{`GET /api/v1/payments/va-aggregator/va/info/{vaId}
 Headers:
   X-API-Key: <YOUR_API_KEY>
   X-Timestamp: <Unix TS ms>`}</code></pre>
@@ -239,7 +239,7 @@ Headers:
 
       {/* 4.3 Update VA */}
       <h3 className={styles.heading3}>4.3 Update VA</h3>
-      <pre className={styles.codeBlock}><code>{`PUT /api/v1/payments/danarapay/va/update/{vaId}
+      <pre className={styles.codeBlock}><code>{`PUT /api/v1/payments/va-aggregator/va/update/{vaId}
 Headers:
   Content-Type: application/json
   X-API-Key: <YOUR_API_KEY>
@@ -425,7 +425,7 @@ Authorization: Bearer <YOUR_JWT_TOKEN>`}</code></pre>
       <ol className={styles.list}>
         <li>Login ke Dashboard & dapatkan <code>API Key</code></li>
         <li>Register Callback URL di Dashboard</li>
-        <li>Create VA (<code>POST /payments/danarapay/va/create</code>)</li>
+        <li>Create VA (<code>POST /payments/va-aggregator/va/create</code>)</li>
         <li>Tampilkan nomor VA & bank ke customer</li>
         <li>Customer transfer ke nomor VA</li>
         <li>Terima Callback & verify signature</li>
