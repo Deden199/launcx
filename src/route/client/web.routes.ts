@@ -11,7 +11,8 @@ import {
 
   updateClientCallbackUrl,
   retryTransactionCallback,
-  getActiveVaList
+  getActiveVaList,
+  getVaDashboard
 } from '../../controller/clientDashboard.controller'
 import { getClientApiLogs } from '../../controller/clientApiLog.controller'
 import withdrawalRoutes from '../withdrawals.routes'
