@@ -385,7 +385,7 @@ export default function ClientDashboardPage() {
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-[1400px] p-4 sm:p-6">
         {/* Child Selector */}
-        {children.length > 0 && (
+        {(children || []).length > 0 && (
           <div className="mb-4 flex items-center gap-2">
             <span className="text-sm text-neutral-300">Pilih Child:</span>
             <select
@@ -395,7 +395,7 @@ export default function ClientDashboardPage() {
             >
               <option value="">Pilih Child</option>
               <option value="all">All</option>
-              {children.map(c => (
+              {(children || []).map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
