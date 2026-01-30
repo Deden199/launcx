@@ -40,16 +40,16 @@ DANARAPAY_API_KEY=your_api_key
 
 ### Public (Callback dari DanaRpay)
 ```
-POST /api/v1/payments/danarapay/va/callback
+POST /api/v1/payments/va-aggregator/va/callback
 ```
 
 ### Protected (API Key Auth)
 ```
-POST /api/v1/payments/danarapay/va/create         - Buat VA baru
-GET  /api/v1/payments/danarapay/va/info/:vaId     - Get VA info
-PUT  /api/v1/payments/danarapay/va/update/:vaId   - Update VA
-POST /api/v1/payments/danarapay/va/simulate-callback - Simulate payment (staging)
-GET  /api/v1/payments/danarapay/va/banks          - List bank tersedia
+POST /api/v1/payments/va-aggregator/va/create         - Buat VA baru
+GET  /api/v1/payments/va-aggregator/va/info/:vaId     - Get VA info
+PUT  /api/v1/payments/va-aggregator/va/update/:vaId   - Update VA
+POST /api/v1/payments/va-aggregator/va/simulate-callback - Simulate payment (staging)
+GET  /api/v1/payments/va-aggregator/va/banks          - List bank tersedia
 ```
 
 ## VA Status Flow
@@ -66,7 +66,7 @@ WAITING_PAYMENT → EXPIRED (after expiration_time)
 
 ### 1. Create VA (Closed Amount, Single Use)
 ```bash
-curl -X POST https://<domain>/api/v1/payments/danarapay/va/create \
+curl -X POST https://<domain>/api/v1/payments/va-aggregator/va/create \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <launcx-api-key>" \
   -d '{
@@ -83,13 +83,13 @@ curl -X POST https://<domain>/api/v1/payments/danarapay/va/create \
 
 ### 2. Get VA Info
 ```bash
-curl -X GET https://<domain>/api/v1/payments/danarapay/va/info/<vaId> \
+curl -X GET https://<domain>/api/v1/payments/va-aggregator/va/info/<vaId> \
   -H "X-API-Key: <launcx-api-key>"
 ```
 
 ### 3. Update VA
 ```bash
-curl -X PUT https://<domain>/api/v1/payments/danarapay/va/update/<vaId> \
+curl -X PUT https://<domain>/api/v1/payments/va-aggregator/va/update/<vaId> \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <launcx-api-key>" \
   -d '{
@@ -100,7 +100,7 @@ curl -X PUT https://<domain>/api/v1/payments/danarapay/va/update/<vaId> \
 
 ### 4. Simulate Payment (Staging Only)
 ```bash
-curl -X POST https://<domain>/api/v1/payments/danarapay/va/simulate-callback \
+curl -X POST https://<domain>/api/v1/payments/va-aggregator/va/simulate-callback \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <launcx-api-key>" \
   -d '{
@@ -163,5 +163,5 @@ Callback handler menggunakan idempotent update:
 
 1. Login ke DanaRpay Business Dashboard
 2. Buka **Settings** → **Developer Option** → **Callback Configuration**
-3. Set callback URL: `https://<your-domain>/api/v1/payments/danarapay/va/callback`
+3. Set callback URL: `https://<your-domain>/api/v1/payments/va-aggregator/va/callback`
 4. Whitelist IP server Launcx

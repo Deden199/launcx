@@ -81,7 +81,7 @@ const rateLimitExemptPaths = new Set([
   '/api/v1/withdrawals/callback',
   '/api/v1/withdrawals/callback/piro',
   '/api/v1/withdrawals/callback/ing1',
-  '/api/v1/payments/danarapay/va/callback',
+  '/api/v1/payments/va-aggregator/va/callback',
 ]);
 
 loadWeekendOverrideDates().catch(err => console.error('[init]', err));
@@ -209,7 +209,7 @@ app.use('/api/v1', ewalletRoutes);
 /** ⬇⬇⬇ PENTING: pasang PIVOT CALLBACK DULU biar ga ketabrak router lain ⬇⬇⬇ */
 app.use('/api/v1/payments', pivotCallbackRouter);
 /** DanaRpay VA Aggregator routes */
-app.use('/api/v1/payments/danarapay', danarapayRouter);
+app.use('/api/v1/payments/va-aggregator', danarapayRouter);
 /** Legacy & V2 menyusul */
 app.use('/api/v1/payments', apiKeyAuth, paymentRouter);
 app.use('/api/v1/payments', paymentRouterV2);

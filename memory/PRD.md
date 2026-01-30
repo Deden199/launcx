@@ -9,7 +9,7 @@
 ### 1. Setup di DanaRapay Dashboard
 Set callback URL di dashboard DanaRapay ke:
 ```
-https://s2.launcx.com/api/v1/payments/danarapay/va/callback
+https://s2.launcx.com/api/v1/payments/va-aggregator/va/callback
 ```
 
 ### 2. Callback Flow
@@ -72,14 +72,14 @@ Header: `X-Callback-Signature: <HMAC-SHA256 signature>`
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/payments` | POST | Create QRIS payment |
-| `/payments/danarapay/va/create` | POST | Create VA |
-| `/payments/danarapay/va/info/{id}` | GET | Get VA info |
-| `/payments/danarapay/va/update/{id}` | PUT | Update VA |
+| `/payments/va-aggregator/va/create` | POST | Create VA |
+| `/payments/va-aggregator/va/info/{id}` | GET | Get VA info |
+| `/payments/va-aggregator/va/update/{id}` | PUT | Update VA |
 
 ### Callback
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/payments/danarapay/va/callback` | POST | DanaRapay webhook endpoint |
+| `/payments/va-aggregator/va/callback` | POST | DanaRapay webhook endpoint |
 | `/client/callbacks/{id}/retry` | POST | Retry failed callback |
 
 ### Client Dashboard
