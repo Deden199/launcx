@@ -41,6 +41,9 @@ r.get('/dashboard', getClientDashboard)
 r.get('/dashboard/export', exportClientTransactions)
 r.post('/callbacks/:id/retry', retryTransactionCallback)
 
+// Active VA list
+r.get('/va-active', getActiveVaList)
+
 // Callback API logs
 r.get('/api-logs', getClientApiLogs)
 
