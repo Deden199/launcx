@@ -266,7 +266,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       ]
     }
 
-    // (9) Metrics statuses (unique)
+    // (11) Metrics statuses (unique)
     const metricsStatuses = Array.from(new Set([
       ...statuses,
       ORDER_STATUS.PAID,
@@ -276,19 +276,26 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       ORDER_STATUS.SETTLED
     ]));
 
-    // (10) Parallel queries (metrics + list + count)
+    // Build metrics where clause (apply channel filter to metrics too)
+    const metricsWhere: any = {
+      partnerClientId: { in: clientIds },
+      status: { in: metricsStatuses },
+      ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+    };
+    if (channelFilter) {
+      metricsWhere.channel = channelFilter;
+    }
+
+    // (12) Parallel queries (metrics + list + count + VA stats)
     const [
       metricsGrouped,
       orders,
-      totalRows
+      totalRows,
+      vaStats
     ] = await Promise.all([
       prismaReadOnly.order.groupBy({
         by: ['status'],
-        where: {
-          partnerClientId: { in: clientIds },
-          status: { in: metricsStatuses },
-          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
-        },
+        where: metricsWhere,
         _sum: {
           amount: true,
           settlementAmount: true,
@@ -306,11 +313,24 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           amount: true, feeLauncx: true, settlementAmount: true,
           pendingAmount: true, status: true, settlementStatus: true, createdAt: true,
           paymentReceivedTime: true,
+          channel: true,
+          providerPayload: true,
           // settlementTime sengaja tidak di-select agar tidak crash jika ada dokumen bertipe string
           trxExpirationTime: true,
         }
       }),
-      prismaReadOnly.order.count({ where: whereOrders })
+      prismaReadOnly.order.count({ where: whereOrders }),
+      // VA specific stats
+      prismaReadOnly.order.groupBy({
+        by: ['status'],
+        where: {
+          partnerClientId: { in: clientIds },
+          channel: CHANNEL_TYPES.VA_DANARAPAY,
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        _count: { id: true },
+        _sum: { amount: true }
+      })
     ]);
 
     // (11) Metrics extraction
