@@ -342,12 +342,12 @@ export default function ClientDashboardPage() {
         if (!selectedChild) return
 
     if (range !== 'custom' || (startDate && endDate)) fetchSummary()
-  }, [range, selectedChild, startDate, endDate, statusFilter])
+  }, [range, selectedChild, startDate, endDate, statusFilter, channelFilter, bankFilter])
   useEffect(() => {
         if (!selectedChild) return
 
     if (range !== 'custom' || (startDate && endDate)) fetchTransactions()
-  }, [range, selectedChild, startDate, endDate, search, page, perPage, statusFilter])
+  }, [range, selectedChild, startDate, endDate, search, page, perPage, statusFilter, channelFilter, bankFilter])
   useEffect(() => {
         if (!selectedChild) return
 
@@ -355,6 +355,13 @@ export default function ClientDashboardPage() {
       handleExport()
     }
   }, [range])
+  
+  // Fetch active VAs when section is shown
+  useEffect(() => {
+    if (showVaSection && selectedChild) {
+      fetchActiveVas()
+    }
+  }, [showVaSection, selectedChild, bankFilter])
 
   const filtered = txs.filter(t =>
     (statusFilter === '' || normalizeStatus(t.status) === statusFilter) &&
