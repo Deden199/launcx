@@ -857,6 +857,104 @@ export default function ClientDashboardPage() {
         </section>
                 )}
 
+        {/* VA Aktif Section */}
+        {selectedChild && (
+          <section className="mt-6 rounded-2xl border border-indigo-800/40 bg-indigo-950/20 p-4 sm:p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <button
+                data-testid="toggle-va-section"
+                onClick={() => setShowVaSection(!showVaSection)}
+                className="flex items-center gap-2 text-base font-semibold text-indigo-200 hover:text-indigo-100"
+              >
+                <Building2 size={18} />
+                <span>VA Aktif (Monitoring)</span>
+                <span className={`transition-transform ${showVaSection ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {showVaSection && (
+                <button
+                  onClick={fetchActiveVas}
+                  disabled={loadingVa}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg border border-indigo-700/50 hover:bg-indigo-800/30 disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={loadingVa ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
+              )}
+            </div>
+
+            {showVaSection && (
+              <div className="space-y-3">
+                {loadingVa ? (
+                  <div className="grid gap-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="h-16 w-full animate-pulse rounded-lg bg-indigo-900/30" />
+                    ))}
+                  </div>
+                ) : activeVas.length === 0 ? (
+                  <div className="text-center py-6 text-neutral-400 text-sm">
+                    Tidak ada VA aktif saat ini
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {activeVas.map(va => (
+                      <div 
+                        key={va.id} 
+                        className="rounded-xl border border-indigo-800/30 bg-indigo-950/40 p-3 hover:bg-indigo-900/30 transition-colors"
+                        data-testid={`va-card-${va.id}`}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-200 font-medium">
+                                {va.bankName}
+                              </span>
+                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                                va.vaStatus === 'WAITING_PAYMENT' 
+                                  ? 'bg-amber-500/20 text-amber-300' 
+                                  : 'bg-neutral-600/30 text-neutral-300'
+                              }`}>
+                                {va.vaStatus}
+                              </span>
+                            </div>
+                            <div className="mt-1 font-mono text-sm text-neutral-100 flex items-center gap-1">
+                              {va.vaNumber}
+                              <button
+                                onClick={() => copyText(va.vaNumber)}
+                                className="ml-1 p-1 rounded hover:bg-indigo-800/40"
+                                title="Copy VA Number"
+                              >
+                                <ClipboardCopy size={12} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-neutral-400">{va.isOpen ? 'Open' : 'Closed'}</div>
+                            <div className="font-semibold text-sm">
+                              {va.amount > 0 
+                                ? va.amount.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })
+                                : 'Any Amount'
+                              }
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-neutral-400 pt-2 border-t border-indigo-800/20">
+                          <span>{va.usernameDisplay || va.playerId}</span>
+                          <span>
+                            Exp: {va.expiresAt 
+                              ? new Date(va.expiresAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
+                              : 'Lifetime'
+                            }
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
       </div>
 
       {/* Portal target untuk react-datepicker agar popper gak ketutup */}
