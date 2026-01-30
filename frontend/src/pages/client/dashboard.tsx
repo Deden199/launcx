@@ -268,7 +268,7 @@ export default function ClientDashboardPage() {
             data-testid="go-to-va-dashboard"
           >
             <CreditCard size={16} />
-            Dashboard VA DanaRapay
+            Dashboard Virtual Account
           </button>
         </div>
 
