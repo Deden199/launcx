@@ -384,11 +384,93 @@ export async function createDanarapayVa(req: Request, res: Response) {
       });
     }
 
+    // Get partnerClientId from middleware (set by apiKeyAuth)
+    const partnerClientId = (req as any).clientId;
+    if (!partnerClientId) {
+      logger.warn('[DanaRpay VA] No clientId in request context');
+      return res.status(401).json({ success: false, error: 'Unauthorized - no client context' });
+    }
+
+    // Calculate expiration time
+    const expirationMs = result.trx_expiration_time || result.expiration_time;
+    const trxExpirationTime = expirationMs ? new Date(expirationMs) : null;
+
+    // Create Order record in database with channel VA_DANARAPAY
+    const orderId = result.id || body.partner_trx_id || `va-${Date.now()}`;
+    
+    try {
+      await prisma.order.create({
+        data: {
+          id: orderId,
+          partnerClientId: partnerClientId,
+          amount: body.amount || 0,
+          pendingAmount: body.amount || 0,
+          feeLauncx: 0,
+          settlementAmount: 0,
+          playerId: body.partner_user_id,
+          userId: body.partner_user_id,
+          status: 'PENDING',
+          channel: 'VA_DANARAPAY',
+          pgRefId: result.va_number,
+          pgClientRef: body.partner_trx_id || null,
+          trxExpirationTime: trxExpirationTime,
+          providerPayload: {
+            id: result.id,
+            va_number: result.va_number,
+            bank_code: result.bank_code,
+            amount: result.amount,
+            partner_user_id: result.partner_user_id,
+            partner_trx_id: result.partner_trx_id,
+            is_open: result.is_open,
+            is_single_use: result.is_single_use,
+            expiration_time: result.expiration_time,
+            trx_expiration_time: result.trx_expiration_time,
+            va_status: result.va_status || 'WAITING_PAYMENT',
+            username_display: result.username_display,
+          },
+        },
+      });
+
+      logger.info('[DanaRpay VA] Order created', {
+        orderId,
+        partnerClientId,
+        va_number: result.va_number,
+        amount: body.amount,
+      });
+    } catch (dbErr: any) {
+      // If duplicate key, ignore - VA already exists
+      if (dbErr?.code === 'P2002') {
+        logger.info('[DanaRpay VA] Order already exists, updating...', { orderId });
+        await prisma.order.update({
+          where: { id: orderId },
+          data: {
+            providerPayload: {
+              id: result.id,
+              va_number: result.va_number,
+              bank_code: result.bank_code,
+              amount: result.amount,
+              partner_user_id: result.partner_user_id,
+              partner_trx_id: result.partner_trx_id,
+              is_open: result.is_open,
+              is_single_use: result.is_single_use,
+              expiration_time: result.expiration_time,
+              trx_expiration_time: result.trx_expiration_time,
+              va_status: result.va_status || 'WAITING_PAYMENT',
+              username_display: result.username_display,
+            },
+          },
+        });
+      } else {
+        logger.error('[DanaRpay VA] Failed to create order', { error: dbErr?.message });
+        // Don't fail the request - VA was created successfully
+      }
+    }
+
     // Return success response
     return res.status(200).json({
       success: true,
       data: {
-        id: result.id,
+        id: orderId,
         va_number: result.va_number,
         bank_code: result.bank_code,
         amount: result.amount,
