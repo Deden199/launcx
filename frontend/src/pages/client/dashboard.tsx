@@ -165,6 +165,9 @@ export default function ClientDashboardPage() {
     }
     if (selectedChild && selectedChild !== 'all') params.clientId = selectedChild
     if (search.trim()) params.search = search.trim()
+    // Channel & Bank filters
+    if (channelFilter) params.channel = channelFilter
+    if (bankFilter) params.bankCode = bankFilter
     params.page = page
     params.limit = perPage
     return params
