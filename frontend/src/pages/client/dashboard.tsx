@@ -713,7 +713,7 @@ export default function ClientDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((t) => (
+                  {(filtered || []).map((t) => (
                     <tr key={t.id} className="border-b border-neutral-800 last:border-0 hover:bg-neutral-900/60">
                       <td className="px-3 py-2 whitespace-nowrap">
                         {new Date(t.date).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
