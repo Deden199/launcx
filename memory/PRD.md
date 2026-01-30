@@ -3,9 +3,13 @@
 ## Original Problem Statement
 Sesuaikan client dashboard agar menampilkan juga data dari VA DanaRapay agar mereka bisa monitor juga transaksi di danarapay.
 
-## User Requirements (Final)
-- Dashboard QRIS dan VA DanaRapay dipisah menjadi 2 halaman terpisah untuk lebih spesifik
-- Masing-masing dashboard punya fitur lengkap (stats, filters, transactions, export)
+## Root Cause & Fix (Jan 30, 2026)
+**Problem:** VA yang di-create via API `/api/v1/payments/danarapay/va/create` tidak tersimpan ke database Order, sehingga tidak muncul di dashboard.
+
+**Fix:** Updated `createDanarapayVa` controller untuk juga membuat record Order di database dengan:
+- `channel: 'VA_DANARAPAY'`
+- `status: 'PENDING'`
+- `providerPayload: { va_number, bank_code, va_status, ... }`
 
 ## Architecture
 
@@ -13,59 +17,62 @@ Sesuaikan client dashboard agar menampilkan juga data dari VA DanaRapay agar mer
 
 | Route | Halaman | Fungsi |
 |-------|---------|--------|
-| `/client/dashboard` | Dashboard QRIS | Monitor transaksi QRIS (existing) |
+| `/client/dashboard` | Dashboard QRIS | Monitor transaksi QRIS |
 | `/client/va-dashboard` | Dashboard VA DanaRapay | Monitor transaksi & VA aktif DanaRapay |
 
 ### Backend Endpoints
 
 | Endpoint | Handler | Fungsi |
 |----------|---------|--------|
-| `GET /client/dashboard` | `getClientDashboard` | Data dashboard QRIS (filter channel=QRIS) |
+| `GET /client/dashboard` | `getClientDashboard` | Data dashboard (semua channel) |
 | `GET /client/va-dashboard` | `getVaDashboard` | Data VA transactions + stats |
 | `GET /client/va-active` | `getActiveVaList` | List VA yang masih menunggu pembayaran |
-| `GET /client/dashboard/export` | `exportClientTransactions` | Export transactions ke Excel |
+| `POST /payments/danarapay/va/create` | `createDanarapayVa` | **UPDATED** - Create VA + save to Order table |
 
-### Frontend Files
-- `/app/frontend/src/pages/client/dashboard.tsx` - Dashboard QRIS
-- `/app/frontend/src/pages/client/va-dashboard.tsx` - Dashboard VA DanaRapay
-
-### Backend Files Modified
+### Files Modified
+- `/app/src/controller/danarapayVa.controller.ts` - **CRITICAL FIX**: Added Order creation on VA create
 - `/app/src/controller/clientDashboard.controller.ts` - Added `getVaDashboard`, `getActiveVaList`
 - `/app/src/route/client/web.routes.ts` - Added routes
+- `/app/frontend/src/pages/client/dashboard.tsx` - QRIS only dashboard
+- `/app/frontend/src/pages/client/va-dashboard.tsx` - VA dedicated dashboard
 
-## Features Implemented (Jan 30, 2026)
+## Data Flow
 
-### Dashboard QRIS (`/client/dashboard`)
-- [x] Stats: Transactions, Pending Settlement, Total Settlement
-- [x] Filters: Date range, Status, Search
-- [x] Transaction list dengan pagination
-- [x] Export to Excel
-- [x] Link ke VA Dashboard
+```
+1. Partner calls POST /payments/danarapay/va/create
+   ↓
+2. DanaRapay API creates VA
+   ↓
+3. [NEW] Order record created in database with channel='VA_DANARAPAY'
+   ↓
+4. Client dashboard queries Order where channel='VA_DANARAPAY'
+   ↓
+5. VA appears in dashboard
+```
 
-### Dashboard VA DanaRapay (`/client/va-dashboard`)
-- [x] Stats Cards: Total VA, Pending, Success, Expired, Total Amount, Total Paid
-- [x] Tab "Transaksi VA": List transaksi dengan filter (date, status, bank, search)
-- [x] Tab "VA Aktif": Grid cards VA yang menunggu pembayaran
-- [x] Filters: Rentang waktu, Status, Bank VA, Search
-- [x] Export to Excel
-- [x] Link kembali ke Dashboard QRIS
+## Important Notes
 
-## Deployment Requirements
-1. Set environment variable `NEXT_PUBLIC_API_URL` di frontend ke URL backend API
-   Contoh: `NEXT_PUBLIC_API_URL=http://your-api-domain.com/api/v1`
-2. Pastikan backend sudah di-build dengan `tsc -p tsconfig.backend.json`
-3. Restart services
+### For Existing VAs
+VAs created before this fix will NOT appear in dashboard. Options:
+1. Re-create VA via API (will save to database)
+2. Manually insert Order records for existing VAs
+3. Build sync tool to fetch VAs from DanaRapay and save to database
+
+### Frontend Environment
+Must set `NEXT_PUBLIC_API_URL` to backend API URL:
+```
+NEXT_PUBLIC_API_URL=http://your-backend-domain.com/api/v1
+```
+
+## Deployment Checklist
+- [ ] Build backend: `tsc -p tsconfig.backend.json`
+- [ ] Build frontend: `cd frontend && yarn build`
+- [ ] Set `NEXT_PUBLIC_API_URL` environment variable
+- [ ] Restart services
+- [ ] Test create VA via API
+- [ ] Verify VA appears in `/client/va-dashboard`
 
 ## Next Tasks
-- P1: Test dengan data VA real dari DanaRapay
-- P1: Create VA dari dashboard (opsional, user request next phase)
-- P2: Real-time notification saat ada pembayaran VA masuk
-
-## Bank VA Supported
-| Code | Bank |
-|------|------|
-| 002 | BRI |
-| 008 | Mandiri |
-| 009 | BNI |
-| 013 | Permata |
-| 022 | CIMB |
+- P0: Test dengan data VA baru (setelah fix)
+- P1: Build sync tool untuk VA yang sudah ada
+- P2: Create VA dari dashboard
