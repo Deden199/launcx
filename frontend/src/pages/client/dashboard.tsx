@@ -83,6 +83,16 @@ export default function ClientDashboardPage() {
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [loadingTx, setLoadingTx] = useState(false)
 
+  // VA Stats & Active VAs
+  const [vaStats, setVaStats] = useState<VaStats>({ created: 0, pending: 0, success: 0, expired: 0, totalAmount: 0 })
+  const [vaBanks, setVaBanks] = useState<VaBank[]>([])
+  const [activeVas, setActiveVas] = useState<ActiveVa[]>([])
+  const [loadingVa, setLoadingVa] = useState(false)
+  const [showVaSection, setShowVaSection] = useState(false)
+
+  // Channel & Bank filters
+  const [channelFilter, setChannelFilter] = useState<string>('')
+  const [bankFilter, setBankFilter] = useState<string>('')
 
   // Date filter
   const [range, setRange] = useState<
