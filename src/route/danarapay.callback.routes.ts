@@ -13,7 +13,7 @@ import {
   getDanarapayVaBanks,
 } from '../controller/danarapayVa.controller';
 import apiKeyAuth from '../middleware/apiKeyAuth';
-import { callbackAuditMiddleware, callbackSecurityMiddleware } from '../middleware/callbackSecurity';
+import { callbackSecurityMiddleware } from '../middleware/callbackSecurity';
 
 const danarapayRouter = Router();
 
