@@ -35,7 +35,7 @@ export function callbackSecurityMiddleware(options?: {
   const {
     requireToken = true,
     requireIpWhitelist = false, // Disabled by default for backward compatibility
-    allowedIps = [...DANARAPAY_IPS, ...CALLBACK_ALLOWED_IPS],
+    allowedIps = [...DANARAPAY_DEFAULT_IPS, ...DANARAPAY_IP_WHITELIST],
   } = options || {};
 
   return (req: Request, res: Response, next: NextFunction) => {
