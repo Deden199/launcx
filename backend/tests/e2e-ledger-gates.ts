@@ -18,9 +18,12 @@ import {
   DISBURSEMENT_CODES,
 } from '../src/service/ledger.service';
 
-const TEST_CLIENT_ID = 'test-client-' + Date.now();
-const TEST_ORDER_ID = 'test-order-' + Date.now();
-const TEST_WITHDRAWAL_ID = 'test-wd-' + Date.now();
+const TEST_PREFIX = Date.now().toString();
+const TEST_CLIENT_ID = 'test-client-' + TEST_PREFIX;
+const TEST_MERCHANT_ID = 'test-merchant-' + TEST_PREFIX;
+const TEST_SUBMERCHANT_ID = 'test-submerchant-' + TEST_PREFIX;
+const TEST_ORDER_ID = 'test-order-' + TEST_PREFIX;
+const TEST_WITHDRAWAL_ID = 'test-wd-' + TEST_PREFIX;
 const INITIAL_BALANCE = 1000000; // 1 juta
 
 interface TestResult {
