@@ -476,34 +476,49 @@ export async function danarapayDisbursementCallback(req: Request, res: Response)
         const result = await processWithdrawalCallback(partnerTrxId, statusCode, body);
 
         if (result.processed) {
-          // If status is now COMPLETED, trigger ledger to deduct balance
-          if (result.newStatus === 'COMPLETED') {
-            try {
-              const ledgerResult = await processWithdrawalBalanceDeduction(partnerTrxId);
-              logger.info('[DanaRpay Disbursement] Ledger balance deduction triggered', {
-                withdrawalId: partnerTrxId,
-                processed: ledgerResult.processed,
-                balanceChange: ledgerResult.balanceChange,
-                reason: ledgerResult.reason,
-              });
-            } catch (ledgerErr: any) {
-              logger.error('[DanaRpay Disbursement] Ledger processing failed', {
-                withdrawalId: partnerTrxId,
-                error: ledgerErr?.message,
-              });
-            }
-          }
+          // Only trigger ledger for FINAL states
+          // Non-final states (PROCESSING, PENDING) don't affect balance
           
-          // If FAILED, refund any pre-deducted balance (backward compatibility)
-          if (result.newStatus === 'FAILED') {
-            try {
-              await refundFailedWithdrawal(partnerTrxId);
-            } catch (refundErr: any) {
-              logger.error('[DanaRpay Disbursement] Refund failed', {
-                withdrawalId: partnerTrxId,
-                error: refundErr?.message,
-              });
+          if (result.isFinal) {
+            if (result.newStatus === 'COMPLETED') {
+              // SUCCESS - trigger ledger to deduct balance (atomic, idempotent)
+              try {
+                const ledgerResult = await processWithdrawalBalanceDeduction(partnerTrxId);
+                logger.info('[DanaRpay Disbursement] Ledger balance deduction triggered', {
+                  withdrawalId: partnerTrxId,
+                  processed: ledgerResult.processed,
+                  balanceChange: ledgerResult.balanceChange,
+                  reason: ledgerResult.reason,
+                });
+              } catch (ledgerErr: any) {
+                logger.error('[DanaRpay Disbursement] Ledger processing failed', {
+                  withdrawalId: partnerTrxId,
+                  error: ledgerErr?.message,
+                });
+              }
+            } else if (result.newStatus === 'FAILED') {
+              // FAILED - refund any pre-deducted balance (backward compatibility for legacy providers)
+              try {
+                const refundResult = await refundFailedWithdrawal(partnerTrxId);
+                logger.info('[DanaRpay Disbursement] Refund triggered', {
+                  withdrawalId: partnerTrxId,
+                  processed: refundResult.processed,
+                  reason: refundResult.reason,
+                });
+              } catch (refundErr: any) {
+                logger.error('[DanaRpay Disbursement] Refund failed', {
+                  withdrawalId: partnerTrxId,
+                  error: refundErr?.message,
+                });
+              }
             }
+          } else {
+            // Non-final status - just log, no balance action
+            logger.info('[DanaRpay Disbursement] Non-final status, no balance action', {
+              withdrawalId: partnerTrxId,
+              newStatus: result.newStatus,
+              statusCode,
+            });
           }
         }
 
@@ -511,6 +526,7 @@ export async function danarapayDisbursementCallback(req: Request, res: Response)
           partner_trx_id: partnerTrxId,
           statusCode,
           newStatus: result.newStatus,
+          isFinal: result.isFinal,
           processed: result.processed,
           reason: result.reason,
           durationMs: Date.now() - startTime,
