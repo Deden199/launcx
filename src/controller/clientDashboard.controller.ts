@@ -212,10 +212,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
 
     if (statuses.length === 0) statuses = [...allowed];
 
-    // (6) Pagination + search
-    const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
-    const pageSize = Math.min(100, parseInt(String(req.query.limit || '50'), 10));
-
+    // (6) Search
     const searchStr = typeof req.query.search === 'string'
       ? req.query.search.trim()
       : '';
