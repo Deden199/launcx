@@ -226,7 +226,7 @@ async function testWithdrawalFlowDanaRapay() {
       netAmount: withdrawAmount,
       status: 'PENDING',
       sourceProvider: 'danarapay',
-      subMerchantId: 'test-submerchant',
+      subMerchantId: TEST_SUBMERCHANT_ID,
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
       balanceDeducted: false, // DanaRapay: no debit on create
@@ -322,7 +322,7 @@ async function testNegativeBalanceGuard() {
       netAmount: withdrawAmount,
       status: 'COMPLETED', // Set as completed to trigger deduction
       sourceProvider: 'danarapay',
-      subMerchantId: 'test-submerchant',
+      subMerchantId: TEST_SUBMERCHANT_ID,
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
       balanceDeducted: false,
@@ -384,7 +384,7 @@ async function testLegacyProviderRefund() {
       netAmount: withdrawAmount,
       status: 'FAILED', // Set as failed
       sourceProvider: 'hilogate', // Legacy provider
-      subMerchantId: 'test-submerchant',
+      subMerchantId: TEST_SUBMERCHANT_ID,
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
       balanceDeducted: true, // Legacy: balance was deducted on create
@@ -464,7 +464,7 @@ async function testDanarapayNoRefund() {
       netAmount: withdrawAmount,
       status: 'FAILED',
       sourceProvider: 'danarapay',
-      subMerchantId: 'test-submerchant',
+      subMerchantId: TEST_SUBMERCHANT_ID,
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
       balanceDeducted: false, // DanaRapay: balance was NOT deducted
