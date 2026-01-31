@@ -454,9 +454,10 @@ export async function refundFailedWithdrawal(withdrawalId: string): Promise<{
     });
 
     logger.info('[Ledger] Failed withdrawal refunded', {
-      withdrawalId,
-      partnerClientId: withdrawal.partnerClientId,
-      refundAmount: withdrawal.amount,
+      withdrawalId: withdrawal!.id,
+      refId: withdrawal!.refId,
+      partnerClientId: withdrawal!.partnerClientId,
+      refundAmount: withdrawal!.amount,
     });
   });
 
