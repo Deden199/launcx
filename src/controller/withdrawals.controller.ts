@@ -1763,15 +1763,22 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       })
 
       if (newStatus === DisbursementStatus.FAILED) {
-        await prisma.partnerClient.update({
-          where: { id: partnerClientId },
-          data: { balance: { increment: amount } }
-        })
+        // Only refund balance for providers that deducted on create
+        // DanaRapay: balance was NOT deducted (balanceDeducted=false), so no refund needed
+        const { isCallbackBasedProvider } = await import('../service/ledger.service')
+        if (!isCallbackBasedProvider(sourceProvider)) {
+          await prisma.partnerClient.update({
+            where: { id: partnerClientId },
+            data: { balance: { increment: amount } }
+          })
+        }
         return res.status(400).json({
           error:
-            isPiroVariant(sourceProvider)
-              ? resp.message || 'Withdrawal failed'
-              : 'Withdrawal failed',
+            sourceProvider === 'danarapay'
+              ? resp.status?.message || 'Withdrawal failed'
+              : isPiroVariant(sourceProvider)
+                ? resp.message || 'Withdrawal failed'
+                : 'Withdrawal failed',
           status: resp.status,
           code: resp.responseCode,
         })
@@ -1789,16 +1796,28 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     } catch (err: any) {
       logger.error('[requestWithdraw provider]', err)
       try {
-        await prisma.$transaction([
-          prisma.withdrawRequest.update({
+        // Only refund balance for providers that deducted on create
+        const { isCallbackBasedProvider } = await import('../service/ledger.service')
+        const shouldRefund = !isCallbackBasedProvider(sourceProvider)
+        
+        if (shouldRefund) {
+          await prisma.$transaction([
+            prisma.withdrawRequest.update({
+              where: { refId: wr.refId },
+              data: { status: DisbursementStatus.FAILED }
+            }),
+            prisma.partnerClient.update({
+              where: { id: partnerClientId },
+              data: { balance: { increment: amount } }
+            })
+          ])
+        } else {
+          // DanaRapay: just update status, no balance refund
+          await prisma.withdrawRequest.update({
             where: { refId: wr.refId },
             data: { status: DisbursementStatus.FAILED }
-          }),
-          prisma.partnerClient.update({
-            where: { id: partnerClientId },
-            data: { balance: { increment: amount } }
           })
-        ])
+        }
       } catch (rollbackErr) {
         logger.error('[requestWithdraw rollback]', rollbackErr)
       }
