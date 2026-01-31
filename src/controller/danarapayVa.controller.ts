@@ -1,5 +1,6 @@
 // File: src/controller/danarapayVa.controller.ts
 // DanaRpay VA Aggregator Controller - Based on official API docs v1.2.4
+// DanaRapay as Source of Truth - callbacks only update status, ledger handles balance
 
 import { Request, Response } from 'express';
 import crypto from 'crypto';
@@ -13,6 +14,7 @@ import {
   UpdateVaRequest,
   VA_BANK_CODES,
 } from '../service/danarapayClient';
+import { processOrderSettlement } from '../service/ledger.service';
 
 // ===================== CLIENT INSTANCE =====================
 
