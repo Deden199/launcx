@@ -6,7 +6,17 @@
  * 2. Callback with valid token → 200
  * 3. Create withdrawal DanaRapay → verify saldo tidak berubah + remit called
  * 4. Disbursement callback 000 → verify saldo berkurang 1x
+ * 
+ * Usage:
+ *   npx ts-node backend/tests/e2e-gap2-danarapay.ts
+ * 
+ * Environment:
+ *   Reads DATABASE_URL from .env file
  */
+
+// Load environment variables
+import dotenv from 'dotenv';
+dotenv.config();
 
 import { prisma } from '../../src/core/prisma';
 import {
