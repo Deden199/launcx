@@ -115,7 +115,7 @@ const flexibleJsonParser = json({
 danarapayRouter.post(
   '/va/callback',
   flexibleJsonParser,
-  callbackAuditMiddleware, // Gate 4: Audit mode - logs all callbacks
+  callbackSecurityMiddleware({ requireToken: true }), // Gate 4: ENFORCED - rejects invalid tokens
   danarapayVaCallback
 );
 
