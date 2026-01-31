@@ -176,7 +176,9 @@ export default function VADashboardPage() {
     searchTimeout.current = setTimeout(() => {
       fetchVAData()
     }, 500)
-    return () => clearTimeout(searchTimeout.current)
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current)
+    }
   }, [searchQuery])
   
   // Load more handler
