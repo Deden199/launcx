@@ -9,14 +9,14 @@
  * 5. Callback security: valid vs invalid token
  */
 
-import { prisma } from '../src/core/prisma';
+import { prisma } from '../../src/core/prisma';
 import {
   processOrderSettlement,
   processWithdrawalBalanceDeduction,
   refundFailedWithdrawal,
   processWithdrawalCallback,
   DISBURSEMENT_CODES,
-} from '../src/service/ledger.service';
+} from '../../src/service/ledger.service';
 
 const TEST_PREFIX = Date.now().toString();
 const TEST_CLIENT_ID = 'test-client-' + TEST_PREFIX;
