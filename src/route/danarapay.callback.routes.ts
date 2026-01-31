@@ -1,9 +1,11 @@
 // File: src/route/danarapay.callback.routes.ts
 // DanaRpay VA Aggregator Routes - Based on official API docs v1.2.4
+// DanaRapay as Source of Truth - callbacks update status, ledger handles balance
 
 import { Router, json, Request, Response, NextFunction } from 'express';
 import {
   danarapayVaCallback,
+  danarapayDisbursementCallback,
   createDanarapayVa,
   getDanarapayVaInfo,
   updateDanarapayVa,
