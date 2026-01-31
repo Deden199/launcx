@@ -41,25 +41,6 @@ export function internalAuth(
 }
 
 /**
- * DanaRapay official IP whitelist
- * Update this list based on DanaRapay's official documentation
- */
-const DANARAPAY_IP_WHITELIST: string[] = [
-  // DanaRapay Production IPs (get from DanaRapay team)
-  '103.150.60.52',
-  '103.150.60.53',
-  '103.150.60.54',
-  '103.150.60.55',
-  // DanaRapay Staging IPs
-  '103.150.60.56',
-  '103.150.60.57',
-  // Localhost for testing
-  '127.0.0.1',
-  '::1',
-  '::ffff:127.0.0.1',
-];
-
-/**
  * Get real client IP (handles proxy)
  */
 function getClientIp(req: Request): string {
@@ -72,6 +53,68 @@ function getClientIp(req: Request): string {
     return realIp;
   }
   return req.ip || req.socket.remoteAddress || '';
+}
+
+/**
+ * Normalize IP address for comparison
+ * Handles IPv6-mapped IPv4 addresses (::ffff:x.x.x.x)
+ */
+function normalizeIp(ip: string): string {
+  // Remove IPv6 prefix if present
+  if (ip.startsWith('::ffff:')) {
+    return ip.substring(7);
+  }
+  return ip;
+}
+
+/**
+ * Check if IP is in CIDR range
+ * Supports both IPv4 CIDR (e.g., 10.0.0.0/8)
+ */
+function isIpInCidr(ip: string, cidr: string): boolean {
+  const normalizedIp = normalizeIp(ip);
+  
+  // Check if it's a CIDR notation
+  if (!cidr.includes('/')) {
+    // Direct IP comparison
+    return normalizedIp === cidr || normalizeIp(cidr) === normalizedIp;
+  }
+
+  const [range, bits] = cidr.split('/');
+  const mask = parseInt(bits, 10);
+
+  // Convert IPs to numeric for comparison
+  const ipParts = normalizedIp.split('.').map(Number);
+  const rangeParts = range.split('.').map(Number);
+
+  if (ipParts.length !== 4 || rangeParts.length !== 4) {
+    // Not valid IPv4, do direct comparison
+    return normalizedIp === range;
+  }
+
+  // Convert to 32-bit integers
+  const ipNum =
+    (ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3];
+  const rangeNum =
+    (rangeParts[0] << 24) |
+    (rangeParts[1] << 16) |
+    (rangeParts[2] << 8) |
+    rangeParts[3];
+  const maskNum = ~((1 << (32 - mask)) - 1);
+
+  return (ipNum & maskNum) === (rangeNum & maskNum);
+}
+
+/**
+ * Check if IP is whitelisted
+ */
+function isIpWhitelisted(clientIp: string, whitelist: string[]): boolean {
+  if (whitelist.length === 0) {
+    // SECURE DEFAULT: Empty whitelist = DENY ALL
+    return false;
+  }
+
+  return whitelist.some((entry) => isIpInCidr(clientIp, entry));
 }
 
 /**
@@ -95,11 +138,12 @@ export function verifyCallbackToken(
   }
 
   if (!tokenParam || tokenParam !== expectedToken) {
+    const clientIp = getClientIp(req);
     logger.warn(
       {
         path: req.path,
-        ip: getClientIp(req),
-        providedToken: tokenParam ? '***' : 'none',
+        ip: clientIp,
+        providedToken: tokenParam ? '[REDACTED]' : 'none',
       },
       'Invalid callback token'
     );
@@ -122,31 +166,21 @@ export function verifyDanarapayIp(
   next: NextFunction
 ): void {
   const clientIp = getClientIp(req);
-  
-  // Check against whitelist
-  const isWhitelisted = DANARAPAY_IP_WHITELIST.some((ip) => {
-    // Handle IPv6 mapped IPv4
-    return clientIp === ip || 
-           clientIp === `::ffff:${ip}` || 
-           clientIp.endsWith(ip);
-  });
+  const whitelist = config.danarapayCallbackIps;
 
-  // Also check env-configured IPs
-  const extraIps = config.danarapayCallbackIps;
-  const isExtraWhitelisted = extraIps.some((ip) => {
-    return clientIp === ip || 
-           clientIp === `::ffff:${ip}` || 
-           clientIp.endsWith(ip);
-  });
-
-  if (!isWhitelisted && !isExtraWhitelisted) {
+  // Check whitelist
+  if (!isIpWhitelisted(clientIp, whitelist)) {
     logger.warn(
       {
         path: req.path,
         clientIp,
-        whitelistedIps: [...DANARAPAY_IP_WHITELIST, ...extraIps],
+        normalizedIp: normalizeIp(clientIp),
+        whitelistCount: whitelist.length,
+        whitelistEmpty: whitelist.length === 0,
       },
-      'Callback from non-whitelisted IP'
+      whitelist.length === 0
+        ? 'Callback DENIED: IP whitelist is empty (secure default)'
+        : 'Callback DENIED: IP not in whitelist'
     );
     res.status(403).json({
       success: false,
@@ -155,13 +189,20 @@ export function verifyDanarapayIp(
     return;
   }
 
+  logger.debug(
+    { clientIp, normalizedIp: normalizeIp(clientIp) },
+    'IP whitelist check passed'
+  );
+
   next();
 }
 
 /**
  * Combined callback auth middleware
- * 1. Verify IP whitelist
- * 2. Log callback details for audit
+ * Security layers:
+ * 1. Verify IP whitelist (from DANARAPAY_IP_WHITELIST env)
+ * 2. Verify URL path token (from CALLBACK_SECRET_TOKEN env)
+ * 3. Audit logging
  */
 export function callbackAuth(
   req: Request,
@@ -175,16 +216,30 @@ export function callbackAuth(
     {
       path: req.path,
       clientIp,
+      normalizedIp: normalizeIp(clientIp),
       userAgent: req.header('User-Agent'),
       contentLength: req.header('Content-Length'),
     },
-    'Incoming callback from DanaRapay'
+    'Incoming callback request'
   );
 
-  // Verify IP
+  // Layer 1: Verify IP whitelist
   verifyDanarapayIp(req, res, (err) => {
     if (err) return;
-    // IP verified, continue
-    next();
+    // res already sent if IP check failed
+    if (res.headersSent) return;
+
+    // Layer 2: Verify URL token
+    verifyCallbackToken(req, res, (err2) => {
+      if (err2) return;
+      if (res.headersSent) return;
+
+      // Both checks passed
+      logger.info(
+        { clientIp, path: req.path },
+        'Callback authentication successful'
+      );
+      next();
+    });
   });
 }
