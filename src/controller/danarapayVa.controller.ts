@@ -49,6 +49,122 @@ function getBankName(bankCode: string): string {
   return bankNames[bankCode] || bankCode;
 }
 
+/**
+ * Determine response format based on route path or opt-in header
+ * - New routes (/payments/va/*) → camelCase (default)
+ * - Legacy routes (/payments/danarapay/va/*) → snake_case
+ * - Header X-Compat-Mode: legacy → snake_case
+ * - Query ?compat=1 → snake_case
+ */
+function getResponseFormat(req: Request): 'camelCase' | 'snakeCase' {
+  // Check for opt-in legacy mode
+  const compatHeader = req.header('X-Compat-Mode');
+  const compatQuery = req.query.compat;
+  
+  if (compatHeader === 'legacy' || compatQuery === '1') {
+    return 'snakeCase';
+  }
+  
+  // Check route path - legacy routes use snake_case
+  const path = req.path;
+  if (path.includes('/danarapay/')) {
+    return 'snakeCase';
+  }
+  
+  // Default: new routes use camelCase
+  return 'camelCase';
+}
+
+/**
+ * Format VA creation response based on response format
+ */
+function formatVaCreateResponse(
+  result: any,
+  orderId: string,
+  format: 'camelCase' | 'snakeCase'
+) {
+  if (format === 'camelCase') {
+    // Clean camelCase response for client-facing endpoints
+    return {
+      id: orderId,
+      vaNumber: result.va_number,
+      bankCode: result.bank_code,
+      bankName: getBankName(result.bank_code),
+      amount: result.amount,
+      customerId: result.partner_user_id,
+      referenceId: result.partner_trx_id,
+      isOpen: result.is_open,
+      isSingleUse: result.is_single_use,
+      expiresAt: result.expiration_time ? new Date(result.expiration_time).toISOString() : null,
+      status: 'PENDING',
+      displayName: result.username_display,
+    };
+  } else {
+    // Legacy snake_case response for internal/backward compatibility
+    return {
+      id: orderId,
+      va_number: result.va_number,
+      bank_code: result.bank_code,
+      amount: result.amount,
+      partner_user_id: result.partner_user_id,
+      partner_trx_id: result.partner_trx_id,
+      is_open: result.is_open,
+      is_single_use: result.is_single_use,
+      expiration_time: result.expiration_time,
+      trx_expiration_time: result.trx_expiration_time,
+      va_status: result.va_status,
+      username_display: result.username_display,
+    };
+  }
+}
+
+/**
+ * Format VA info response based on response format
+ */
+function formatVaInfoResponse(
+  result: any,
+  format: 'camelCase' | 'snakeCase'
+) {
+  if (format === 'camelCase') {
+    // Clean camelCase response
+    return {
+      id: result.id,
+      vaNumber: result.va_number,
+      bankCode: result.bank_code,
+      bankName: getBankName(result.bank_code),
+      amount: result.amount,
+      customerId: result.partner_user_id,
+      referenceId: result.partner_trx_id,
+      createdAt: result.created,
+      isOpen: result.is_open,
+      isSingleUse: result.is_single_use,
+      expiresAt: result.expiration_time ? new Date(result.expiration_time).toISOString() : null,
+      status: result.va_status === 'WAITING_PAYMENT' ? 'PENDING' : result.va_status,
+      displayName: result.username_display,
+    };
+  } else {
+    // Legacy snake_case response
+    return {
+      id: result.id,
+      va_number: result.va_number,
+      bank_code: result.bank_code,
+      bank_name: result.bank_name,
+      amount: result.amount,
+      partner_user_id: result.partner_user_id,
+      partner_trx_id: result.partner_trx_id,
+      created: result.created,
+      is_open: result.is_open,
+      is_single_use: result.is_single_use,
+      expiration_time: result.expiration_time,
+      trx_expiration_time: result.trx_expiration_time,
+      va_status: result.va_status,
+      username_display: result.username_display,
+      trx_counter: result.trx_counter,
+      counter_incoming_payment: result.counter_incoming_payment,
+    };
+  }
+}
+
 function getParsedBody(req: Request): any {
   const b: any = req.body;
   if (b && typeof b === 'object' && Object.keys(b).length > 0) return b;
