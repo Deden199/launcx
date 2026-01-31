@@ -287,7 +287,7 @@ export async function danarapayVaCallback(req: Request, res: Response) {
           },
         });
 
-        // Idempotent status update
+        // Idempotent status update - ONLY updates status, NOT balance
         const result = await idempotentUpdateVaTransaction({
           partnerTrxId: body.partner_trx_id,
           partnerUserId: body.partner_user_id,
@@ -296,8 +296,29 @@ export async function danarapayVaCallback(req: Request, res: Response) {
           amount: body.amount,
           txDate: body.tx_date,
           settlementStatus: body.settlement_status,
+          settlementTime: body.settlement_time,
           providerPayload: body,
         });
+
+        // If this was a settlement callback (SUCCESS), trigger ledger processing
+        // Ledger service will handle balance credit independently
+        if (result.updated && result.isSettlementCallback && result.order?.id) {
+          try {
+            const ledgerResult = await processOrderSettlement(result.order.id);
+            logger.info('[DanaRpay VA] Ledger processing triggered', {
+              orderId: result.order.id,
+              ledgerProcessed: ledgerResult.processed,
+              balanceChange: ledgerResult.balanceChange,
+              reason: ledgerResult.reason,
+            });
+          } catch (ledgerErr: any) {
+            // Log error but don't fail - ledger can be reconciled later
+            logger.error('[DanaRpay VA] Ledger processing failed (will reconcile later)', {
+              orderId: result.order.id,
+              error: ledgerErr?.message,
+            });
+          }
+        }
 
         // Forward callback to partner client if order updated successfully
         if (result.updated && result.order?.partnerClientId) {
@@ -328,7 +349,7 @@ export async function danarapayVaCallback(req: Request, res: Response) {
                 feeLauncx: result.order.feeLauncx || 0,
                 netAmount: result.order.settlementAmount || result.order.pendingAmount || 0,
                 playerId: result.order.playerId || body.partner_user_id,
-                settlementStatus: body.settlement_status || 'PENDING',
+                settlementStatus: body.settlement_status || 'WAITING',
                 timestamp,
                 nonce,
               };
