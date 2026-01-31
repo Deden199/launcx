@@ -1,131 +1,122 @@
-# PRD - DanaRapay Router (Production Ready)
+# Launcx Payment Gateway - Product Requirements Document
+
+## Project Overview
+
+Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) payments for Indonesian merchants. The system consists of:
+
+1. **launcx-core** - Main monolith application (Node.js/Express + Prisma + Next.js frontend)
+2. **danarapay-router** - Dedicated microservice for DanaRapay integration (VA, QRIS, Disbursement)
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    launcx-core (Existing)                           │
-│  • Auth, Dashboard, Settlement, Database                           │
-│  • POST /api/v1/internal/webhook ← receives events from router     │
+│                    launcx-core (Main Application)                   │
+│  • Authentication & Authorization                                   │
+│  • Client Dashboard (Overview, VA, QRIS, Withdrawal)                │
+│  • Admin Dashboard                                                  │
+│  • Settlement Processing                                            │
+│  • Database (MongoDB via Prisma)                                    │
+│  • Internal Webhook: POST /api/v1/internal/webhook                  │
 └─────────────────────────────────────────────────────────────────────┘
                               ↓ ↑
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    danarapay-router (NEW REPO)                      │
+│                    danarapay-router (Microservice)                  │
 │  Port: 4000                                                         │
 │  ├── /api/va/*         - VA management                             │
 │  ├── /api/qris/*       - QRIS payment                              │
 │  ├── /api/disbursement/* - Withdrawal                              │
 │  ├── /api/inquiry/*    - Account validation                        │
-│  ├── /api/callback/*   - DanaRapay webhooks                        │
-│  ├── /healthz          - Liveness                                  │
-│  └── /readyz           - Readiness                                 │
+│  ├── /api/callback/*   - DanaRapay webhooks (SECURED)              │
+│  └── /healthz, /readyz - Health probes                             │
 │                                                                     │
-│  Workers:                                                          │
-│  • Disbursement polling (no webhook from DanaRapay)                │
-│                                                                     │
-│  Infrastructure:                                                   │
-│  • Redis lock (idempotency)                                        │
-│  • Retry with exponential backoff                                  │
-│  • Structured logging (pino)                                       │
+│  Security: IP Whitelist + URL Token                                │
+│  Infrastructure: Redis (idempotency), Retry with backoff           │
 └─────────────────────────────────────────────────────────────────────┘
                               ↓ ↑
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        DanaRapay API                                 │
-│  Staging: https://api-stg.danarapay.com                             │
+│                        DanaRapay API                                │
 │  Production: https://partner.danarapay.com                          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Files Created
+---
 
-### danarapay-router/
-```
-src/
-├── index.ts                  # Entry point
-├── app.ts                    # Express app
-├── config.ts                 # Environment config
-├── routes/
-│   ├── index.ts              # Route aggregator
-│   ├── va.routes.ts          # VA endpoints
-│   ├── qris.routes.ts        # QRIS endpoints
-│   ├── disbursement.routes.ts # Disbursement endpoints
-│   ├── inquiry.routes.ts     # Account inquiry
-│   └── callback.routes.ts    # Callback handlers
-├── services/
-│   ├── danarapay.client.ts   # HTTP client to DanaRapay
-│   └── forwarder.service.ts  # Forward events to launcx-core
-├── workers/
-│   └── disbursement.worker.ts # Polling worker
-├── middleware/
-│   ├── auth.middleware.ts    # API key auth
-│   ├── idempotency.middleware.ts # Redis lock
-│   └── logger.middleware.ts  # Request logging
-├── utils/
-│   ├── redis.ts              # Redis client & lock
-│   ├── logger.ts             # Pino logger
-│   └── retry.ts              # Retry with backoff
-└── types/
-    ├── danarapay.types.ts    # DanaRapay API types
-    └── internal.types.ts     # Unified event types
-```
+## Completed Features
 
-### launcx-core/ (modified)
-- `src/controller/internalWebhook.controller.ts` - Handle events from router
-- `src/route/internal.routes.ts` - Added `/webhook` endpoint
+### ✅ P0 - Callback Security (2025-01-31)
+- IP Whitelist validation (`DANARAPAY_IP_WHITELIST` env)
+- URL Token validation (`CALLBACK_SECRET_TOKEN` env)
+- Default DENY if whitelist empty
+- CIDR notation support
 
-## Unified Event Payload
+### ✅ P0 - End-to-End Business Flow Dashboard
+- New `/client/overview` page showing complete business flow
+- VA → Transaction → Balance → Withdrawal visualization
+- Unified stats from VA and QRIS channels
 
-```json
-{
-  "eventType": "VA|QRIS|DISBURSEMENT",
-  "provider": "DANARAPAY",
-  "partnerTrxId": "TRX-001",
-  "providerTrxId": "uuid-from-danarapay",
-  "amount": 50000,
-  "status": "SUCCESS|PENDING|FAILED|EXPIRED",
-  "providerStatus": "COMPLETE",
-  "paidAt": "2025-01-30T10:00:00Z",
-  "settledAt": "2025-01-30T10:05:00Z",
-  "settlementStatus": "SUCCESS",
-  "metadata": { ... },
-  "rawPayload": { ... },
-  "processedAt": "2025-01-30T10:00:05Z"
+### ✅ P1 - Database Query Optimization
+- Added indexes: `[partnerClientId, channel, status]`, `[partnerClientId, channel, createdAt]`
+- Cursor-based pagination for VA Dashboard
+- Parallel query execution with Promise.all
+- Projection-based field selection
+
+### ✅ P1 - VA Dashboard Enhancement
+- Dedicated VA monitoring page
+- Real-time stats (Total, Pending, Success, Expired)
+- Bank and status filters
+- Search by ID/Player ID
+- Infinite scroll with cursor pagination
+- Expandable row details
+
+### ✅ P3 - API Documentation
+- Complete integration guide at `/docs`
+- Node.js/TypeScript SDK examples
+- cURL examples for all endpoints
+- Callback handler implementation guide
+
+---
+
+## Database Schema Indexes
+
+```prisma
+model Order {
+  @@index([partnerClientId])
+  @@index([createdAt])
+  @@index([status])
+  @@index([channel])
+  @@index([subMerchantId, status, createdAt])
+  @@index([userId])
+  @@index([pgRefId])
+  @@index([partnerClientId, status, createdAt])
+  @@index([partnerClientId, channel, status])
+  @@index([partnerClientId, channel, createdAt])
+  @@index([merchantId, createdAt])
 }
 ```
 
-## Idempotency Implementation
+---
 
-- Lock key format: `lock:DANARAPAY:{eventType}:{uniqueId}`
-- Using Redis `SET NX EX` (atomic acquire)
-- TTL: 300 seconds for lock, 24 hours for processed marker
-- Unique ID:
-  - VA: `trx_id` (per payment transaction)
-  - QRIS: `trx_id:settlement_status` (handles 2nd callback)
-  - Disbursement: `remit_id`
+## Key API Endpoints
 
-## Disbursement Polling
+### Client Dashboard
+- `GET /api/v1/client/overview` - Business overview (new, optimized)
+- `GET /api/v1/client/dashboard` - QRIS transactions
+- `GET /api/v1/client/va-dashboard` - VA transactions
+- `GET /api/v1/client/withdrawals` - Withdrawal history
 
-DanaRapay doesn't have webhook for disbursement, so:
-1. On create → add to in-memory poll queue
-2. Worker polls every 30 seconds
-3. On final status (COMPLETE/FAILED) → forward to launcx-core
-4. Max 100 attempts before giving up
+### VA Management
+- `POST /api/v1/payments/danarapay/va/create` - Create VA
+- `GET /api/v1/payments/danarapay/va/info/:id` - Get VA info
+- `PUT /api/v1/payments/danarapay/va/update/:id` - Update VA
 
-## DanaRapay Callback URLs (SECURED)
+### DanaRapay Router Callbacks (SECURED)
+- `POST /api/callback/va/:token` - VA payment callback
+- `POST /api/callback/qris/:token` - QRIS payment callback
 
-Set in DanaRapay dashboard (replace `<TOKEN>` with actual CALLBACK_SECRET_TOKEN):
-- VA: `https://your-router-domain/api/callback/va/<TOKEN>`
-- QRIS: `https://your-router-domain/api/callback/qris/<TOKEN>`
+---
 
-### Callback Security (Implemented: 2025-01-31)
-Two-layer security for callback endpoints:
-1. **IP Whitelist**: `DANARAPAY_IP_WHITELIST` env variable (comma-separated IP/CIDR)
-   - Default: DENY ALL if empty (secure by default)
-   - Supports CIDR notation (e.g., `10.0.0.0/8`)
-2. **URL Path Token**: Secret token embedded in URL path
-   - Generate: `openssl rand -base64 32 | tr -d '/+='`
-
-## Environment Variables
+## Environment Configuration
 
 ### danarapay-router/.env
 ```bash
@@ -137,55 +128,62 @@ DANARAPAY_API_KEY=xxx
 REDIS_URL=redis://localhost:6379
 LAUNCX_CORE_WEBHOOK_URL=http://launcx-core:5000/api/v1/internal/webhook
 LAUNCX_CORE_INTERNAL_SECRET=shared_secret
-ROUTER_API_KEY=router_key_for_launcx_to_call
+ROUTER_API_KEY=router_key
 
-# Callback Security (REQUIRED)
-CALLBACK_SECRET_TOKEN=your_strong_random_token
+# Callback Security
+CALLBACK_SECRET_TOKEN=<generated_token>
 DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
 ```
 
-### launcx-core/.env (add)
-```bash
-INTERNAL_WEBHOOK_SECRET=shared_secret
-```
+---
 
-## Deployment
+## Files Modified/Created This Session
 
-### Run danarapay-router
-```bash
-cd danarapay-router
-yarn install
-yarn build
-NODE_ENV=production node dist/index.js
-```
+### New Files
+- `/app/frontend/src/pages/client/overview.tsx` - Business overview dashboard
+- `/app/src/controller/clientOverview.controller.ts` - Optimized overview API
+- `/app/danarapay-router/` - Complete microservice (all files)
 
-### Run with PM2
-```bash
-pm2 start dist/index.js --name danarapay-router
-```
+### Modified Files
+- `/app/src/controller/clientDashboard.controller.ts` - Cursor pagination for VA
+- `/app/src/prisma/schema.prisma` - Added channel indexes
+- `/app/src/route/client/web.routes.ts` - Added overview route
+- `/app/src/core/redis.ts` - Added 'overview' TTL type
+- `/app/frontend/src/pages/client/va-dashboard.tsx` - Enhanced UI
+- `/app/frontend/src/pages/docs.tsx` - Added Node.js examples
 
-## Testing Flow
+---
 
-1. **Create VA via router**:
-   ```bash
-   curl -X POST http://router:4000/api/va/create \
-     -H "X-Router-Api-Key: xxx" \
-     -H "Content-Type: application/json" \
-     -d '{"partner_user_id":"user-1","bank_code":"008","amount":50000,"username_display":"Test"}'
-   ```
+## Remaining Tasks
 
-2. **Simulate payment (staging)**:
-   ```bash
-   curl -X POST http://router:4000/api/callback/simulate/va \
-     -d '{"va_id":"xxx"}'
-   ```
+### P0 - Critical (Before Go-Live)
+- [ ] Get DanaRapay production IP whitelist
+- [ ] Set production `CALLBACK_SECRET_TOKEN`
+- [ ] Deploy `danarapay-router` to production server
+- [ ] Configure DanaRapay dashboard callback URLs
 
-3. **Check callback forwarded to launcx-core**
+### P1 - Important
+- [ ] End-to-end test: Create VA → Payment → Callback → Dashboard
+- [ ] Load testing with cursor pagination
+- [ ] Monitor query performance
 
-## Next Steps
+### P2 - Enhancement
+- [ ] Add correlation/requestId to all logs
+- [ ] Cleanup unused imports and files
+- [ ] Add TypeScript strict mode
 
-- [ ] Deploy danarapay-router to server
-- [ ] Configure DanaRapay callback URLs
-- [ ] Update launcx-core to call router instead of DanaRapay directly
-- [ ] Test end-to-end flow
-- [ ] Monitor logs & metrics
+### P3 - Future
+- [ ] Real-time dashboard updates (WebSocket/SSE)
+- [ ] Email notifications for large withdrawals
+- [ ] Multi-language support for docs
+
+---
+
+## Test Credentials
+
+- **API Key (test)**: `658986ac-04ea-413e-aa62-0572ce97afef`
+- **Callback Token (test)**: `bZuaFqrmgNcuSlWbm0WQDCJMVmElhNa1CPpsJytYJ0`
+
+---
+
+Last Updated: 2025-01-31
