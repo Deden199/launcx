@@ -144,11 +144,12 @@ export interface DanarapayRemitResult {
   /** DanaRapay transaction ID */
   trx_id?: string;
   partner_trx_id?: string;
-  bank_code?: string;
-  account_number?: string;
-  account_holder_name?: string;
+  recipient_bank?: string;
+  recipient_account?: string;
+  recipient_name?: string;
   amount?: number;
   notes?: string;
+  timestamp?: string;
   raw: any;
 }
 
