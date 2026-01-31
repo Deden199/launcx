@@ -80,8 +80,6 @@ async function setupTestData() {
       apiKey: 'test-api-key-' + TEST_PREFIX,
       apiSecret: 'test-secret',
       balance: INITIAL_BALANCE,
-      withdrawMinAmount: 10000,
-      withdrawMaxAmount: 100000000,
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
     },
