@@ -1445,7 +1445,13 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       const feePctAmt = (pc.withdrawFeePercent / 100) * amount
       const netAmt = amount - feePctAmt - pc.withdrawFeeFlat
 
-      // f) Buat WithdrawRequest dengan nested connect
+      // f) Determine if this provider deducts balance on create or via callback
+      // DanaRapay: balance deducted via ledger after callback SUCCESS
+      // Legacy providers (hilogate, piro, oy, etc.): balance deducted on create (hold)
+      const isDanarapayProvider = sourceProvider === 'danarapay'
+      const shouldDeductOnCreate = !isDanarapayProvider
+
+      // g) Buat WithdrawRequest dengan nested connect
       const refId = withdrawRef
       const w = await tx.withdrawRequest.create({
         data: {
@@ -1463,15 +1469,23 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
           accountNumber:    account_number,
           bankCode:         bank_code,
           bankName,
-          branchName
+          branchName,
+          // Ledger tracking: set balanceDeducted based on provider type
+          // - Legacy providers: true (deducted on create)
+          // - DanaRapay: false (will be deducted via ledger after callback SUCCESS)
+          balanceDeducted: shouldDeductOnCreate,
+          balanceDeductedAt: shouldDeductOnCreate ? new Date() : null,
         }
       })
 
-      // g) Hold saldo di PartnerClient
-      await tx.partnerClient.update({
-        where: { id: partnerClientId },
-        data: { balance: { decrement: amount } }
-      })
+      // h) Hold saldo di PartnerClient - ONLY for legacy providers
+      // DanaRapay: balance will be deducted via ledger.service after callback SUCCESS
+      if (shouldDeductOnCreate) {
+        await tx.partnerClient.update({
+          where: { id: partnerClientId },
+          data: { balance: { decrement: amount } }
+        })
+      }
 
       return w
     })
