@@ -14,6 +14,10 @@ Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) pa
 │  VA Callback:                    Disbursement Callback:              │
 │  - settlement_status = WAITING   - code 000 = SUCCESS                │
 │  - settlement_status = SUCCESS   - code 300 = FAILED                 │
+│                                                                      │
+│  Balance API:                                                        │
+│  - GET /api/balance              - Returns provider balance          │
+│  - Used as global guardrail      - Prevents overdraw                 │
 └───────────────────────────────────────────────────────────────────────┘
                               ↓ ↑
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -26,6 +30,10 @@ Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) pa
 │  LEDGER SERVICE (balance changes):                                  │
 │  • processOrderSettlement() → credits balance for SETTLED orders    │
 │  • processWithdrawalBalanceDeduction() → debits balance for SUCCESS │
+│                                                                      │
+│  PROVIDER BALANCE (guardrail):                                      │
+│  • getProviderBalance() → fetches DanaRapay account balance         │
+│  • Displayed in withdraw page as global available funds indicator   │
 │                                                                      │
 │  DASHBOARD:                                                          │
 │  • Shows status based on DanaRapay state                            │
