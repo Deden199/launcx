@@ -400,9 +400,10 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       .filter(g => statuses.includes(g.status as any))
       .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
 
-    const totalCount = totalRows;
+    // Use stats total for cursor mode, otherwise use count
+    const totalCount = cursor ? metricsGrouped.reduce((sum, g) => sum + 1, 0) : totalRows;
 
-    // (14) VA Stats extraction
+    // (16) VA Stats extraction
     const vaStatsMap = {
       created: vaStats.reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       pending: vaStats
@@ -417,15 +418,34 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       totalAmount: vaStats.reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
     };
 
-    // (15) Balance
+    // (17) Withdrawal Stats - reflects flow: Transaction → Balance → Withdrawal
+    const withdrawalStatsMap = {
+      pending: withdrawalStats
+        .filter(g => g.status === DisbursementStatus.PENDING)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      pendingAmount: withdrawalStats
+        .filter(g => g.status === DisbursementStatus.PENDING)
+        .reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
+      completed: withdrawalStats
+        .filter(g => g.status === DisbursementStatus.COMPLETED)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      completedAmount: withdrawalStats
+        .filter(g => g.status === DisbursementStatus.COMPLETED)
+        .reduce((sum, g) => sum + (g._sum?.netAmount ?? g._sum?.amount ?? 0), 0),
+      failed: withdrawalStats
+        .filter(g => g.status === DisbursementStatus.FAILED)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+    };
+
+    // (18) Balance (saldo aktif)
     const parentBal = clientIds.includes(pc.id) ? pc.balance ?? 0 : 0;
     const childrenBal = pc.children
       .filter(c => clientIds.includes(c.id))
       .reduce((sum, c) => sum + (c.balance ?? 0), 0);
     const totalActive = parentBal + childrenBal;
 
-    // (16) Map transactions with VA data
-    const transactions = orders.map(o => {
+    // (19) Map transactions - MINIMAL fields only
+    const transactions = resultOrders.map(o => {
       const netSettle = o.status === ORDER_STATUS.PAID
         ? (o.pendingAmount ?? 0)
         : (o.settlementAmount ?? 0);
@@ -439,7 +459,6 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       return {
         id: o.id,
         date: o.createdAt.toISOString(),
-        reference: o.qrPayload ?? '',
         rrn: o.rrn ?? '',
         playerId: o.playerId,
         amount: o.amount,
@@ -448,9 +467,8 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         settlementStatus: o.settlementStatus ?? '',
         status: o.status === ORDER_STATUS.SETTLED ? ORDER_STATUS.SUCCESS : o.status,
         paymentReceivedTime: o.paymentReceivedTime?.toISOString() ?? '',
-        settlementTime: '', // sementara kosong agar aman dari decode error
         trxExpirationTime: o.trxExpirationTime?.toISOString() ?? '',
-        // VA specific fields
+        // Channel + VA fields
         channel: o.channel || 'QRIS',
         vaNumber,
         bankCode,
@@ -458,15 +476,20 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       };
     });
 
+    // (20) Build response - reflects business flow: VA/QRIS → Transaction → Balance → Withdrawal
     const result = {
+      // Saldo aktif (tersedia untuk withdrawal)
       balance: totalActive,
+      // Transaction metrics
       totalPending,
       totalAmount,
-      totalCount,
       totalSettlement,
       totalPaid,
-      totalTransaksi: totalCount,
+      // Pagination
       total: totalCount,
+      hasMore,
+      nextCursor,
+      // Transactions list
       transactions,
       children: pc.children,
       // VA Stats
