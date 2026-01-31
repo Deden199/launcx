@@ -39,6 +39,7 @@ r.post('/callback-url', express.json(), updateClientCallbackUrl)
 r.post('/change-password', express.json(), changeClientPassword)
 
 // Dashboard (saldo + transaksi)
+r.get('/overview', getClientOverview)
 r.get('/dashboard', getClientDashboard)
 r.get('/dashboard/export', exportClientTransactions)
 r.post('/callbacks/:id/retry', retryTransactionCallback)
