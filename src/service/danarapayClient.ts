@@ -649,10 +649,11 @@ export class DanarapayClient {
         status: data?.status,
         trx_id: data?.trx_id,
         partner_trx_id: data?.partner_trx_id,
-        bank_code: data?.bank_code,
-        account_number: data?.account_number,
-        account_holder_name: data?.account_holder_name,
+        recipient_bank: data?.recipient_bank ?? data?.bank_code,
+        recipient_account: data?.recipient_account ?? data?.account_number,
+        recipient_name: data?.recipient_name ?? data?.account_holder_name,
         amount: data?.amount,
+        timestamp: data?.timestamp,
         raw: data,
       };
     } catch (err) {
