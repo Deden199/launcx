@@ -46,13 +46,38 @@ function addResult(name: string, passed: boolean, details: string) {
 async function setupTestData() {
   log('Setting up test data...');
   
+  // Create test merchant first
+  await prisma.merchant.upsert({
+    where: { id: TEST_MERCHANT_ID },
+    create: {
+      id: TEST_MERCHANT_ID,
+      name: 'Test Merchant E2E',
+      phoneNumber: '08123456789',
+      email: 'test@test.com',
+    },
+    update: {},
+  });
+  
+  // Create test sub_merchant
+  await prisma.sub_merchant.upsert({
+    where: { id: TEST_SUBMERCHANT_ID },
+    create: {
+      id: TEST_SUBMERCHANT_ID,
+      merchantId: TEST_MERCHANT_ID,
+      name: 'Test SubMerchant',
+      provider: 'danarapay',
+      fee: 0,
+    },
+    update: {},
+  });
+  
   // Create test PartnerClient
   await prisma.partnerClient.upsert({
     where: { id: TEST_CLIENT_ID },
     create: {
       id: TEST_CLIENT_ID,
       name: 'Test Client E2E',
-      apiKey: 'test-api-key-' + Date.now(),
+      apiKey: 'test-api-key-' + TEST_PREFIX,
       apiSecret: 'test-secret',
       balance: INITIAL_BALANCE,
       withdrawMinAmount: 10000,
