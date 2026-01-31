@@ -118,20 +118,27 @@ interface VaUpdateData {
   amount?: number;
   txDate?: string;
   settlementStatus?: string;
+  settlementTime?: string;
   providerPayload?: any;
 }
 
 /**
  * Idempotent update VA transaction status
- * - Only updates if new status is a valid transition
- * - Prevents duplicate updates for same callback
+ * 
+ * IMPORTANT: Callback HANYA mengubah status, TIDAK mengubah saldo.
+ * Saldo diupdate oleh ledger logic terpisah yang membaca status SETTLED.
+ * 
+ * Flow berdasarkan DanaRapay settlement_status:
+ * - settlement_status = WAITING → Order.status = PAID, Order.settlementStatus = WAITING
+ * - settlement_status = SUCCESS → Order.status = SETTLED, Order.settlementStatus = SUCCESS
  */
 async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
   updated: boolean;
   reason?: string;
   order?: any;
+  isSettlementCallback?: boolean;
 }> {
-  const { partnerTrxId, partnerUserId, vaNumber, trxId, amount, txDate, settlementStatus, providerPayload } = data;
+  const { partnerTrxId, partnerUserId, vaNumber, trxId, amount, txDate, settlementStatus, settlementTime, providerPayload } = data;
 
   // Find order by partnerTrxId or partnerUserId
   const searchId = partnerTrxId || partnerUserId;
@@ -156,69 +163,77 @@ async function idempotentUpdateVaTransaction(data: VaUpdateData): Promise<{
     return { updated: false, reason: 'ORDER_NOT_FOUND' };
   }
 
-  const currentStatus = mapVaStatusToInternal(order.status);
-  const newStatus = mapVaStatusToInternal('COMPLETE', settlementStatus);
+  const currentStatus = order.status;
+  const currentSettlementStatus = order.settlementStatus;
+  
+  // Determine new status based on DanaRapay settlement_status
+  const newOrderStatus = mapSettlementStatusToOrderStatus(settlementStatus);
+  const isSettlementCallback = settlementStatus === DANARAPAY_SETTLEMENT_STATUS.SUCCESS;
 
-  // Idempotency check: already in terminal state
-  if (['SUCCESS', 'FAILED', 'CANCELLED'].includes(currentStatus)) {
-    if (currentStatus === newStatus) {
-      logger.info('[DanaRpay VA] Duplicate callback, already processed', {
-        orderId: order.id,
-        status: currentStatus,
-      });
-      return { updated: false, reason: 'ALREADY_PROCESSED', order };
-    }
-
-    // Only allow SUCCESS to override PENDING
-    if (currentStatus === 'SUCCESS' && newStatus !== 'SUCCESS') {
-      logger.warn('[DanaRpay VA] Invalid status transition attempted', {
-        orderId: order.id,
-        currentStatus,
-        newStatus,
-      });
-      return { updated: false, reason: 'INVALID_TRANSITION', order };
-    }
+  // Idempotency check: prevent invalid transitions
+  if (currentStatus === 'SETTLED') {
+    // Already settled - ignore duplicate callbacks
+    logger.info('[DanaRpay VA] Order already SETTLED, ignoring callback', {
+      orderId: order.id,
+      currentStatus,
+      incomingSettlementStatus: settlementStatus,
+    });
+    return { updated: false, reason: 'ALREADY_SETTLED', order };
   }
 
-  // Build update payload
+  // Prevent downgrade from PAID to something lower
+  if (currentStatus === 'PAID' && newOrderStatus === 'PENDING') {
+    logger.warn('[DanaRpay VA] Invalid status downgrade attempted', {
+      orderId: order.id,
+      currentStatus,
+      newOrderStatus,
+    });
+    return { updated: false, reason: 'INVALID_DOWNGRADE', order };
+  }
+
+  // Build update payload - ONLY status fields, NO balance changes
   const updateData: any = {
-    status: newStatus,
+    status: newOrderStatus,
+    settlementStatus: settlementStatus || currentSettlementStatus,
     providerPayload: providerPayload ?? order.providerPayload,
     updatedAt: new Date(),
   };
 
+  // Set pgRefId if provided and not already set
   if (trxId && !order.pgRefId) {
     updateData.pgRefId = trxId;
   }
 
-  if (newStatus === 'SUCCESS') {
-    updateData.paymentReceivedTime = txDate ? new Date(txDate) : new Date();
-    if (amount != null) {
-      updateData.pendingAmount = 0;
-    }
-    // Set settlement time if provided
-    if (settlementStatus === 'SUCCESS') {
-      updateData.settlementTime = new Date();
-      updateData.settlementStatus = 'SETTLED';
-    } else if (settlementStatus === 'WAITING') {
-      updateData.settlementStatus = 'WAITING';
-    }
+  // Payment received time (for first callback - WAITING)
+  if (txDate && !order.paymentReceivedTime) {
+    updateData.paymentReceivedTime = new Date(txDate);
   }
 
-  // Update order
+  // Settlement time (for second callback - SUCCESS)
+  if (isSettlementCallback) {
+    updateData.settlementTime = settlementTime ? new Date(settlementTime) : new Date();
+  }
+
+  // Update order - HANYA STATUS, TIDAK ADA BALANCE UPDATE DI SINI
   const updatedOrder = await prisma.order.update({
     where: { id: order.id },
     data: updateData,
   });
 
-  logger.info('[DanaRpay VA] Order updated', {
+  logger.info('[DanaRpay VA] Order status updated (callback only updates status)', {
     orderId: order.id,
     oldStatus: currentStatus,
-    newStatus,
+    newStatus: newOrderStatus,
     settlementStatus,
+    isSettlementCallback,
+    // Note: Balance will be updated by ledger logic, not here
   });
 
-  return { updated: true, order: updatedOrder };
+  return { 
+    updated: true, 
+    order: updatedOrder, 
+    isSettlementCallback 
+  };
 }
 
 // ===================== CALLBACK HANDLER =====================
