@@ -433,9 +433,166 @@ Authorization: Bearer <YOUR_JWT_TOKEN>`}</code></pre>
       </ol>
     </section>
 
-    {/* ─────────────────────────────────── 10. Support */}
+    {/* ─────────────────────────────────── 10. Code Examples */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>10. Support</h2>
+      <h2 className={styles.heading2}>10. Complete Code Examples</h2>
+      
+      <h3 className={styles.heading3}>10.1 Node.js/TypeScript SDK</h3>
+      <pre className={styles.codeBlock}><code>{`// launcx-client.ts
+import axios, { AxiosInstance } from 'axios'
+
+interface LauncxConfig {
+  apiKey: string
+  baseURL?: string
+}
+
+interface CreateVAParams {
+  partner_user_id: string
+  bank_code: string
+  amount?: number
+  is_open?: boolean
+  is_single_use?: boolean
+  expiration_time?: number
+  username_display: string
+  partner_trx_id?: string
+}
+
+interface CreateQRISParams {
+  price: number
+  playerId: string
+  flow?: 'embed' | 'redirect'
+}
+
+class LauncxClient {
+  private client: AxiosInstance
+
+  constructor(config: LauncxConfig) {
+    this.client = axios.create({
+      baseURL: config.baseURL || 'https://s2.launcx.com/api/v1',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': config.apiKey,
+      },
+    })
+
+    // Auto-add timestamp
+    this.client.interceptors.request.use(cfg => {
+      cfg.headers['X-Timestamp'] = Date.now().toString()
+      return cfg
+    })
+  }
+
+  // ─── QRIS ───────────────────────────────────────
+  async createQRIS(params: CreateQRISParams) {
+    const { data } = await this.client.post('/payments', params)
+    return data
+  }
+
+  // ─── VA ─────────────────────────────────────────
+  async createVA(params: CreateVAParams) {
+    const { data } = await this.client.post('/payments/danarapay/va/create', params)
+    return data
+  }
+
+  async getVA(vaId: string) {
+    const { data } = await this.client.get(\`/payments/danarapay/va/info/\${vaId}\`)
+    return data
+  }
+
+  async updateVA(vaId: string, params: Partial<CreateVAParams>) {
+    const { data } = await this.client.put(\`/payments/danarapay/va/update/\${vaId}\`, params)
+    return data
+  }
+}
+
+export default LauncxClient`}</code></pre>
+
+      <h3 className={styles.heading3}>10.2 Usage Example</h3>
+      <pre className={styles.codeBlock}><code>{`// Example usage
+import LauncxClient from './launcx-client'
+
+const launcx = new LauncxClient({
+  apiKey: process.env.LAUNCX_API_KEY!,
+})
+
+// Create VA
+async function handlePayment(userId: string, amount: number) {
+  try {
+    const result = await launcx.createVA({
+      partner_user_id: userId,
+      bank_code: '008', // Mandiri
+      amount: amount,
+      is_open: false,
+      is_single_use: true,
+      expiration_time: 1440, // 24 hours
+      username_display: 'Customer Name',
+      partner_trx_id: \`TRX-\${Date.now()}\`,
+    })
+
+    console.log('VA Created:', result.data.va_number)
+    return result.data
+  } catch (error) {
+    console.error('Failed to create VA:', error)
+    throw error
+  }
+}`}</code></pre>
+
+      <h3 className={styles.heading3}>10.3 Callback Handler (Express)</h3>
+      <pre className={styles.codeBlock}><code>{`import express from 'express'
+import crypto from 'crypto'
+
+const router = express.Router()
+
+// Verify HMAC signature
+function verifySignature(body: any, signature: string, secret: string): boolean {
+  const payload = JSON.stringify(body)
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex')
+  return signature === expected
+}
+
+router.post('/launcx-callback', express.json(), async (req, res) => {
+  const signature = req.header('X-Callback-Signature')
+  const callbackSecret = process.env.LAUNCX_CALLBACK_SECRET!
+
+  // Verify signature
+  if (!signature || !verifySignature(req.body, signature, callbackSecret)) {
+    return res.status(401).json({ error: 'Invalid signature' })
+  }
+
+  const { orderId, status, channel, netAmount, playerId } = req.body
+
+  console.log(\`Callback received: \${orderId} - \${status}\`)
+
+  // Process based on status
+  switch (status) {
+    case 'PAID':
+    case 'SUCCESS':
+      // Update your database
+      await updateOrderStatus(orderId, status, netAmount)
+      // Notify user
+      await notifyUser(playerId, 'Payment successful!')
+      break
+    case 'EXPIRED':
+      await handleExpiredOrder(orderId)
+      break
+    case 'FAILED':
+      await handleFailedOrder(orderId)
+      break
+  }
+
+  // Always respond 200 to acknowledge receipt
+  return res.json({ success: true })
+})
+
+export default router`}</code></pre>
+    </section>
+
+    {/* ─────────────────────────────────── 11. Support */}
+    <section className={styles.section}>
+      <h2 className={styles.heading2}>11. Support</h2>
       <p className={styles.bodyText}>
         Untuk bantuan teknis, hubungi tim support Launcx.
       </p>
