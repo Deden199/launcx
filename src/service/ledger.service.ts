@@ -495,6 +495,35 @@ export async function processWithdrawalBalanceDeduction(withdrawalId: string): P
 
       const deductAmount = withdrawal.amount;
 
+      // GATE 2: NEGATIVE BALANCE GUARD
+      // Check client balance INSIDE transaction to prevent race conditions
+      const partnerClient = await tx.partnerClient.findUnique({
+        where: { id: withdrawal.partnerClientId },
+        select: { id: true, balance: true, name: true },
+      });
+
+      if (!partnerClient) {
+        logger.error('[Ledger] PartnerClient not found for withdrawal', {
+          withdrawalId: withdrawal.id,
+          partnerClientId: withdrawal.partnerClientId,
+        });
+        return { processed: false, reason: 'PARTNER_CLIENT_NOT_FOUND' };
+      }
+
+      // CRITICAL: Ensure sufficient balance before deduction
+      if (partnerClient.balance < deductAmount) {
+        logger.error('[Ledger] NEGATIVE BALANCE GUARD: Insufficient balance for withdrawal', {
+          withdrawalId: withdrawal.id,
+          refId: withdrawal.refId,
+          partnerClientId: withdrawal.partnerClientId,
+          clientName: partnerClient.name,
+          currentBalance: partnerClient.balance,
+          deductAmount,
+          shortfall: deductAmount - partnerClient.balance,
+        });
+        return { processed: false, reason: 'INSUFFICIENT_BALANCE' };
+      }
+
       // ATOMIC: Update flag + deduct balance in same transaction
       // This prevents double debit from parallel callbacks
       await tx.withdrawRequest.update({
