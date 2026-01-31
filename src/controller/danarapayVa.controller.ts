@@ -839,11 +839,24 @@ export async function getDanarapayVaInfo(req: Request, res: Response) {
     return res.status(200).json({
       success: true,
       data: {
+        // Primary fields (camelCase - client-facing)
         id: result.id,
+        vaNumber: result.va_number,
+        bankCode: result.bank_code,
+        bankName: getBankName(result.bank_code),
+        amount: result.amount,
+        customerId: result.partner_user_id,
+        referenceId: result.partner_trx_id,
+        createdAt: result.created,
+        isOpen: result.is_open,
+        isSingleUse: result.is_single_use,
+        expiresAt: result.expiration_time ? new Date(result.expiration_time).toISOString() : null,
+        status: result.va_status === 'WAITING_PAYMENT' ? 'PENDING' : result.va_status,
+        displayName: result.username_display,
+        // Legacy fields (snake_case - backward compatibility)
         va_number: result.va_number,
         bank_code: result.bank_code,
         bank_name: result.bank_name,
-        amount: result.amount,
         partner_user_id: result.partner_user_id,
         partner_trx_id: result.partner_trx_id,
         created: result.created,
