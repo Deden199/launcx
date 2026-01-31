@@ -111,11 +111,19 @@ DanaRapay doesn't have webhook for disbursement, so:
 3. On final status (COMPLETE/FAILED) → forward to launcx-core
 4. Max 100 attempts before giving up
 
-## DanaRapay Callback URLs
+## DanaRapay Callback URLs (SECURED)
 
-Set in DanaRapay dashboard:
-- VA: `https://your-router-domain/api/callback/va`
-- QRIS: `https://your-router-domain/api/callback/qris`
+Set in DanaRapay dashboard (replace `<TOKEN>` with actual CALLBACK_SECRET_TOKEN):
+- VA: `https://your-router-domain/api/callback/va/<TOKEN>`
+- QRIS: `https://your-router-domain/api/callback/qris/<TOKEN>`
+
+### Callback Security (Implemented: 2025-01-31)
+Two-layer security for callback endpoints:
+1. **IP Whitelist**: `DANARAPAY_IP_WHITELIST` env variable (comma-separated IP/CIDR)
+   - Default: DENY ALL if empty (secure by default)
+   - Supports CIDR notation (e.g., `10.0.0.0/8`)
+2. **URL Path Token**: Secret token embedded in URL path
+   - Generate: `openssl rand -base64 32 | tr -d '/+='`
 
 ## Environment Variables
 
