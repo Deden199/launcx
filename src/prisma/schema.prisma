@@ -262,6 +262,11 @@ model Order {
   loanedAt            DateTime?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
+  
+  // Ledger tracking - DanaRapay as Source of Truth
+  // Balance only credited when ledgerProcessed = true (after SETTLED status)
+  ledgerProcessed     Boolean?       @default(false)
+  ledgerProcessedAt   DateTime?
 
   loanEntry LoanEntry? @relation("OrderLoanEntry")
 
@@ -276,6 +281,7 @@ model Order {
   @@index([partnerClientId, channel, status])
   @@index([partnerClientId, channel, createdAt])
   @@index([merchantId, createdAt])
+  @@index([status, ledgerProcessed])
 }
 
 model LoanEntry {
