@@ -116,7 +116,7 @@ export default function VADashboardPage() {
   const [totalCount, setTotalCount] = useState(0)
   
   // Debounce search
-  const searchTimeout = useRef<NodeJS.Timeout>()
+  const searchTimeout = useRef<NodeJS.Timeout | null>(null)
   
   // Fetch VA data
   const fetchVAData = useCallback(async (cursor?: string, append = false) => {
