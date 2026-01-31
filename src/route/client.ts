@@ -24,6 +24,9 @@ r.use(requireClientAuth)
 // Dashboard
 r.get('/dashboard', getClientDashboard)
 
+// Provider balance (DanaRapay guardrail)
+r.get('/provider-balance', getProviderBalance)
+
 // Callback API logs
 r.get('/api-logs', getClientApiLogs)
 
