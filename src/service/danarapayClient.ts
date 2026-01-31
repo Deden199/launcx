@@ -176,6 +176,27 @@ export interface DanarapayBalanceResult {
   raw: any;
 }
 
+// ===================== ACCOUNT INQUIRY TYPES =====================
+
+export interface DanarapayAccountInquiryRequest {
+  /** Bank code per BI standard (required) */
+  bank_code: string;
+  /** Bank account number (required) */
+  account_number: string;
+}
+
+export interface DanarapayAccountInquiryResult {
+  success: boolean;
+  status?: { code: string; message: string };
+  bank_code?: string;
+  account_number?: string;
+  account_name?: string;
+  timestamp?: string;
+  id?: string;
+  invoice_id?: string;
+  raw: any;
+}
+
 // ===================== CALLBACK TYPES =====================
 
 export interface DanarapayVaCallbackPayload {
