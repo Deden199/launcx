@@ -106,6 +106,58 @@ danarapayRouter.post(
   danarapayVaCallback
 );
 
+/**
+ * @swagger
+ * /api/v1/payments/danarapay/disbursement/callback:
+ *   post:
+ *     summary: DanaRpay Disbursement Callback
+ *     description: |
+ *       Webhook endpoint untuk menerima notifikasi status disbursement dari DanaRpay.
+ *       
+ *       DanaRapay status codes (Source of Truth):
+ *       - 000: Success (Final)
+ *       - 101: In Progress
+ *       - 300: Failed (Final)
+ *       - 301: Pending
+ *       
+ *       Callback ini HANYA mengubah status withdrawal.
+ *       Balance adjustment dilakukan oleh ledger service.
+ *     tags:
+ *       - DanaRpay Disbursement
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               partner_trx_id:
+ *                 type: string
+ *                 description: Partner's withdrawal ID
+ *               trx_id:
+ *                 type: string
+ *                 description: DanaRapay transaction ID
+ *               status:
+ *                 type: object
+ *                 properties:
+ *                   code:
+ *                     type: string
+ *                     enum: ["000", "101", "300", "301"]
+ *                   message:
+ *                     type: string
+ *               amount:
+ *                 type: integer
+ *     responses:
+ *       '200':
+ *         description: Callback acknowledged
+ */
+danarapayRouter.post(
+  '/disbursement/callback',
+  flexibleJsonParser,
+  danarapayDisbursementCallback
+);
+
 // ===================== API ROUTES (PROTECTED) =====================
 
 /**
