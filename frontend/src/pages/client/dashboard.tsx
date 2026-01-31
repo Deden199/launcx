@@ -118,8 +118,8 @@ export default function ClientDashboardPage() {
     }
     if (selectedChild && selectedChild !== 'all') params.clientId = selectedChild
     if (search.trim()) params.search = search.trim()
-    // Filter QRIS only
-    params.channel = 'QRIS'
+    // Filter VA transactions only (for VA launch)
+    params.channel = 'VA'
     params.page = page
     params.limit = perPage
     return params
