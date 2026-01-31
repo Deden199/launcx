@@ -277,16 +277,21 @@ export async function processWithdrawalCallback(
  * 
  * This is the ledger logic that ensures balance is only deducted
  * after DanaRapay confirms SUCCESS
+ * 
+ * IDEMPOTENT: Will not deduct if balanceDeducted=true
+ * This handles backward compatibility with legacy providers that deducted on create
  */
 export async function processWithdrawalBalanceDeduction(withdrawalId: string): Promise<{
   processed: boolean;
   reason?: string;
   balanceChange?: number;
 }> {
-  const withdrawal = await prisma.withdrawRequest.findUnique({
+  // Try finding by id first, then by refId
+  let withdrawal = await prisma.withdrawRequest.findUnique({
     where: { id: withdrawalId },
     select: {
       id: true,
+      refId: true,
       status: true,
       amount: true,
       netAmount: true,
@@ -296,25 +301,52 @@ export async function processWithdrawalBalanceDeduction(withdrawalId: string): P
   });
 
   if (!withdrawal) {
+    withdrawal = await prisma.withdrawRequest.findFirst({
+      where: { refId: withdrawalId },
+      select: {
+        id: true,
+        refId: true,
+        status: true,
+        amount: true,
+        netAmount: true,
+        partnerClientId: true,
+        balanceDeducted: true,
+      },
+    });
+  }
+
+  if (!withdrawal) {
+    logger.warn('[Ledger] Withdrawal not found for balance deduction', { withdrawalId });
     return { processed: false, reason: 'NOT_FOUND' };
   }
 
   // Only process COMPLETED withdrawals
   if (withdrawal.status !== 'COMPLETED') {
+    logger.info('[Ledger] Withdrawal not completed, skipping balance deduction', {
+      withdrawalId: withdrawal.id,
+      status: withdrawal.status,
+    });
     return { processed: false, reason: 'NOT_COMPLETED' };
   }
 
-  // Check if balance already deducted
+  // CRITICAL: Check if balance already deducted - prevents double debit
+  // This handles:
+  // 1. Duplicate callbacks
+  // 2. Legacy providers that deducted balance on create (balanceDeducted=true from create)
   if (withdrawal.balanceDeducted) {
+    logger.info('[Ledger] Balance already deducted (idempotent guard)', {
+      withdrawalId: withdrawal.id,
+      refId: withdrawal.refId,
+    });
     return { processed: false, reason: 'ALREADY_DEDUCTED' };
   }
 
   const deductAmount = withdrawal.amount;
 
-  // Deduct balance and mark as processed
+  // Deduct balance and mark as processed - atomic transaction
   await prisma.$transaction(async (tx) => {
     await tx.withdrawRequest.update({
-      where: { id: withdrawalId },
+      where: { id: withdrawal!.id },
       data: { 
         balanceDeducted: true,
         balanceDeductedAt: new Date(),
@@ -322,7 +354,7 @@ export async function processWithdrawalBalanceDeduction(withdrawalId: string): P
     });
 
     await tx.partnerClient.update({
-      where: { id: withdrawal.partnerClientId },
+      where: { id: withdrawal!.partnerClientId },
       data: {
         balance: { decrement: deductAmount },
       },
