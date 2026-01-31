@@ -972,22 +972,13 @@ export async function updateDanarapayVa(req: Request, res: Response) {
       });
     }
 
+    // Return success response - format based on route/header
+    const responseFormat = getResponseFormat(req);
+    const responseData = formatVaInfoResponse(result, responseFormat);
+    
     return res.status(200).json({
       success: true,
-      data: {
-        id: result.id,
-        va_number: result.va_number,
-        bank_code: result.bank_code,
-        amount: result.amount,
-        partner_user_id: result.partner_user_id,
-        partner_trx_id: result.partner_trx_id,
-        is_open: result.is_open,
-        is_single_use: result.is_single_use,
-        expiration_time: result.expiration_time,
-        trx_expiration_time: result.trx_expiration_time,
-        va_status: result.va_status,
-        username_display: result.username_display,
-      },
+      data: responseData,
     });
   } catch (err: any) {
     logger.error('[DanaRpay VA] Update VA error', {
