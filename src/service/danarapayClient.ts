@@ -126,11 +126,11 @@ export interface DanarapayRemitRequest {
   /** Partner unique transaction ID (required) - use withdrawRequest.id */
   partner_trx_id: string;
   /** Bank code per BI standard (required) - e.g. 014 for BCA */
-  bank_code: string;
+  recipient_bank: string;
   /** Recipient bank account number (required) */
-  account_number: string;
+  recipient_account: string;
   /** Recipient account holder name (required) */
-  account_holder_name: string;
+  recipient_name: string;
   /** Amount in IDR (required) */
   amount: number;
   /** Optional notes/description */
