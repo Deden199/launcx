@@ -92,6 +92,20 @@ export function callbackSecurityMiddleware(options?: {
         });
       }
 
+      // Check token length first to avoid timing attack via length
+      if (providedToken.length !== CALLBACK_SECRET_TOKEN.length) {
+        logger.warn('[Callback Security] BLOCKED: Invalid callback token', {
+          clientIp,
+          path: req.path,
+          tokenPrefix: providedToken.substring(0, 8) + '...',
+        });
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid callback token',
+          code: 'TOKEN_INVALID',
+        });
+      }
+
       // Constant-time comparison to prevent timing attacks
       const isValidToken = crypto.timingSafeEqual(
         Buffer.from(providedToken),
