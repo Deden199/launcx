@@ -1949,10 +1949,9 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       const netAmt = amount - feePctAmt - pc.withdrawFeeFlat
 
       // Determine if this provider deducts balance on create or via callback
-      // DanaRapay: balance deducted via ledger after callback SUCCESS
-      // Legacy providers: balance deducted on create (hold)
-      const isDanarapayProvider = sourceProvider === 'danarapay'
-      const shouldDeductOnCreate = !isDanarapayProvider
+      // Use constant from ledger service for consistency
+      const { isCallbackBasedProvider } = await import('../service/ledger.service')
+      const shouldDeductOnCreate = !isCallbackBasedProvider(sourceProvider)
 
       const refId = withdrawRef
       const w = await tx.withdrawRequest.create({
