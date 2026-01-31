@@ -392,6 +392,106 @@ export class DanarapayClient {
     }
   }
 
+  // ===================== DISBURSEMENT / REMIT =====================
+  /**
+   * Create disbursement (remit/transfer) to bank account
+   * POST /api/remit
+   * 
+   * @see https://api-docs.danarapay.com/#tag/Disbursement
+   */
+  async remit(request: DanarapayRemitRequest): Promise<DanarapayRemitResult> {
+    const body = clean({
+      partner_trx_id: request.partner_trx_id,
+      bank_code: request.bank_code,
+      account_number: request.account_number,
+      account_holder_name: request.account_holder_name,
+      amount: request.amount,
+      notes: request.notes,
+    });
+
+    try {
+      logger.info('[DanaRpay] ▶ remit (disbursement)', { 
+        partner_trx_id: request.partner_trx_id, 
+        bank_code: request.bank_code,
+        amount: request.amount,
+      });
+      
+      const res = await this.http.post('/api/remit', body);
+      
+      logger.info('[DanaRpay] ◀ remit', { status: res.status, data: res.data });
+
+      const data = res.data;
+      const statusCode = data?.status?.code;
+      // 000 = Success, 101/102/301/504/999 = Pending, others = Failed
+      const isSuccess = statusCode === '000';
+      const isPending = ['101', '102', '301', '504', '999'].includes(statusCode);
+
+      return {
+        success: isSuccess,
+        pending: isPending,
+        status: data?.status,
+        trx_id: data?.trx_id,           // DanaRapay transaction ID
+        partner_trx_id: data?.partner_trx_id,
+        bank_code: data?.bank_code,
+        account_number: data?.account_number,
+        account_holder_name: data?.account_holder_name,
+        amount: data?.amount,
+        notes: data?.notes,
+        raw: data,
+      };
+    } catch (err) {
+      const { raw, message, code } = this.extractError(err);
+      logger.error('[DanaRpay] ✖ remit error', { error: message, code });
+      return {
+        success: false,
+        pending: false,
+        status: { code: code ?? '999', message: message ?? 'Unknown error' },
+        raw,
+      };
+    }
+  }
+
+  /**
+   * Check disbursement status
+   * GET /api/remit/status/{partner_trx_id}
+   */
+  async getRemitStatus(partnerTrxId: string): Promise<DanarapayRemitResult> {
+    try {
+      logger.info('[DanaRpay] ▶ getRemitStatus', { partner_trx_id: partnerTrxId });
+      
+      const res = await this.http.get(`/api/remit/status/${encodeURIComponent(partnerTrxId)}`);
+      
+      logger.info('[DanaRpay] ◀ getRemitStatus', { status: res.status, data: res.data });
+
+      const data = res.data;
+      const statusCode = data?.status?.code;
+      const isSuccess = statusCode === '000';
+      const isPending = ['101', '102', '301', '504', '999'].includes(statusCode);
+
+      return {
+        success: isSuccess,
+        pending: isPending,
+        status: data?.status,
+        trx_id: data?.trx_id,
+        partner_trx_id: data?.partner_trx_id,
+        bank_code: data?.bank_code,
+        account_number: data?.account_number,
+        account_holder_name: data?.account_holder_name,
+        amount: data?.amount,
+        raw: data,
+      };
+    } catch (err) {
+      const { raw, message, code } = this.extractError(err);
+      logger.error('[DanaRpay] ✖ getRemitStatus error', { error: message, code });
+      return {
+        success: false,
+        pending: false,
+        status: { code: code ?? '999', message: message ?? 'Unknown error' },
+        raw,
+      };
+    }
+  }
+
   // ===================== HELPERS =====================
 
   private extractError(error: any): { raw: any; message?: string; code?: string } {
