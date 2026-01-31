@@ -492,25 +492,33 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     });
 
     // (20) Build response - reflects business flow: VA/QRIS → Transaction → Balance → Withdrawal
+    // Based on DanaRapay as Source of Truth
     const result = {
       // Saldo aktif (tersedia untuk withdrawal)
+      // Note: Saldo hanya bertambah dari transaksi SETTLED (DanaRapay settlement_status = SUCCESS)
       balance: totalActive,
-      // Transaction metrics
-      totalPending,
+      
+      // Transaction metrics - DanaRapay status based
+      totalWaitingSettlement, // Payment detected, waiting settlement (PAID status)
+      totalSettlement,        // Settlement complete (SETTLED status) - sudah masuk saldo
+      totalPaid,              // Total paid transactions
       totalAmount,
-      totalSettlement,
-      totalPaid,
+      
       // Pagination (cursor-based)
       total: totalCount,
       hasMore,
       nextCursor,
+      
       // Transactions list
       transactions,
       children: pc.children,
-      // VA Stats - reflects VA channel performance
+      
+      // VA Stats - reflects VA channel with DanaRapay settlement status
       vaStats: vaStatsMap,
-      // Withdrawal Stats - reflects flow: Balance → Withdrawal
+      
+      // Withdrawal Stats - reflects flow: Balance → Withdrawal (DanaRapay disbursement status)
       withdrawalStats: withdrawalStatsMap,
+      
       // Available banks for filter
       vaBanks: Object.entries(VA_BANK_MAP).map(([code, name]) => ({ code, name })),
     };
