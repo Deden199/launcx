@@ -144,11 +144,12 @@ export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
     date_from,
     date_to,
     ref,
-    page = '1',
+    cursor: cursorParam,
     limit = '20',
   } = req.query;
 
-  const cacheKey = `withdrawals:${req.clientUserId}:${qClientId || 'all'}:${status || ''}:${date_from || ''}:${date_to || ''}:${ref || ''}:${page}:${limit}`;
+  const cursor = typeof cursorParam === 'string' ? cursorParam : null;
+  const cacheKey = `withdrawals:${req.clientUserId}:${qClientId || 'all'}:${status || ''}:${date_from || ''}:${date_to || ''}:${ref || ''}:${cursor || 'first'}:${limit}`;
 
   try {
     // Use Redis caching with 30 second TTL
@@ -194,39 +195,66 @@ export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
         if (toDate)   where.createdAt.lte = toDate;
       }
 
-      // 4) Pagination
-      const pageNum  = Math.max(1, parseInt(page as string, 10));
-      const pageSize = Math.min(100, parseInt(limit as string, 10));
+      // 4) Pagination - cursor-based
+      const pageSize = Math.min(50, parseInt(limit as string, 10));
 
-      // 5) Query - OPTIMIZED: Only select fields we need
+      // Build cursor-based query
+      const findManyArgs: any = {
+        where,
+        orderBy: [{ createdAt: 'desc' }, { refId: 'desc' }],
+        take: pageSize + 1,
+        select: {
+          refId:         true,
+          bankName:      true,
+          accountName:   true,
+          accountNumber: true,
+          amount:        true,
+          netAmount:     true,
+          pgFee:         true,
+          withdrawFeePercent: true,
+          withdrawFeeFlat:    true,
+          status:        true,
+          createdAt:     true,
+          completedAt:   true,
+          sourceProvider: true,
+          subMerchant: { select: { name: true, provider: true } },
+        },
+      };
+
+      // Apply cursor if provided (format: "createdAt_refId")
+      if (cursor) {
+        const [cursorTime, cursorRefId] = cursor.split('_');
+        if (cursorTime && cursorRefId) {
+          findManyArgs.where = {
+            ...findManyArgs.where,
+            OR: [
+              { createdAt: { lt: new Date(cursorTime) } },
+              {
+                createdAt: new Date(cursorTime),
+                refId: { lt: cursorRefId }
+              }
+            ]
+          };
+        }
+      }
+
+      // 5) Query with parallel count (only for first page)
       const [rows, total] = await Promise.all([
-        prisma.withdrawRequest.findMany({
-          where,
-          skip:  (pageNum - 1) * pageSize,
-          take:  pageSize,
-          orderBy: { createdAt: 'desc' },
-          select: {
-            refId:         true,
-            bankName:      true,
-            accountName:   true,
-            accountNumber: true,
-            amount:        true,
-            netAmount:     true,
-            pgFee:         true,
-            withdrawFeePercent: true,
-            withdrawFeeFlat:    true,
-            status:        true,
-            createdAt:     true,
-            completedAt:   true,
-            sourceProvider: true,
-            subMerchant: { select: { name: true, provider: true } },
-          },
-        }),
-        prisma.withdrawRequest.count({ where }),
+        prisma.withdrawRequest.findMany(findManyArgs),
+        cursor ? Promise.resolve(0) : prisma.withdrawRequest.count({ where }),
       ]);
 
-      // 6) Format
-      const data = rows.map(w => ({
+      // 6) Determine hasMore and nextCursor
+      const hasMore = rows.length > pageSize;
+      const resultRows = hasMore ? rows.slice(0, -1) : rows;
+      let nextCursor: string | null = null;
+      if (hasMore && resultRows.length > 0) {
+        const lastRow = resultRows[resultRows.length - 1];
+        nextCursor = `${lastRow.createdAt.toISOString()}_${lastRow.refId}`;
+      }
+
+      // 7) Format
+      const data = resultRows.map(w => ({
         refId:         w.refId,
         bankName:      w.bankName,
         accountName:   w.accountName,
@@ -246,7 +274,7 @@ export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
         sourceProvider: w.sourceProvider,
       }));
 
-      return { data, total };
+      return { data, total, hasMore, nextCursor };
     });
 
     return res.json(result);
