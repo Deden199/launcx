@@ -122,16 +122,20 @@ export async function updateClientCallbackUrl(req: ClientAuthRequest, res: Respo
 
 export async function getClientDashboard(req: ClientAuthRequest, res: Response) {
   try {
-    // (1) Build cache key - include channel and bankCode filters
-    const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${req.query.page || '1'}:${req.query.limit || '50'}:${req.query.search || ''}:${req.query.channel || ''}:${req.query.bankCode || ''}`;
+    // (1) Parse pagination params - support cursor-based pagination
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+    const pageSize = Math.min(50, parseInt(String(req.query.limit || '20'), 10));
 
-    // (2) Check cache
+    // (2) Build cache key - include cursor for pagination
+    const cacheKey = `dashboard:${req.clientUserId}:${req.query.clientId || 'all'}:${req.query.date_from || ''}:${req.query.date_to || ''}:${req.query.status || ''}:${cursor || 'first'}:${pageSize}:${req.query.search || ''}:${req.query.channel || ''}:${req.query.bankCode || ''}`;
+
+    // (3) Check cache
     const cached = await cacheGet<any>(cacheKey);
     if (cached) {
       return res.json(cached);
     }
 
-    // (3) Load user + partnerClient(+children)
+    // (4) Load user + partnerClient(+children)
     const user = await prismaReadOnly.clientUser.findUnique({
       where: { id: req.clientUserId! },
       include: {
@@ -154,7 +158,7 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
     const pc = user.partnerClient!;
 
-    // (4) Date params (default last 7 days)
+    // (5) Date params (default last 7 days)
     let dateFrom: Date | undefined;
     let dateTo: Date | undefined;
 
