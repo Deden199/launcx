@@ -6,7 +6,17 @@
  * 2. Withdrawal Flow: create(no debit) -> pending -> success + duplicate (debit hanya 1x)
  * 3. Insufficient balance test (debit harus gagal, saldo tidak minus)
  * 4. Legacy provider debit-on-create -> FAILED -> refund (saldo balik, idempotent)
+ * 
+ * Usage:
+ *   npx ts-node backend/tests/e2e-ledger-gates.ts
+ * 
+ * Environment:
+ *   Reads DATABASE_URL from .env file
  */
+
+// Load environment variables
+import dotenv from 'dotenv';
+dotenv.config();
 
 import { prisma } from '../../src/core/prisma';
 import {
