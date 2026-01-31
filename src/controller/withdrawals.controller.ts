@@ -254,7 +254,7 @@ export async function listWithdrawals(req: ClientAuthRequest, res: Response) {
       }
 
       // 7) Format
-      const data = resultRows.map(w => ({
+      const data = resultRows.map((w: any) => ({
         refId:         w.refId,
         bankName:      w.bankName,
         accountName:   w.accountName,
