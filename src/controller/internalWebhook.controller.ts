@@ -4,6 +4,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../core/prisma';
 import logger from '../logger';
+import crypto from 'crypto';
 
 // Internal secret for authentication
 const INTERNAL_SECRET = process.env.INTERNAL_WEBHOOK_SECRET || 'internal_shared_secret_123';
@@ -59,14 +60,7 @@ export async function handleInternalWebhook(req: Request, res: Response) {
   const payload = req.body as InternalWebhookPayload;
   const eventType = req.header('X-Event-Type') || payload.eventType;
 
-  const log = logger.child({
-    eventType,
-    provider: payload.provider,
-    partnerTrxId: payload.partnerTrxId,
-    status: payload.status,
-  });
-
-  log.info('[InternalWebhook] Received event');
+  logger.info(`[InternalWebhook] Received event: ${eventType} | partnerTrxId=${payload.partnerTrxId} | status=${payload.status}`);
 
   try {
     // Find existing order by partner_trx_id or create new
@@ -81,7 +75,7 @@ export async function handleInternalWebhook(req: Request, res: Response) {
     });
 
     if (!order) {
-      log.warn('[InternalWebhook] Order not found, may need to create');
+      logger.warn(`[InternalWebhook] Order not found for partnerTrxId=${payload.partnerTrxId}`);
       // For DISBURSEMENT events, this might be a withdrawal
       // For VA/QRIS, order should exist from create call
       return res.json({
@@ -124,14 +118,11 @@ export async function handleInternalWebhook(req: Request, res: Response) {
       data: updateData,
     });
 
-    log.info(
-      { orderId: updatedOrder.id, newStatus: orderStatus },
-      '[InternalWebhook] Order updated'
-    );
+    logger.info(`[InternalWebhook] Order updated: orderId=${updatedOrder.id} | newStatus=${orderStatus}`);
 
     // Forward callback to partner client if applicable
     if (['SUCCESS', 'PAID', 'FAILED', 'EXPIRED'].includes(orderStatus)) {
-      await forwardToPartnerCallback(updatedOrder, payload, log);
+      await forwardToPartnerCallback(updatedOrder, payload);
     }
 
     return res.json({
@@ -141,7 +132,7 @@ export async function handleInternalWebhook(req: Request, res: Response) {
       status: orderStatus,
     });
   } catch (err: any) {
-    log.error({ error: err.message }, '[InternalWebhook] Failed to process event');
+    logger.error(`[InternalWebhook] Failed to process event: ${err.message}`);
     return res.status(500).json({
       success: false,
       error: err.message,
@@ -154,8 +145,7 @@ export async function handleInternalWebhook(req: Request, res: Response) {
  */
 async function forwardToPartnerCallback(
   order: any,
-  payload: InternalWebhookPayload,
-  log: any
+  payload: InternalWebhookPayload
 ) {
   try {
     // Get partner client callback URL
@@ -165,12 +155,9 @@ async function forwardToPartnerCallback(
     });
 
     if (!partnerClient?.callbackUrl || !partnerClient?.callbackSecret) {
-      log.info('[InternalWebhook] Partner has no callback configured');
+      logger.info('[InternalWebhook] Partner has no callback configured');
       return;
     }
-
-    const crypto = await import('crypto');
-    const axios = (await import('axios')).default;
 
     const callbackPayload = {
       orderId: order.id,
@@ -201,8 +188,8 @@ async function forwardToPartnerCallback(
       },
     });
 
-    log.info('[InternalWebhook] Callback queued for partner');
+    logger.info(`[InternalWebhook] Callback queued for partner: ${order.partnerClientId}`);
   } catch (err: any) {
-    log.error({ error: err.message }, '[InternalWebhook] Failed to queue partner callback');
+    logger.error(`[InternalWebhook] Failed to queue partner callback: ${err.message}`);
   }
 }
