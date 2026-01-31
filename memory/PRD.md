@@ -1,114 +1,179 @@
-# PRD - Launcx Payment Gateway (Production Ready)
+# PRD - DanaRapay Router (Production Ready)
 
-## Production Deployment
-- **Frontend URL:** `https://s2.launcx.com`
-- **API Base:** `https://s2.launcx.com/api/v1`
+## Architecture
 
-## VA Callback Flow
-
-### 1. Setup di DanaRapay Dashboard
-Set callback URL di dashboard DanaRapay ke:
 ```
-https://s2.launcx.com/api/v1/payments/danarapay/va/callback
+┌─────────────────────────────────────────────────────────────────────┐
+│                    launcx-core (Existing)                           │
+│  • Auth, Dashboard, Settlement, Database                           │
+│  • POST /api/v1/internal/webhook ← receives events from router     │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+┌─────────────────────────────────────────────────────────────────────┐
+│                    danarapay-router (NEW REPO)                      │
+│  Port: 4000                                                         │
+│  ├── /api/va/*         - VA management                             │
+│  ├── /api/qris/*       - QRIS payment                              │
+│  ├── /api/disbursement/* - Withdrawal                              │
+│  ├── /api/inquiry/*    - Account validation                        │
+│  ├── /api/callback/*   - DanaRapay webhooks                        │
+│  ├── /healthz          - Liveness                                  │
+│  └── /readyz           - Readiness                                 │
+│                                                                     │
+│  Workers:                                                          │
+│  • Disbursement polling (no webhook from DanaRapay)                │
+│                                                                     │
+│  Infrastructure:                                                   │
+│  • Redis lock (idempotency)                                        │
+│  • Retry with exponential backoff                                  │
+│  • Structured logging (pino)                                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+┌─────────────────────────────────────────────────────────────────────┐
+│                        DanaRapay API                                 │
+│  Staging: https://api-stg.danarapay.com                             │
+│  Production: https://partner.danarapay.com                          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Callback Flow
+## Files Created
+
+### danarapay-router/
 ```
-Customer pays VA → DanaRapay → Launcx callback endpoint → 
-Update Order status → Forward callback to Partner Client
+src/
+├── index.ts                  # Entry point
+├── app.ts                    # Express app
+├── config.ts                 # Environment config
+├── routes/
+│   ├── index.ts              # Route aggregator
+│   ├── va.routes.ts          # VA endpoints
+│   ├── qris.routes.ts        # QRIS endpoints
+│   ├── disbursement.routes.ts # Disbursement endpoints
+│   ├── inquiry.routes.ts     # Account inquiry
+│   └── callback.routes.ts    # Callback handlers
+├── services/
+│   ├── danarapay.client.ts   # HTTP client to DanaRapay
+│   └── forwarder.service.ts  # Forward events to launcx-core
+├── workers/
+│   └── disbursement.worker.ts # Polling worker
+├── middleware/
+│   ├── auth.middleware.ts    # API key auth
+│   ├── idempotency.middleware.ts # Redis lock
+│   └── logger.middleware.ts  # Request logging
+├── utils/
+│   ├── redis.ts              # Redis client & lock
+│   ├── logger.ts             # Pino logger
+│   └── retry.ts              # Retry with backoff
+└── types/
+    ├── danarapay.types.ts    # DanaRapay API types
+    └── internal.types.ts     # Unified event types
 ```
 
-### 3. Partner Client Setup
-Partner perlu register callback URL di Launcx Client Dashboard:
-- Login ke `https://s2.launcx.com/client/login`
-- Go to **Callback Settings**
-- Set callback URL & secret
-- Launcx akan POST ke URL tersebut dengan payload:
+### launcx-core/ (modified)
+- `src/controller/internalWebhook.controller.ts` - Handle events from router
+- `src/route/internal.routes.ts` - Added `/webhook` endpoint
+
+## Unified Event Payload
 
 ```json
 {
-  "orderId": "19cc351e-cd81-4300-af19-ecac8e3a3144",
-  "status": "SUCCESS",
-  "channel": "VA",
-  "vaNumber": "8618830003000000039",
-  "bankCode": "008",
-  "bankName": "Mandiri",
-  "grossAmount": 50000,
-  "feeLauncx": 500,
-  "netAmount": 49500,
-  "playerId": "user_123",
+  "eventType": "VA|QRIS|DISBURSEMENT",
+  "provider": "DANARAPAY",
+  "partnerTrxId": "TRX-001",
+  "providerTrxId": "uuid-from-danarapay",
+  "amount": 50000,
+  "status": "SUCCESS|PENDING|FAILED|EXPIRED",
+  "providerStatus": "COMPLETE",
+  "paidAt": "2025-01-30T10:00:00Z",
+  "settledAt": "2025-01-30T10:05:00Z",
   "settlementStatus": "SUCCESS",
-  "timestamp": "2025-01-30T14:30:00Z",
-  "nonce": "uuid-v4"
+  "metadata": { ... },
+  "rawPayload": { ... },
+  "processedAt": "2025-01-30T10:00:05Z"
 }
 ```
 
-Header: `X-Callback-Signature: <HMAC-SHA256 signature>`
+## Idempotency Implementation
 
-## Files Changed Today
+- Lock key format: `lock:DANARAPAY:{eventType}:{uniqueId}`
+- Using Redis `SET NX EX` (atomic acquire)
+- TTL: 300 seconds for lock, 24 hours for processed marker
+- Unique ID:
+  - VA: `trx_id` (per payment transaction)
+  - QRIS: `trx_id:settlement_status` (handles 2nd callback)
+  - Disbursement: `remit_id`
 
-### Backend
-- `src/controller/danarapayVa.controller.ts`
-  - Added `crypto` import
-  - **Create VA** now saves Order record with `channel: 'VA_DANARAPAY'`
-  - **Callback handler** now forwards to partner client via `callbackJob` queue
-  
-- `src/controller/clientDashboard.controller.ts`
-  - Added `getVaDashboard` endpoint
-  - Added `getActiveVaList` endpoint
+## Disbursement Polling
 
-- `src/route/client/web.routes.ts`
-  - Added `/va-dashboard` route
-  - Added `/va-active` route
+DanaRapay doesn't have webhook for disbursement, so:
+1. On create → add to in-memory poll queue
+2. Worker polls every 30 seconds
+3. On final status (COMPLETE/FAILED) → forward to launcx-core
+4. Max 100 attempts before giving up
 
-### Frontend
-- `src/pages/client/dashboard.tsx` - QRIS only, with link to VA Dashboard
-- `src/pages/client/va-dashboard.tsx` - New dedicated VA dashboard
-- `src/pages/docs.tsx` - Updated API documentation
+## DanaRapay Callback URLs
 
-## API Endpoints Summary
-
-### Payment Creation
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/payments` | POST | Create QRIS payment |
-| `/payments/danarapay/va/create` | POST | Create VA |
-| `/payments/danarapay/va/info/{id}` | GET | Get VA info |
-| `/payments/danarapay/va/update/{id}` | PUT | Update VA |
-
-### Callback
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/payments/danarapay/va/callback` | POST | DanaRapay webhook endpoint |
-| `/client/callbacks/{id}/retry` | POST | Retry failed callback |
-
-### Client Dashboard
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/client/dashboard` | GET | QRIS transactions |
-| `/client/va-dashboard` | GET | VA transactions + stats |
-| `/client/va-active` | GET | Active VA list |
-| `/client/callback-url` | GET/POST | Manage callback URL |
-
-## Deployment Checklist
-- [x] Backend compiled
-- [x] Frontend built
-- [x] VA callback forwarding implemented
-- [x] API docs updated
-- [x] Branding cleaned
-- [ ] Deploy to s2.launcx.com
-- [ ] Set DanaRapay callback URL
-- [ ] Test end-to-end flow
+Set in DanaRapay dashboard:
+- VA: `https://your-router-domain/api/callback/va`
+- QRIS: `https://your-router-domain/api/callback/qris`
 
 ## Environment Variables
-```bash
-# Frontend
-NEXT_PUBLIC_API_URL=https://s2.launcx.com/api/v1
 
-# Backend
-DATABASE_URL=mongodb://...
-JWT_SECRET=...
-DANARAPAY_API_URL=https://api.danarapay.com
-DANARAPAY_USERNAME=...
-DANARAPAY_API_KEY=...
+### danarapay-router/.env
+```bash
+PORT=4000
+NODE_ENV=production
+DANARAPAY_BASE_URL=https://partner.danarapay.com
+DANARAPAY_USERNAME=xxx
+DANARAPAY_API_KEY=xxx
+REDIS_URL=redis://localhost:6379
+LAUNCX_CORE_WEBHOOK_URL=http://launcx-core:5000/api/v1/internal/webhook
+LAUNCX_CORE_INTERNAL_SECRET=shared_secret
+ROUTER_API_KEY=router_key_for_launcx_to_call
 ```
+
+### launcx-core/.env (add)
+```bash
+INTERNAL_WEBHOOK_SECRET=shared_secret
+```
+
+## Deployment
+
+### Run danarapay-router
+```bash
+cd danarapay-router
+yarn install
+yarn build
+NODE_ENV=production node dist/index.js
+```
+
+### Run with PM2
+```bash
+pm2 start dist/index.js --name danarapay-router
+```
+
+## Testing Flow
+
+1. **Create VA via router**:
+   ```bash
+   curl -X POST http://router:4000/api/va/create \
+     -H "X-Router-Api-Key: xxx" \
+     -H "Content-Type: application/json" \
+     -d '{"partner_user_id":"user-1","bank_code":"008","amount":50000,"username_display":"Test"}'
+   ```
+
+2. **Simulate payment (staging)**:
+   ```bash
+   curl -X POST http://router:4000/api/callback/simulate/va \
+     -d '{"va_id":"xxx"}'
+   ```
+
+3. **Check callback forwarded to launcx-core**
+
+## Next Steps
+
+- [ ] Deploy danarapay-router to server
+- [ ] Configure DanaRapay callback URLs
+- [ ] Update launcx-core to call router instead of DanaRapay directly
+- [ ] Test end-to-end flow
+- [ ] Monitor logs & metrics
