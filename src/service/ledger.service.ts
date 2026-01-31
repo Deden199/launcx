@@ -147,12 +147,17 @@ export function isDisbursementFinal(statusCode: string): boolean {
 }
 
 // =====================================================
-// ORDER SETTLEMENT PROCESSING
+// ORDER SETTLEMENT PROCESSING - ATOMIC & IDEMPOTENT
 // =====================================================
 
 /**
- * Process settlement for an order
+ * Process settlement for an order (VA/QRIS payment credit)
  * Called by ledger reconciliation logic, NOT directly from callback
+ * 
+ * ATOMIC & IDEMPOTENT:
+ * - Guard check (ledgerProcessed) INSIDE transaction
+ * - Credit + set flag in ONE atomic transaction
+ * - Parallel callbacks cannot double credit
  * 
  * @param orderId - Order ID to process
  * @returns true if balance was updated, false if already processed or invalid
@@ -162,52 +167,85 @@ export async function processOrderSettlement(orderId: string): Promise<{
   reason?: string;
   balanceChange?: number;
 }> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: {
-      id: true,
-      partnerClientId: true,
-      status: true,
-      settlementStatus: true,
-      settlementAmount: true,
-      pendingAmount: true,
-      amount: true,
-      ledgerProcessed: true,
-      channel: true,
-    },
-  });
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // CRITICAL: Read INSIDE transaction for atomicity
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        select: {
+          id: true,
+          partnerClientId: true,
+          status: true,
+          settlementStatus: true,
+          settlementAmount: true,
+          pendingAmount: true,
+          amount: true,
+          ledgerProcessed: true,
+          channel: true,
+        },
+      });
 
-  if (!order) {
-    return { processed: false, reason: 'ORDER_NOT_FOUND' };
+      if (!order) {
+        return { processed: false, reason: 'ORDER_NOT_FOUND' };
+      }
+
+      // Only process if status is SETTLED
+      if (order.status !== 'SETTLED') {
+        return { processed: false, reason: 'NOT_SETTLED' };
+      }
+
+      // CRITICAL GUARD: Check inside transaction to prevent double credit
+      // This handles parallel callback race conditions
+      if (order.ledgerProcessed === true) {
+        logger.info('[Ledger] Order already processed (idempotent guard)', { orderId });
+        return { processed: false, reason: 'ALREADY_PROCESSED' };
+      }
+
+      if (!order.partnerClientId) {
+        return { processed: false, reason: 'NO_PARTNER_CLIENT' };
+      }
+
+      // Calculate settlement amount
+      const settlementAmount = order.settlementAmount ?? order.pendingAmount ?? order.amount;
+
+      // ATOMIC: Mark as processed + credit balance in ONE transaction
+      await tx.order.update({
+        where: { id: orderId },
+        data: { 
+          ledgerProcessed: true,
+          ledgerProcessedAt: new Date(),
+        },
+      });
+
+      await tx.partnerClient.update({
+        where: { id: order.partnerClientId },
+        data: {
+          balance: { increment: settlementAmount },
+        },
+      });
+
+      logger.info('[Ledger] Settlement processed - balance credited (atomic)', {
+        orderId,
+        partnerClientId: order.partnerClientId,
+        settlementAmount,
+        channel: order.channel,
+      });
+
+      return { 
+        processed: true, 
+        balanceChange: settlementAmount 
+      };
+    });
+
+    return result;
+  } catch (err: any) {
+    logger.error('[Ledger] Settlement transaction failed', {
+      orderId,
+      error: err.message,
+    });
+    return { processed: false, reason: `TRANSACTION_ERROR: ${err.message}` };
   }
-
-  // Only process if status is SETTLED and not yet processed
-  if (order.status !== 'SETTLED') {
-    return { processed: false, reason: 'NOT_SETTLED' };
-  }
-
-  // Check if already processed to prevent double credit
-  if (order.ledgerProcessed) {
-    logger.info('[Ledger] Order already processed', { orderId });
-    return { processed: false, reason: 'ALREADY_PROCESSED' };
-  }
-
-  // Calculate settlement amount
-  const settlementAmount = order.settlementAmount ?? order.pendingAmount ?? order.amount;
-
-  if (!order.partnerClientId) {
-    return { processed: false, reason: 'NO_PARTNER_CLIENT' };
-  }
-
-  // Update balance and mark as processed in a transaction
-  await prisma.$transaction(async (tx) => {
-    // Mark order as ledger processed
-    await tx.order.update({
-      where: { id: orderId },
-      data: { 
-        ledgerProcessed: true,
-        ledgerProcessedAt: new Date(),
-      },
+}
     });
 
     // Credit client balance
