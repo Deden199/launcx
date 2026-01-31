@@ -1058,6 +1058,44 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
       })
     }
 
+    if (sourceProvider === 'danarapay') {
+      // DanaRapay Account Inquiry
+      const danarapayConfig = config.api.danarapay;
+      if (!danarapayConfig?.baseUrl || !danarapayConfig?.username || !danarapayConfig?.apiKey) {
+        return res.status(500).json({ error: 'DanaRapay credentials not configured' });
+      }
+
+      const danarapayClient = new DanarapayClient({
+        baseUrl: danarapayConfig.baseUrl,
+        username: danarapayConfig.username,
+        apiKey: danarapayConfig.apiKey,
+      });
+
+      const inquiry = await danarapayClient.accountInquiry({
+        bank_code,
+        account_number,
+      });
+
+      if (!inquiry.success) {
+        return res.status(400).json({
+          error: inquiry.status?.message || 'Account inquiry failed',
+          status: 'invalid',
+          code: inquiry.status?.code,
+        });
+      }
+
+      return res.json({
+        account_number: inquiry.account_number || account_number,
+        account_holder: inquiry.account_name || '',
+        bank_code: inquiry.bank_code || bank_code,
+        bank_name: bank_name || null,
+        status: 'valid',
+        code: inquiry.status?.code,
+        message: inquiry.status?.message || '',
+        inquiry_id: inquiry.id,
+      });
+    }
+
     const merchant = await prisma.merchant.findFirst({
       where: { name: 'hilogate' },
     })
@@ -1162,6 +1200,44 @@ export async function validateAccountS2S(req: ApiKeyRequest, res: Response) {
         client_reff: inquiry.clientReff ?? clientReff,
         message: inquiry.message ?? '',
       })
+    }
+
+    if (sourceProvider === 'danarapay') {
+      // DanaRapay Account Inquiry
+      const danarapayConfig = config.api.danarapay;
+      if (!danarapayConfig?.baseUrl || !danarapayConfig?.username || !danarapayConfig?.apiKey) {
+        return res.status(500).json({ error: 'DanaRapay credentials not configured' });
+      }
+
+      const danarapayClient = new DanarapayClient({
+        baseUrl: danarapayConfig.baseUrl,
+        username: danarapayConfig.username,
+        apiKey: danarapayConfig.apiKey,
+      });
+
+      const inquiry = await danarapayClient.accountInquiry({
+        bank_code,
+        account_number,
+      });
+
+      if (!inquiry.success) {
+        return res.status(400).json({
+          error: inquiry.status?.message || 'Account inquiry failed',
+          status: 'invalid',
+          code: inquiry.status?.code,
+        });
+      }
+
+      return res.json({
+        account_number: inquiry.account_number || account_number,
+        account_holder: inquiry.account_name || '',
+        bank_code: inquiry.bank_code || bank_code,
+        bank_name: bank_name || null,
+        status: 'valid',
+        code: inquiry.status?.code,
+        message: inquiry.status?.message || '',
+        inquiry_id: inquiry.id,
+      });
     }
 
     const merchant = await prisma.merchant.findFirst({
