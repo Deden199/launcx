@@ -111,6 +111,16 @@ async function cleanupTestData() {
     where: { id: { startsWith: 'test-client-' } },
   });
   
+  // Delete test sub_merchants
+  await prisma.sub_merchant.deleteMany({
+    where: { id: { startsWith: 'test-submerchant-' } },
+  });
+  
+  // Delete test merchants
+  await prisma.merchant.deleteMany({
+    where: { id: { startsWith: 'test-merchant-' } },
+  });
+  
   log('Cleanup complete');
 }
 
