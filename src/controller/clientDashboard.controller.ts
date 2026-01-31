@@ -443,7 +443,6 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       completed: withdrawalStats
         .filter(g => g.status === DisbursementStatus.COMPLETED)
         .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
-        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       completedAmount: withdrawalStats
         .filter(g => g.status === DisbursementStatus.COMPLETED)
         .reduce((sum, g) => sum + (g._sum?.netAmount ?? g._sum?.amount ?? 0), 0),
