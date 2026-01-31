@@ -18,11 +18,15 @@ import { getDanarapayClient } from '../services/danarapay.client';
 const router = Router();
 
 /**
- * POST /callback/va
+ * POST /callback/va/:token
  * Handle VA payment callback from DanaRapay
+ * 
+ * Security: 
+ * - IP must be in DANARAPAY_IP_WHITELIST
+ * - :token must match CALLBACK_SECRET_TOKEN
  */
 router.post(
-  '/va',
+  '/va/:token',
   callbackAuth,
   idempotentCallback({
     provider: 'DANARAPAY',
@@ -69,11 +73,15 @@ router.post(
 );
 
 /**
- * POST /callback/qris
+ * POST /callback/qris/:token
  * Handle QRIS payment callback from DanaRapay
+ * 
+ * Security: 
+ * - IP must be in DANARAPAY_IP_WHITELIST
+ * - :token must match CALLBACK_SECRET_TOKEN
  */
 router.post(
-  '/qris',
+  '/qris/:token',
   callbackAuth,
   idempotentCallback({
     provider: 'DANARAPAY',
@@ -123,6 +131,7 @@ router.post(
 /**
  * POST /callback/simulate/va
  * Simulate VA callback (staging only)
+ * Note: This endpoint bypasses security for testing
  */
 router.post('/simulate/va', async (req: Request, res: Response) => {
   if (config.isProduction) {
@@ -154,6 +163,7 @@ router.post('/simulate/va', async (req: Request, res: Response) => {
 /**
  * POST /callback/simulate/qris
  * Simulate QRIS callback (staging only)
+ * Note: This endpoint bypasses security for testing
  */
 router.post('/simulate/qris', async (req: Request, res: Response) => {
   if (config.isProduction) {
