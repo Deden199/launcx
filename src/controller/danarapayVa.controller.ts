@@ -553,9 +553,9 @@ export async function danarapayDisbursementCallback(req: Request, res: Response)
 
 interface CreateVaRequestBody {
   /** Partner unique identifier for specific user (required) */
-  partner_user_id: string;
+  partner_user_id?: string;
   /** Bank code: 002 (BRI), 008 (Mandiri), 009 (BNI), 013 (Permata), 022 (CIMB) (required) */
-  bank_code: string;
+  bank_code?: string;
   /** Amount in IDR */
   amount?: number;
   /** true = open amount (default), false = closed amount */
@@ -567,7 +567,7 @@ interface CreateVaRequestBody {
   /** true = VA never expires */
   is_lifetime?: boolean;
   /** Display name shown to user, min 3 chars (required) */
-  username_display: string;
+  username_display?: string;
   /** User email */
   email?: string;
   /** End-user full name */
@@ -578,6 +578,30 @@ interface CreateVaRequestBody {
   partner_trx_id?: string;
   /** Transaction counter limit */
   trx_counter?: number;
+  
+  // ─── CAMELCASE ALIASES (Client-Facing) ───
+  /** Alias for partner_user_id */
+  customerId?: string;
+  /** Alias for bank_code */
+  bankCode?: string;
+  /** Alias for is_open */
+  isOpen?: boolean;
+  /** Alias for is_single_use */
+  isSingleUse?: boolean;
+  /** Alias for expiration_time */
+  expirationMinutes?: number;
+  /** Alias for is_lifetime */
+  isLifetime?: boolean;
+  /** Alias for username_display */
+  displayName?: string;
+  /** Alias for full_name */
+  fullName?: string;
+  /** Alias for trx_expiration_time */
+  trxExpirationMinutes?: number;
+  /** Alias for partner_trx_id */
+  referenceId?: string;
+  /** Alias for trx_counter */
+  trxCounter?: number;
 }
 
 /**
