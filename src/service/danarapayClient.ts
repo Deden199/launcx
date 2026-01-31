@@ -480,9 +480,9 @@ export class DanarapayClient {
   async remit(request: DanarapayRemitRequest): Promise<DanarapayRemitResult> {
     const body = clean({
       partner_trx_id: request.partner_trx_id,
-      bank_code: request.bank_code,
-      account_number: request.account_number,
-      account_holder_name: request.account_holder_name,
+      recipient_bank: request.recipient_bank,
+      recipient_account: request.recipient_account,
+      recipient_name: request.recipient_name,
       amount: request.amount,
       notes: request.notes,
     });
@@ -490,7 +490,7 @@ export class DanarapayClient {
     try {
       logger.info('[DanaRpay] ▶ remit (disbursement)', { 
         partner_trx_id: request.partner_trx_id, 
-        bank_code: request.bank_code,
+        recipient_bank: request.recipient_bank,
         amount: request.amount,
       });
       
@@ -510,11 +510,11 @@ export class DanarapayClient {
         status: data?.status,
         trx_id: data?.trx_id,           // DanaRapay transaction ID
         partner_trx_id: data?.partner_trx_id,
-        bank_code: data?.bank_code,
-        account_number: data?.account_number,
-        account_holder_name: data?.account_holder_name,
+        recipient_bank: data?.recipient_bank,
+        recipient_account: data?.recipient_account,
+        recipient_name: data?.recipient_name,
         amount: data?.amount,
-        notes: data?.notes,
+        timestamp: data?.timestamp,
         raw: data,
       };
     } catch (err) {
