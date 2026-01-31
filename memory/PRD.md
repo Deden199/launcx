@@ -267,4 +267,58 @@ Total: 4 passed, 0 failed
 
 ---
 
+## DanaRapay Provider Balance Feature (Added 2026-01-31)
+
+### Purpose
+Provider balance dari DanaRapay digunakan sebagai **guardrail global** untuk mencegah overdraw. Client withdrawal tetap berdasarkan saldo internal client, tapi balance provider ditampilkan untuk monitoring ketersediaan dana di akun DanaRapay utama.
+
+### Implementation
+
+**Backend Files:**
+- `/app/src/service/danarapayClient.ts` - Added `getBalance()` method
+- `/app/src/controller/providerBalance.controller.ts` - New controller for provider balance endpoint
+- `/app/src/route/client/web.routes.ts` - Added route `GET /api/v1/client/provider-balance`
+
+**Frontend Files:**
+- `/app/frontend/src/pages/client/withdraw.tsx` - Added Provider Balance card
+
+### API Endpoint
+
+```
+GET /api/v1/client/provider-balance
+Authorization: Bearer <client_token>
+
+Response (success):
+{
+  "provider": "danarapay",
+  "available": true,
+  "balance": 50000000,        // availableBalance from DanaRapay
+  "onHold": 5000000,          // pendingBalance + holdBalance + freezeBalance
+  "timestamp": "2026-01-31T12:00:00Z"
+}
+
+Response (not configured):
+{
+  "error": "Provider balance service not configured",
+  "provider": "danarapay",
+  "available": false
+}
+```
+
+### Environment Variables Required
+```bash
+DANARAPAY_BASE_URL=https://api-stg.danarapay.com  # or https://partner.danarapay.com for production
+DANARAPAY_USERNAME=<your_username>
+DANARAPAY_API_KEY=<your_api_key>
+```
+
+### UI Display
+- Card displayed in withdraw page showing:
+  - Available balance (green when >= Rp 1,000,000, amber when low)
+  - On Hold amount (pending + hold + freeze combined)
+  - Warning indicator when balance is low
+  - "Tidak tersedia" when DanaRapay not configured
+
+---
+
 Last Updated: 2026-01-31
