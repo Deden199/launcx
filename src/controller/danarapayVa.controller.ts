@@ -699,7 +699,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
 
     // Calculate expiration time
     const expirationMs = result.trx_expiration_time || result.expiration_time;
-    const trxExpirationTime = expirationMs ? new Date(expirationMs) : null;
+    const orderExpiration = expirationMs ? new Date(expirationMs) : null;
 
     // Create Order record in database with channel VA_DANARAPAY
     const orderId = result.id || body.partner_trx_id || `va-${Date.now()}`;
@@ -713,14 +713,14 @@ export async function createDanarapayVa(req: Request, res: Response) {
           pendingAmount: body.amount || 0,
           feeLauncx: 0,
           settlementAmount: 0,
-          playerId: body.partner_user_id,
-          userId: body.partner_user_id,
+          playerId: partnerUserId,
+          userId: partnerUserId,
           status: 'PENDING',
           channel: 'VA_DANARAPAY',
           checkoutUrl: '',
           pgRefId: result.va_number,
-          pgClientRef: body.partner_trx_id || null,
-          trxExpirationTime: trxExpirationTime,
+          pgClientRef: partnerTrxId || null,
+          trxExpirationTime: orderExpiration,
           providerPayload: {
             id: result.id,
             va_number: result.va_number,
