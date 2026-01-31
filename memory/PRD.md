@@ -196,7 +196,35 @@ DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
   - Valid token → 200 (callback processed)
   - Missing token → 401 `TOKEN_MISSING`
   - Wrong token → 401 `TOKEN_INVALID`
+  - **Token NOT configured + requireToken=true → 500 `SECURITY_MISCONFIGURED`** (FAIL-CLOSED)
   - Invalid requests do NOT trigger ledger or change status
+- **Test Status**: ✅ PASSED (ENFORCED mode)
+
+---
+
+## Gap 2: DanaRapay Remit Integration (Fixed 2026-01-31)
+
+### Files Modified:
+- `/app/src/service/danarapayClient.ts` - Added `remit()` and `getRemitStatus()` methods
+- `/app/src/controller/withdrawals.controller.ts` - Added DanaRapay provider handling
+
+### Flow:
+1. Create withdrawal (DanaRapay) → status=PENDING, balance UNCHANGED
+2. Controller calls `danarapayClient.remit()` → stores trx_id + audit
+3. Callback 301 (PENDING) → update status only, NO balance change
+4. Callback 000 (SUCCESS) → set COMPLETED + ledger.deduct (ATOMIC)
+5. Duplicate callback → blocked with ALREADY_DEDUCTED
+
+### DB Fields for Audit:
+```typescript
+WithdrawRequest.disbursementPayload = {
+  danarapay_trx_id: 'DR-TRX-xxx',
+  request: { partner_trx_id, bank_code, account_number, amount },
+  response: { status, trx_id, success, pending },
+  _calledAt: 'ISO timestamp'
+}
+```
+
 - **Test Status**: ✅ PASSED
 
 ---
@@ -212,9 +240,20 @@ E2E TEST: DanaRapay Source of Truth - 4 Safety Gates
 ✅ Gate 2: Negative Balance Guard
 ✅ Gate 3: Legacy Provider Refund (Idempotent)
 ✅ Gate 3: DanaRapay No Refund (Correct Behavior)
-✅ Gate 4: Callback Security (Audit Mode)
+✅ Gate 4: Callback Security (ENFORCED - Fail-Closed)
 
 Total: 6 passed, 0 failed
+============================================================
+
+============================================================
+E2E TEST: Gap 2 - DanaRapay Withdrawal + Remit
+============================================================
+✅ Create withdrawal → balance unchanged
+✅ PENDING callback → balance unchanged
+✅ SUCCESS callback + deduct → balance correct
+✅ Duplicate callback → blocked ALREADY_DEDUCTED
+
+Total: 4 passed, 0 failed
 ============================================================
 ```
 
