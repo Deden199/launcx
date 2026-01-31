@@ -606,48 +606,62 @@ interface CreateVaRequestBody {
 
 /**
  * Create VA internal endpoint
- * POST /api/v1/payments/danarapay/va/create
+ * POST /api/v1/payments/danarapay/va/create (legacy)
+ * POST /api/v1/payments/va (client-facing, provider-agnostic)
  */
 export async function createDanarapayVa(req: Request, res: Response) {
   try {
     const body: CreateVaRequestBody = req.body;
 
+    // Normalize: accept both camelCase (client-facing) and snake_case (legacy)
+    const partnerUserId = body.partner_user_id || body.customerId;
+    const bankCode = body.bank_code || body.bankCode;
+    const usernameDisplay = body.username_display || body.displayName;
+    const isOpen = body.is_open ?? body.isOpen;
+    const isSingleUse = body.is_single_use ?? body.isSingleUse;
+    const expirationTime = body.expiration_time ?? body.expirationMinutes;
+    const isLifetime = body.is_lifetime ?? body.isLifetime;
+    const fullName = body.full_name || body.fullName;
+    const trxExpirationTime = body.trx_expiration_time ?? body.trxExpirationMinutes;
+    const partnerTrxId = body.partner_trx_id || body.referenceId;
+    const trxCounter = body.trx_counter ?? body.trxCounter;
+
     // Validate required fields
-    if (!body.partner_user_id) {
-      return res.status(400).json({ success: false, error: 'partner_user_id is required' });
+    if (!partnerUserId) {
+      return res.status(400).json({ success: false, error: 'customerId (or partner_user_id) is required' });
     }
-    if (!body.bank_code) {
-      return res.status(400).json({ success: false, error: 'bank_code is required' });
+    if (!bankCode) {
+      return res.status(400).json({ success: false, error: 'bankCode (or bank_code) is required' });
     }
-    if (!body.username_display || body.username_display.length < 3) {
-      return res.status(400).json({ success: false, error: 'username_display is required (min 3 chars)' });
+    if (!usernameDisplay || usernameDisplay.length < 3) {
+      return res.status(400).json({ success: false, error: 'displayName (or username_display) is required (min 3 chars)' });
     }
 
     // Validate bank code
     const validBankCodes = Object.values(VA_BANK_CODES);
-    if (!validBankCodes.includes(body.bank_code as any)) {
+    if (!validBankCodes.includes(bankCode as any)) {
       return res.status(400).json({ 
         success: false, 
-        error: `Invalid bank_code. Valid values: ${validBankCodes.join(', ')} (BRI, Mandiri, BNI, Permata, CIMB)` 
+        error: `Invalid bankCode. Valid values: ${validBankCodes.join(', ')} (BRI, Mandiri, BNI, Permata, CIMB)` 
       });
     }
 
     const client = getClient();
 
     const request: CreateVaRequest = {
-      partner_user_id: body.partner_user_id,
-      bank_code: body.bank_code,
+      partner_user_id: partnerUserId,
+      bank_code: bankCode,
       amount: body.amount,
-      is_open: body.is_open,
-      is_single_use: body.is_single_use,
-      expiration_time: body.expiration_time ?? 1440, // Default 24 hours
-      is_lifetime: body.is_lifetime,
-      username_display: body.username_display,
+      is_open: isOpen,
+      is_single_use: isSingleUse,
+      expiration_time: expirationTime ?? 1440, // Default 24 hours
+      is_lifetime: isLifetime,
+      username_display: usernameDisplay,
       email: body.email,
-      full_name: body.full_name,
-      trx_expiration_time: body.trx_expiration_time,
-      partner_trx_id: body.partner_trx_id,
-      trx_counter: body.trx_counter,
+      full_name: fullName,
+      trx_expiration_time: trxExpirationTime,
+      partner_trx_id: partnerTrxId,
+      trx_counter: trxCounter,
     };
 
     const result = await client.createVa(request);
