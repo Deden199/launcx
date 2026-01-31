@@ -1,12 +1,11 @@
 /**
- * E2E Test Script for DanaRapay Source of Truth Implementation
+ * E2E Test Script for DanaRapay Source of Truth - 4 Safety Gates
  * 
  * Test Scenarios:
  * 1. VA Flow: WAITING -> SUCCESS + duplicate callback (credit hanya 1x)
  * 2. Withdrawal Flow: create(no debit) -> pending -> success + duplicate (debit hanya 1x)
  * 3. Insufficient balance test (debit harus gagal, saldo tidak minus)
  * 4. Legacy provider debit-on-create -> FAILED -> refund (saldo balik, idempotent)
- * 5. Callback security: valid vs invalid token
  */
 
 import { prisma } from '../../src/core/prisma';
@@ -19,11 +18,6 @@ import {
 } from '../../src/service/ledger.service';
 
 const TEST_PREFIX = Date.now().toString();
-const TEST_CLIENT_ID = 'test-client-' + TEST_PREFIX;
-const TEST_MERCHANT_ID = 'test-merchant-' + TEST_PREFIX;
-const TEST_SUBMERCHANT_ID = 'test-submerchant-' + TEST_PREFIX;
-const TEST_ORDER_ID = 'test-order-' + TEST_PREFIX;
-const TEST_WITHDRAWAL_ID = 'test-wd-' + TEST_PREFIX;
 const INITIAL_BALANCE = 1000000; // 1 juta
 
 interface TestResult {
@@ -43,39 +37,40 @@ function addResult(name: string, passed: boolean, details: string) {
   log(`${passed ? '✅' : '❌'} ${name}: ${details}`);
 }
 
+// Global IDs
+let TEST_CLIENT_ID: string;
+let TEST_MERCHANT_ID: string;
+let TEST_SUBMERCHANT_ID: string;
+
 async function setupTestData() {
   log('Setting up test data...');
   
-  // Create test merchant first
-  await prisma.merchant.upsert({
-    where: { id: TEST_MERCHANT_ID },
-    create: {
-      id: TEST_MERCHANT_ID,
+  // Create test merchant first (let MongoDB generate ObjectId)
+  const merchant = await prisma.merchant.create({
+    data: {
       name: 'Test Merchant E2E',
       phoneNumber: '08123456789',
-      email: 'test@test.com',
+      email: `test-${TEST_PREFIX}@test.com`,
     },
-    update: {},
   });
+  TEST_MERCHANT_ID = merchant.id;
+  log(`Created merchant: ${TEST_MERCHANT_ID}`);
   
-  // Create test sub_merchant
-  await prisma.sub_merchant.upsert({
-    where: { id: TEST_SUBMERCHANT_ID },
-    create: {
-      id: TEST_SUBMERCHANT_ID,
+  // Create test sub_merchant (let MongoDB generate ObjectId)
+  const subMerchant = await prisma.sub_merchant.create({
+    data: {
       merchantId: TEST_MERCHANT_ID,
       name: 'Test SubMerchant',
       provider: 'danarapay',
       fee: 0,
     },
-    update: {},
   });
+  TEST_SUBMERCHANT_ID = subMerchant.id;
+  log(`Created subMerchant: ${TEST_SUBMERCHANT_ID}`);
   
-  // Create test PartnerClient
-  await prisma.partnerClient.upsert({
-    where: { id: TEST_CLIENT_ID },
-    create: {
-      id: TEST_CLIENT_ID,
+  // Create test PartnerClient (uses UUID, not ObjectId)
+  const client = await prisma.partnerClient.create({
+    data: {
       name: 'Test Client E2E',
       apiKey: 'test-api-key-' + TEST_PREFIX,
       apiSecret: 'test-secret',
@@ -83,53 +78,64 @@ async function setupTestData() {
       withdrawFeePercent: 0,
       withdrawFeeFlat: 0,
     },
-    update: {
-      balance: INITIAL_BALANCE,
-    },
   });
-  
-  log(`Created test client with balance: ${INITIAL_BALANCE}`);
+  TEST_CLIENT_ID = client.id;
+  log(`Created client: ${TEST_CLIENT_ID} with balance: ${INITIAL_BALANCE}`);
 }
 
 async function cleanupTestData() {
   log('Cleaning up test data...');
   
-  // Delete test orders
-  await prisma.order.deleteMany({
-    where: { id: { startsWith: 'test-order-' } },
-  });
-  
-  // Delete test withdrawals
-  await prisma.withdrawRequest.deleteMany({
-    where: { id: { startsWith: 'test-wd-' } },
-  });
-  
-  // Delete test clients
-  await prisma.partnerClient.deleteMany({
-    where: { id: { startsWith: 'test-client-' } },
-  });
-  
-  // Delete test sub_merchants
-  await prisma.sub_merchant.deleteMany({
-    where: { id: { startsWith: 'test-submerchant-' } },
-  });
-  
-  // Delete test merchants
-  await prisma.merchant.deleteMany({
-    where: { id: { startsWith: 'test-merchant-' } },
-  });
+  try {
+    // Delete test orders by partnerClientId
+    if (TEST_CLIENT_ID) {
+      await prisma.order.deleteMany({
+        where: { partnerClientId: TEST_CLIENT_ID },
+      });
+    }
+    
+    // Delete test withdrawals
+    if (TEST_CLIENT_ID) {
+      await prisma.withdrawRequest.deleteMany({
+        where: { partnerClientId: TEST_CLIENT_ID },
+      });
+    }
+    
+    // Delete test clients
+    if (TEST_CLIENT_ID) {
+      await prisma.partnerClient.delete({
+        where: { id: TEST_CLIENT_ID },
+      }).catch(() => {});
+    }
+    
+    // Delete test sub_merchants
+    if (TEST_SUBMERCHANT_ID) {
+      await prisma.sub_merchant.delete({
+        where: { id: TEST_SUBMERCHANT_ID },
+      }).catch(() => {});
+    }
+    
+    // Delete test merchants
+    if (TEST_MERCHANT_ID) {
+      await prisma.merchant.delete({
+        where: { id: TEST_MERCHANT_ID },
+      }).catch(() => {});
+    }
+  } catch (err: any) {
+    log(`Cleanup warning: ${err.message}`);
+  }
   
   log('Cleanup complete');
 }
 
 /**
- * Test 1: VA Settlement - Single Credit Only
+ * Test 1: VA Settlement - Single Credit Only (Gate 1)
  */
 async function testVaSettlementSingleCredit() {
-  const orderId = TEST_ORDER_ID + '-va';
+  const orderId = `order-va-${TEST_PREFIX}`;
   const settlementAmount = 100000;
   
-  log('--- Test 1: VA Settlement Single Credit ---');
+  log('--- Test 1: VA Settlement Single Credit (Gate 1: Atomic) ---');
   
   // Create test order with SETTLED status
   await prisma.order.create({
@@ -185,11 +191,17 @@ async function testVaSettlementSingleCredit() {
     actualBalance === expectedBalance;
   
   addResult(
-    'VA Settlement Single Credit',
+    'Gate 1: VA Settlement Single Credit (Atomic)',
     passed,
     `Expected balance: ${expectedBalance}, Actual: ${actualBalance}. ` +
     `First call credited: ${result1.processed}, Second call blocked: ${result2.reason}`
   );
+  
+  // Reset balance for next test
+  await prisma.partnerClient.update({
+    where: { id: TEST_CLIENT_ID },
+    data: { balance: INITIAL_BALANCE },
+  });
   
   return passed;
 }
@@ -198,10 +210,10 @@ async function testVaSettlementSingleCredit() {
  * Test 2: Withdrawal Flow - DanaRapay (no debit on create)
  */
 async function testWithdrawalFlowDanaRapay() {
-  const withdrawalId = TEST_WITHDRAWAL_ID + '-dr';
+  const withdrawalId = `wd-dr-${TEST_PREFIX}`;
   const withdrawAmount = 50000;
   
-  log('--- Test 2: Withdrawal Flow DanaRapay ---');
+  log('--- Test 2: Withdrawal Flow DanaRapay (Gate 1 & 2: Atomic + Guard) ---');
   
   // Reset client balance
   await prisma.partnerClient.update({
@@ -281,7 +293,7 @@ async function testWithdrawalFlowDanaRapay() {
     afterDeduct?.balance === expectedBalance;
   
   addResult(
-    'Withdrawal Flow DanaRapay',
+    'Gate 1 & 2: Withdrawal Flow DanaRapay (Atomic + Idempotent)',
     passed,
     `Create no debit: ${createOk}, First deduct: ${deductResult1.processed}, ` +
     `Duplicate blocked: ${deductResult2.reason}, Final balance: ${afterDeduct?.balance} (expected: ${expectedBalance})`
@@ -291,13 +303,13 @@ async function testWithdrawalFlowDanaRapay() {
 }
 
 /**
- * Test 3: Negative Balance Guard
+ * Test 3: Negative Balance Guard (Gate 2)
  */
 async function testNegativeBalanceGuard() {
-  const withdrawalId = TEST_WITHDRAWAL_ID + '-neg';
+  const withdrawalId = `wd-neg-${TEST_PREFIX}`;
   const withdrawAmount = INITIAL_BALANCE + 100000; // More than balance
   
-  log('--- Test 3: Negative Balance Guard ---');
+  log('--- Test 3: Negative Balance Guard (Gate 2) ---');
   
   // Reset client balance
   await prisma.partnerClient.update({
@@ -344,7 +356,7 @@ async function testNegativeBalanceGuard() {
     afterAttempt?.balance === INITIAL_BALANCE;
   
   addResult(
-    'Negative Balance Guard',
+    'Gate 2: Negative Balance Guard',
     passed,
     `Deduction blocked: ${deductResult.reason}, Balance unchanged: ${afterAttempt?.balance === INITIAL_BALANCE}`
   );
@@ -353,13 +365,13 @@ async function testNegativeBalanceGuard() {
 }
 
 /**
- * Test 4: Legacy Provider Refund
+ * Test 4: Legacy Provider Refund (Gate 3)
  */
 async function testLegacyProviderRefund() {
-  const withdrawalId = TEST_WITHDRAWAL_ID + '-legacy';
+  const withdrawalId = `wd-legacy-${TEST_PREFIX}`;
   const withdrawAmount = 50000;
   
-  log('--- Test 4: Legacy Provider Refund ---');
+  log('--- Test 4: Legacy Provider Refund (Gate 3) ---');
   
   // Reset client balance
   await prisma.partnerClient.update({
@@ -423,7 +435,7 @@ async function testLegacyProviderRefund() {
     afterRefund?.balance === INITIAL_BALANCE;
   
   addResult(
-    'Legacy Provider Refund',
+    'Gate 3: Legacy Provider Refund (Idempotent)',
     passed,
     `First refund: ${refundResult1.processed}, Duplicate blocked: ${refundResult2.reason}, ` +
     `Balance restored: ${afterRefund?.balance} (expected: ${INITIAL_BALANCE})`
@@ -436,7 +448,7 @@ async function testLegacyProviderRefund() {
  * Test 5: DanaRapay Withdrawal No Refund (balanceDeducted=false)
  */
 async function testDanarapayNoRefund() {
-  const withdrawalId = TEST_WITHDRAWAL_ID + '-dr-norefund';
+  const withdrawalId = `wd-dr-norefund-${TEST_PREFIX}`;
   const withdrawAmount = 50000;
   
   log('--- Test 5: DanaRapay No Refund (balanceDeducted=false) ---');
@@ -492,7 +504,7 @@ async function testDanarapayNoRefund() {
     afterRefund?.balance === INITIAL_BALANCE;
   
   addResult(
-    'DanaRapay No Refund',
+    'Gate 3: DanaRapay No Refund (Correct Behavior)',
     passed,
     `Refund skipped: ${refundResult.reason}, Balance unchanged: ${afterRefund?.balance === INITIAL_BALANCE}`
   );
@@ -516,6 +528,7 @@ async function runAllTests() {
     
   } catch (error: any) {
     console.error('Test error:', error.message);
+    addResult('Test Suite', false, `Error: ${error.message}`);
   } finally {
     await cleanupTestData();
     await prisma.$disconnect();
