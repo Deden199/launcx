@@ -1281,6 +1281,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     let ingCfg: Ing1Config | null = null
     let piroClient: PiroClient | null = null
     let piroCfg: PiroConfig | null = null
+    let danarapayClient: DanarapayClient | null = null
+    let danarapayCfg: DanarapayConfig | null = null
 
     if (sourceProvider === 'hilogate') {
       const raw = sub.credentials as { merchantId: string; secretKey: string; env?: string }
@@ -1794,6 +1796,8 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     let ingCfg: Ing1Config | null = null
     let piroClient: PiroClient | null = null
     let piroCfg: PiroConfig | null = null
+    let danarapayClient: DanarapayClient | null = null
+    let danarapayCfg: DanarapayConfig | null = null
 
     if (sourceProvider === 'hilogate') {
       const raw = sub.credentials as { merchantId: string; secretKey: string; env?: string }
