@@ -1405,6 +1405,12 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       bankName = validation.bankName ?? bank_name ?? ''
       branchName = validation.branchCode ?? branch_code ?? ''
       bankIdentifier = validation.bankIdentifier ?? internal_bank_code ?? undefined
+    } else if (sourceProvider === 'danarapay') {
+      // DanaRapay: Accept account info from request (no pre-validation API)
+      // Validation happens during remit call
+      acctHolder = account_name || req.body.account_name || ''
+      alias = account_name_alias || acctHolder
+      bankName = bank_name || req.body.bank_name || ''
     } else {
       acctHolder = req.body.account_name || ''
       alias = account_name_alias || acctHolder
