@@ -138,6 +138,10 @@ REDIS_URL=redis://localhost:6379
 LAUNCX_CORE_WEBHOOK_URL=http://launcx-core:5000/api/v1/internal/webhook
 LAUNCX_CORE_INTERNAL_SECRET=shared_secret
 ROUTER_API_KEY=router_key_for_launcx_to_call
+
+# Callback Security (REQUIRED)
+CALLBACK_SECRET_TOKEN=your_strong_random_token
+DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
 ```
 
 ### launcx-core/.env (add)
