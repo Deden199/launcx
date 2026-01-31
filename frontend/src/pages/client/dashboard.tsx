@@ -258,18 +258,10 @@ export default function ClientDashboardPage() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <ListChecks className="text-emerald-400" />
-              Dashboard QRIS
+              Dashboard Virtual Account
             </h1>
-            <p className="text-sm text-neutral-400 mt-1">Monitor transaksi pembayaran QRIS</p>
+            <p className="text-sm text-neutral-400 mt-1">Monitor transaksi pembayaran VA</p>
           </div>
-          <button
-            onClick={() => router.push('/client/va-dashboard')}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-indigo-600 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-200 transition-colors"
-            data-testid="go-to-va-dashboard"
-          >
-            <CreditCard size={16} />
-            Dashboard Virtual Account
-          </button>
         </div>
 
         {/* Child Selector */}
