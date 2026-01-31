@@ -17,6 +17,7 @@ import {
 import { getClientApiLogs } from '../../controller/clientApiLog.controller'
 import withdrawalRoutes from '../withdrawals.routes'
 import { setupTOTP, enableTOTP, getTOTPStatus } from '../../controller/totp.controller'
+import { getProviderBalance } from '../../controller/providerBalance.controller'
 
 
 const r = Router()
