@@ -14,6 +14,7 @@ import { getActiveProviders } from '../service/provider';
 import {OyClient,OyConfig}          from '../service/oyClient'    // sesuaikan path
 import { PiroClient, PiroConfig } from '../service/piroClient'
 import { GenesisClient } from '../service/genesisClient'
+import { DanarapayClient, DanarapayConfig, DanarapayRemitRequest } from '../service/danarapayClient'
 import { authenticator } from 'otplib'
 import { parseDateSafely } from '../util/time'
 import { mapIng1Status, parseIng1Date, parseIng1Number } from '../service/ing1Status'
