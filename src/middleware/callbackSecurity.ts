@@ -8,14 +8,12 @@ import logger from '../logger';
 
 // Environment variables for callback security
 const CALLBACK_SECRET_TOKEN = process.env.CALLBACK_SECRET_TOKEN || '';
-const CALLBACK_ALLOWED_IPS = (process.env.CALLBACK_ALLOWED_IPS || '').split(',').filter(Boolean);
+const DANARAPAY_IP_WHITELIST = (process.env.DANARAPAY_IP_WHITELIST || '').split(',').filter(Boolean);
 
 // DanaRapay known IPs (staging and production)
-// These should be updated based on DanaRapay documentation
-const DANARAPAY_IPS = [
-  // Add DanaRapay IP ranges here when provided
-  // '103.x.x.x',
-  // For now, allow localhost and private networks for testing
+// Update these based on DanaRapay documentation or use DANARAPAY_IP_WHITELIST env var
+const DANARAPAY_DEFAULT_IPS = [
+  // Localhost for testing
   '127.0.0.1',
   '::1',
   '::ffff:127.0.0.1',
