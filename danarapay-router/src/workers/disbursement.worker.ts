@@ -158,7 +158,7 @@ async function runPollCycle(): Promise<void> {
   }
 }
 
-let pollInterval: NodeJS.Timer | null = null;
+let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start disbursement polling worker
