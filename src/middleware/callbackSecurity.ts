@@ -74,8 +74,22 @@ export function callbackSecurityMiddleware(options?: {
       }
     }
 
-    // 2. Token Verification
-    if (requireToken && CALLBACK_SECRET_TOKEN) {
+    // 2. Token Verification - FAIL-CLOSED behavior
+    if (requireToken) {
+      // CRITICAL: If token is required but not configured, REJECT request
+      // This prevents fail-open scenario where missing config allows all callbacks
+      if (!CALLBACK_SECRET_TOKEN) {
+        logger.error('[Callback Security] MISCONFIGURED: requireToken=true but CALLBACK_SECRET_TOKEN not set', {
+          clientIp,
+          path: req.path,
+        });
+        return res.status(500).json({
+          success: false,
+          error: 'Callback security misconfigured',
+          code: 'SECURITY_MISCONFIGURED',
+        });
+      }
+
       const providedToken = req.header('X-Callback-Token') || 
                            req.query.token as string ||
                            '';
