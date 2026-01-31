@@ -634,7 +634,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
     const expirationTime = body.expiration_time ?? body.expirationMinutes;
     const isLifetime = body.is_lifetime ?? body.isLifetime;
     const fullName = body.full_name || body.fullName;
-    const trxExpirationTime = body.trx_expiration_time ?? body.trxExpirationMinutes;
+    const trxExpirationTimeBody = body.trx_expiration_time ?? body.trxExpirationMinutes;
     const partnerTrxId = body.partner_trx_id || body.referenceId;
     const trxCounter = body.trx_counter ?? body.trxCounter;
 
