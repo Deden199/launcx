@@ -1706,12 +1706,20 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
                 : resp.status.code === '000'
                   ? DisbursementStatus.COMPLETED
                   : DisbursementStatus.FAILED)
-            : isPiroVariant(sourceProvider)
-              ? mapPiroDisbursement(resp.status)
-              : mapIng1ToDisbursement(
-                  resp.rc,
-                  typeof resp?.raw?.status === 'string' ? resp.raw.status : resp.status,
-                )
+            : sourceProvider === 'danarapay'
+              // DanaRapay: 000=Success, 101/102/301/504/999=Pending, others=Failed
+              // Note: Balance deduction handled by ledger.service on callback SUCCESS
+              ? (resp.success === true
+                  ? DisbursementStatus.COMPLETED
+                  : resp.pending === true
+                    ? DisbursementStatus.PENDING
+                    : DisbursementStatus.FAILED)
+              : isPiroVariant(sourceProvider)
+                ? mapPiroDisbursement(resp.status)
+                : mapIng1ToDisbursement(
+                    resp.rc,
+                    typeof resp?.raw?.status === 'string' ? resp.raw.status : resp.status,
+                  )
 
       // Update withdrawal record
       await prisma.withdrawRequest.update({
