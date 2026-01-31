@@ -383,15 +383,19 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       nextCursor = `${lastOrder.createdAt.toISOString()}_${lastOrder.id}`;
     }
 
-    // (15) Metrics extraction
-    const totalPending = metricsGrouped
+    // (15) Metrics extraction - Based on DanaRapay Source of Truth
+    // PAID = payment detected, waiting settlement (settlementStatus = WAITING)
+    // SETTLED = settlement complete (settlementStatus = SUCCESS)
+    const totalWaitingSettlement = metricsGrouped
       .filter(g => g.status === ORDER_STATUS.PAID)
-      .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
+      .reduce((sum, g) => sum + (g._sum.pendingAmount ?? g._sum.amount ?? 0), 0);
 
     const totalPaid = metricsGrouped
       .filter(g => [ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
       .reduce((sum, g) => sum + (g._sum.amount ?? 0), 0);
 
+    // Total SETTLED = transaksi yang sudah settlement complete dari DanaRapay
+    // Ini yang sudah masuk ke saldo client
     const totalSettlement = metricsGrouped
       .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
       .reduce((sum, g) => sum + (g._sum.settlementAmount ?? 0), 0);
@@ -403,14 +407,21 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     // Use stats total for cursor mode, otherwise use count
     const totalCount = cursor ? metricsGrouped.reduce((sum, g) => sum + 1, 0) : totalRows;
 
-    // (16) VA Stats extraction
+    // (16) VA Stats extraction - DanaRapay settlement status
     const vaStatsMap = {
       created: vaStats.reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      // PENDING = VA created, waiting payment
       pending: vaStats
         .filter(g => g.status === ORDER_STATUS.PENDING)
         .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
-      success: vaStats
-        .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED, ORDER_STATUS.PAID, ORDER_STATUS.LN_SETTLED].includes(g.status as any))
+      // PAID = payment detected, waiting settlement (DanaRapay settlement_status = WAITING)
+      waitingSettlement: vaStats
+        .filter(g => g.status === ORDER_STATUS.PAID)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
+      // SETTLED = settlement complete (DanaRapay settlement_status = SUCCESS)
+      // Saldo client HANYA bertambah dari transaksi dengan status ini
+      settled: vaStats
+        .filter(g => [ORDER_STATUS.SUCCESS, ORDER_STATUS.DONE, ORDER_STATUS.SETTLED].includes(g.status as any))
         .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       expired: vaStats
         .filter(g => g.status === ORDER_STATUS.EXPIRED)
@@ -419,15 +430,19 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
     };
 
     // (17) Withdrawal Stats - reflects flow: Transaction → Balance → Withdrawal
+    // Based on DanaRapay disbursement status (Source of Truth)
     const withdrawalStatsMap = {
+      // PENDING = waiting for DanaRapay disbursement callback
       pending: withdrawalStats
         .filter(g => g.status === DisbursementStatus.PENDING)
         .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       pendingAmount: withdrawalStats
         .filter(g => g.status === DisbursementStatus.PENDING)
         .reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
+      // COMPLETED = DanaRapay confirmed SUCCESS, balance deducted
       completed: withdrawalStats
         .filter(g => g.status === DisbursementStatus.COMPLETED)
+        .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
         .reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       completedAmount: withdrawalStats
         .filter(g => g.status === DisbursementStatus.COMPLETED)
