@@ -485,21 +485,23 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       totalAmount,
       totalSettlement,
       totalPaid,
-      // Pagination
+      // Pagination (cursor-based)
       total: totalCount,
       hasMore,
       nextCursor,
       // Transactions list
       transactions,
       children: pc.children,
-      // VA Stats
+      // VA Stats - reflects VA channel performance
       vaStats: vaStatsMap,
+      // Withdrawal Stats - reflects flow: Balance → Withdrawal
+      withdrawalStats: withdrawalStatsMap,
       // Available banks for filter
       vaBanks: Object.entries(VA_BANK_MAP).map(([code, name]) => ({ code, name })),
     };
 
-    // (14) Cache
-    const ttl = getTTL('dashboard', 180);
+    // (21) Cache with shorter TTL for real-time data
+    const ttl = getTTL('dashboard', 60);
     await cacheSet(cacheKey, result, ttl);
 
     return res.json(result);
