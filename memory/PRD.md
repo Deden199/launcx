@@ -2,180 +2,168 @@
 
 ## Project Overview
 
-Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) payments for Indonesian merchants. The system consists of:
-
-1. **launcx-core** - Main monolith application (Node.js/Express + Prisma + Next.js frontend)
-2. **danarapay-router** - Dedicated microservice for DanaRapay integration (VA, QRIS, Disbursement)
+Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) payments for Indonesian merchants.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    launcx-core (Main Application)                   │
-│  • Authentication & Authorization                                   │
-│  • Client Dashboard (Overview, VA, QRIS, Withdrawal)                │
-│  • Admin Dashboard                                                  │
-│  • Settlement Processing                                            │
-│  • Database (MongoDB via Prisma)                                    │
-│  • Internal Webhook: POST /api/v1/internal/webhook                  │
+│  • Node.js/Express Backend + Prisma ORM + Next.js Frontend          │
+│  • Client Dashboard showing business flow:                          │
+│    VA/QRIS → Transaction → Balance → Withdrawal                     │
 └─────────────────────────────────────────────────────────────────────┘
                               ↓ ↑
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    danarapay-router (Microservice)                  │
-│  Port: 4000                                                         │
-│  ├── /api/va/*         - VA management                             │
-│  ├── /api/qris/*       - QRIS payment                              │
-│  ├── /api/disbursement/* - Withdrawal                              │
-│  ├── /api/inquiry/*    - Account validation                        │
-│  ├── /api/callback/*   - DanaRapay webhooks (SECURED)              │
-│  └── /healthz, /readyz - Health probes                             │
-│                                                                     │
-│  Security: IP Whitelist + URL Token                                │
-│  Infrastructure: Redis (idempotency), Retry with backoff           │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓ ↑
-┌─────────────────────────────────────────────────────────────────────┐
-│                        DanaRapay API                                │
-│  Production: https://partner.danarapay.com                          │
+│  • Dedicated gateway for DanaRapay integration                     │
+│  • Security: IP Whitelist + URL Token                              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Completed Features
+## Completed Upgrades (2025-01-31)
 
-### ✅ P0 - Callback Security (2025-01-31)
+### ✅ P0 - Callback Security for danarapay-router
 - IP Whitelist validation (`DANARAPAY_IP_WHITELIST` env)
 - URL Token validation (`CALLBACK_SECRET_TOKEN` env)
 - Default DENY if whitelist empty
 - CIDR notation support
 
-### ✅ P0 - End-to-End Business Flow Dashboard
-- New `/client/overview` page showing complete business flow
-- VA → Transaction → Balance → Withdrawal visualization
-- Unified stats from VA and QRIS channels
+### ✅ P1 - Query Optimization di Core Controllers
 
-### ✅ P1 - Database Query Optimization
-- Added indexes: `[partnerClientId, channel, status]`, `[partnerClientId, channel, createdAt]`
-- Cursor-based pagination for VA Dashboard
-- Parallel query execution with Promise.all
-- Projection-based field selection
+**`clientDashboard.controller.ts` - getClientDashboard:**
+- ✅ Cursor-based pagination (`createdAt + _id`)
+- ✅ Minimal projection (removed `qrPayload` - large field not needed)
+- ✅ Summary withdrawal dalam response (`withdrawalStats`)
+- ✅ Response mencerminkan alur bisnis: VA/QRIS → Transaksi → Saldo → Withdrawal
 
-### ✅ P1 - VA Dashboard Enhancement
-- Dedicated VA monitoring page
-- Real-time stats (Total, Pending, Success, Expired)
-- Bank and status filters
-- Search by ID/Player ID
-- Infinite scroll with cursor pagination
-- Expandable row details
+**`clientDashboard.controller.ts` - getVaDashboard:**
+- ✅ Cursor-based pagination
+- ✅ Minimal projection
+
+**`withdrawals.controller.ts` - listWithdrawals:**
+- ✅ Cursor-based pagination (`createdAt + refId`)
+
+### ✅ P2 - Database Indexes
+Added composite indexes for common query patterns:
+```prisma
+@@index([partnerClientId, channel, status])
+@@index([partnerClientId, channel, createdAt])
+```
 
 ### ✅ P3 - API Documentation
-- Complete integration guide at `/docs`
-- Node.js/TypeScript SDK examples
-- cURL examples for all endpoints
-- Callback handler implementation guide
+- Updated `/docs` page with Node.js/TypeScript SDK examples
+- Complete callback handler implementation guide
 
 ---
 
-## Database Schema Indexes
+## API Response Structure
 
-```prisma
-model Order {
-  @@index([partnerClientId])
-  @@index([createdAt])
-  @@index([status])
-  @@index([channel])
-  @@index([subMerchantId, status, createdAt])
-  @@index([userId])
-  @@index([pgRefId])
-  @@index([partnerClientId, status, createdAt])
-  @@index([partnerClientId, channel, status])
-  @@index([partnerClientId, channel, createdAt])
-  @@index([merchantId, createdAt])
+### GET /api/v1/client/dashboard
+
+Response reflects business flow: VA/QRIS → Transaction → Balance → Withdrawal
+
+```json
+{
+  "balance": 1500000,              // Saldo aktif (available for withdrawal)
+  "totalPending": 250000,         // Transaction pending settlement
+  "totalSettlement": 1200000,     // Total settled
+  "totalPaid": 1450000,           // Total paid (including pending)
+  
+  "total": 156,                   // Transaction count
+  "hasMore": true,                // For cursor pagination
+  "nextCursor": "2025-01-31T10:00:00.000Z_abc123",
+  
+  "transactions": [...],
+  
+  "vaStats": {
+    "created": 45,
+    "pending": 3,
+    "success": 40,
+    "expired": 2,
+    "totalAmount": 500000
+  },
+  
+  "withdrawalStats": {            // NEW: Withdrawal summary
+    "pending": 2,
+    "pendingAmount": 200000,
+    "completed": 15,
+    "completedAmount": 1000000,
+    "failed": 1
+  },
+  
+  "children": [...],
+  "vaBanks": [...]
+}
+```
+
+### GET /api/v1/client/withdrawals
+
+Now supports cursor pagination:
+```
+?cursor=2025-01-31T10:00:00.000Z_REF123&limit=20
+```
+
+Response:
+```json
+{
+  "data": [...],
+  "total": 50,
+  "hasMore": true,
+  "nextCursor": "2025-01-31T09:00:00.000Z_REF100"
 }
 ```
 
 ---
 
-## Key API Endpoints
+## Cursor Pagination Format
 
-### Client Dashboard
-- `GET /api/v1/client/overview` - Business overview (new, optimized)
-- `GET /api/v1/client/dashboard` - QRIS transactions
-- `GET /api/v1/client/va-dashboard` - VA transactions
-- `GET /api/v1/client/withdrawals` - Withdrawal history
+Consistent format across all endpoints: `{createdAt}_{id}`
 
-### VA Management
-- `POST /api/v1/payments/danarapay/va/create` - Create VA
-- `GET /api/v1/payments/danarapay/va/info/:id` - Get VA info
-- `PUT /api/v1/payments/danarapay/va/update/:id` - Update VA
-
-### DanaRapay Router Callbacks (SECURED)
-- `POST /api/callback/va/:token` - VA payment callback
-- `POST /api/callback/qris/:token` - QRIS payment callback
+- **Transactions**: `createdAt_orderId`
+- **Withdrawals**: `createdAt_refId`
+- **VA**: Uses Prisma cursor on `id`
 
 ---
 
-## Environment Configuration
+## Files Modified
 
-### danarapay-router/.env
-```bash
-PORT=4000
-NODE_ENV=production
-DANARAPAY_BASE_URL=https://partner.danarapay.com
-DANARAPAY_USERNAME=xxx
-DANARAPAY_API_KEY=xxx
-REDIS_URL=redis://localhost:6379
-LAUNCX_CORE_WEBHOOK_URL=http://launcx-core:5000/api/v1/internal/webhook
-LAUNCX_CORE_INTERNAL_SECRET=shared_secret
-ROUTER_API_KEY=router_key
+### Core Controllers (Optimized)
+- `/app/src/controller/clientDashboard.controller.ts`
+  - getClientDashboard: cursor pagination, minimal projection, withdrawal stats
+  - getVaDashboard: cursor pagination
+- `/app/src/controller/withdrawals.controller.ts`
+  - listWithdrawals: cursor pagination
 
-# Callback Security
-CALLBACK_SECRET_TOKEN=<generated_token>
-DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
-```
-
----
-
-## Files Modified/Created This Session
-
-### New Files
-- `/app/frontend/src/pages/client/overview.tsx` - Business overview dashboard
-- `/app/src/controller/clientOverview.controller.ts` - Optimized overview API
-- `/app/danarapay-router/` - Complete microservice (all files)
-
-### Modified Files
-- `/app/src/controller/clientDashboard.controller.ts` - Cursor pagination for VA
+### Database Schema
 - `/app/src/prisma/schema.prisma` - Added channel indexes
-- `/app/src/route/client/web.routes.ts` - Added overview route
-- `/app/src/core/redis.ts` - Added 'overview' TTL type
-- `/app/frontend/src/pages/client/va-dashboard.tsx` - Enhanced UI
+
+### Routes
+- `/app/src/route/client/web.routes.ts` - Cleaned up
+
+### Frontend
+- `/app/frontend/src/pages/client/va-dashboard.tsx` - Enhanced UI with cursor pagination
 - `/app/frontend/src/pages/docs.tsx` - Added Node.js examples
 
 ---
 
 ## Remaining Tasks
 
-### P0 - Critical (Before Go-Live)
+### P0 - Before Go-Live
 - [ ] Get DanaRapay production IP whitelist
 - [ ] Set production `CALLBACK_SECRET_TOKEN`
-- [ ] Deploy `danarapay-router` to production server
-- [ ] Configure DanaRapay dashboard callback URLs
+- [ ] Deploy `danarapay-router` to production
 
-### P1 - Important
-- [ ] End-to-end test: Create VA → Payment → Callback → Dashboard
-- [ ] Load testing with cursor pagination
-- [ ] Monitor query performance
+### P1 - Testing
+- [ ] End-to-end test: VA Create → Payment → Callback → Dashboard
+- [ ] Load test cursor pagination with large dataset
 
-### P2 - Enhancement
-- [ ] Add correlation/requestId to all logs
-- [ ] Cleanup unused imports and files
-- [ ] Add TypeScript strict mode
-
-### P3 - Future
-- [ ] Real-time dashboard updates (WebSocket/SSE)
-- [ ] Email notifications for large withdrawals
-- [ ] Multi-language support for docs
+### P2 - Future Enhancements
+- [ ] Real-time updates (WebSocket/SSE)
+- [ ] Query performance monitoring
+- [ ] More detailed logging with correlation IDs
 
 ---
 
