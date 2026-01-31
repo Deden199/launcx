@@ -1568,6 +1568,61 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
             partnerClientId,
           },
         })
+      } else if (sourceProvider === 'danarapay') {
+        // DanaRapay Disbursement via /api/remit
+        if (!danarapayClient) throw new Error('Missing DanaRapay client configuration')
+        
+        const remitReq: DanarapayRemitRequest = {
+          partner_trx_id: wr.id,  // Use withdrawal ID as primary reference
+          bank_code: bank_code,
+          account_number: account_number,
+          account_holder_name: wr.accountName,
+          amount: wr.netAmount ?? amount,
+          notes: `Withdraw Rp ${wr.netAmount}`,
+        }
+        
+        const remitResult = await danarapayClient.remit(remitReq)
+        
+        // Store DanaRapay response for audit
+        await prisma.withdrawRequest.update({
+          where: { id: wr.id },
+          data: {
+            disbursementPayload: {
+              danarapay_trx_id: remitResult.trx_id,
+              request: {
+                partner_trx_id: remitReq.partner_trx_id,
+                bank_code: remitReq.bank_code,
+                account_number: remitReq.account_number,
+                amount: remitReq.amount,
+              },
+              response: {
+                status: remitResult.status,
+                trx_id: remitResult.trx_id,
+                success: remitResult.success,
+                pending: remitResult.pending,
+              },
+              _calledAt: new Date().toISOString(),
+            },
+          },
+        })
+        
+        // Normalize response for status mapping below
+        resp = {
+          status: remitResult.status,
+          trx_id: remitResult.trx_id,
+          success: remitResult.success,
+          pending: remitResult.pending,
+          raw: remitResult.raw,
+        }
+        
+        logger.info('[requestWithdraw] DanaRapay remit called', {
+          withdrawId: wr.id,
+          refId: wr.refId,
+          danarapay_trx_id: remitResult.trx_id,
+          status: remitResult.status,
+          success: remitResult.success,
+          pending: remitResult.pending,
+        })
       } else {
         if (!ingClient || !ingCfg) throw new Error('Missing ING1 client configuration')
         const inquiryAmount = wr.netAmount ?? amount
