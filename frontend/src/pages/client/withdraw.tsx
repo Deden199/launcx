@@ -308,7 +308,7 @@ export default function WithdrawPage() {
         amount: +form.amount,
         otp: form.otp,
       }
-      if (provider === 'oy' || provider === 'gidi' || provider === 'piro') {
+      if (provider === 'oy' || provider === 'gidi' || provider === 'piro' || provider === 'danarapay') {
         body.bank_name = form.bankName || bankObj?.name
         body.account_name = form.accountName
       }
@@ -319,15 +319,17 @@ export default function WithdrawPage() {
 
       const res = await apiClient.post('/client/withdrawals', body, { validateStatus: () => true })
       if (res.status === 201) {
-        const [dash, list] = await Promise.all([
+        const [dash, list, provBal] = await Promise.all([
           apiClient.get('/client/dashboard', { params: { clientId: selectedChild } }),
           fetchWithdrawals(),
+          apiClient.get<ProviderBalance>('/client/provider-balance').catch(() => null),
         ])
         if (!mountedRef.current) return
         setBalance(dash.data.balance)
         setPending(dash.data.totalPending ?? 0)
         setWithdrawals(list.data)
         setTotal(list.total)
+        if (provBal?.data) setProviderBalance(provBal.data)
         setForm(f => ({ ...f, amount: '', accountName: '', accountNameAlias: '', bankName: '', branchName: '', otp: '' }))
         setIsValid(false)
         setOpen(false)
