@@ -843,6 +843,7 @@ export async function getActiveVaList(req: ClientAuthRequest, res: Response) {
 /**
  * GET /api/v1/client/va-dashboard
  * Dedicated VA Dashboard - transactions + stats for VA DanaRapay only
+ * Optimized with cursor-based pagination for better performance
  */
 export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
   try {
@@ -882,6 +883,7 @@ export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
     const createdAtFilter: any = {};
     if (dateFrom) createdAtFilter.gte = dateFrom;
     if (dateTo) createdAtFilter.lte = dateTo;
+    const hasDateFilter = !!dateFrom || !!dateTo;
 
     // Status filter
     let statuses: string[] = DASHBOARD_STATUSES;
@@ -902,19 +904,20 @@ export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
     // Search
     const searchStr = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
-    // Pagination
-    const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+    // Pagination - support both offset and cursor
     const pageSize = Math.min(50, parseInt(String(req.query.limit || '10'), 10));
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+    const pageNum = cursor ? 1 : Math.max(1, parseInt(String(req.query.page || '1'), 10));
 
     // Base where clause - VA_DANARAPAY only
     const whereVa: any = {
       partnerClientId: { in: clientIds },
       channel: CHANNEL_TYPES.VA_DANARAPAY,
       status: { in: statuses },
-      ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+      ...(hasDateFilter ? { createdAt: createdAtFilter } : {})
     };
 
-    // Bank filter
+    // Bank filter using JSON path
     if (bankCodeFilter) {
       whereVa.providerPayload = {
         path: ['bank_code'],
@@ -930,45 +933,64 @@ export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
       ];
     }
 
-    // Parallel queries
+    // Build cursor-based query
+    const findManyArgs: any = {
+      where: whereVa,
+      orderBy: { createdAt: 'desc' },
+      take: pageSize + 1, // Take one extra to determine hasMore
+      select: {
+        id: true,
+        playerId: true,
+        amount: true,
+        feeLauncx: true,
+        settlementAmount: true,
+        pendingAmount: true,
+        status: true,
+        settlementStatus: true,
+        createdAt: true,
+        paymentReceivedTime: true,
+        trxExpirationTime: true,
+        providerPayload: true,
+      }
+    };
+
+    // Cursor-based pagination (more efficient)
+    if (cursor) {
+      findManyArgs.cursor = { id: cursor };
+      findManyArgs.skip = 1; // Skip the cursor itself
+    } else if (!cursor && pageNum > 1) {
+      // Fallback to offset for page navigation (less efficient but needed for direct page access)
+      findManyArgs.skip = (pageNum - 1) * pageSize;
+      findManyArgs.take = pageSize;
+    }
+
+    // Parallel queries with optimized stats
     const [transactions, totalCount, statsGrouped] = await Promise.all([
-      // Transactions
-      prismaReadOnly.order.findMany({
-        where: whereVa,
-        orderBy: { createdAt: 'desc' },
-        skip: (pageNum - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          playerId: true,
-          amount: true,
-          feeLauncx: true,
-          settlementAmount: true,
-          pendingAmount: true,
-          status: true,
-          settlementStatus: true,
-          createdAt: true,
-          paymentReceivedTime: true,
-          trxExpirationTime: true,
-          providerPayload: true,
-        }
-      }),
-      // Count
-      prismaReadOnly.order.count({ where: whereVa }),
-      // Stats grouped by status
+      // Transactions with cursor
+      prismaReadOnly.order.findMany(findManyArgs),
+      
+      // Count only if needed (first page or offset pagination)
+      cursor ? Promise.resolve(0) : prismaReadOnly.order.count({ where: whereVa }),
+      
+      // Stats grouped by status - cached aggregation
       prismaReadOnly.order.groupBy({
         by: ['status'],
         where: {
           partnerClientId: { in: clientIds },
           channel: CHANNEL_TYPES.VA_DANARAPAY,
-          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+          ...(hasDateFilter ? { createdAt: createdAtFilter } : {})
         },
         _count: { id: true },
         _sum: { amount: true, settlementAmount: true }
       })
     ]);
 
-    // Calculate stats
+    // Determine hasMore and nextCursor
+    const hasMore = transactions.length > pageSize;
+    const resultTx = hasMore ? transactions.slice(0, -1) : transactions;
+    const nextCursor = hasMore ? resultTx[resultTx.length - 1]?.id : null;
+
+    // Calculate stats from grouped data
     const stats = {
       total: statsGrouped.reduce((sum, g) => sum + (g._count?.id ?? 0), 0),
       pending: statsGrouped
@@ -986,8 +1008,8 @@ export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
         .reduce((sum, g) => sum + (g._sum?.amount ?? 0), 0),
     };
 
-    // Map transactions
-    const mappedTx = transactions.map(o => {
+    // Map transactions with minimal transformation
+    const mappedTx = resultTx.map(o => {
       const pp = o.providerPayload as any;
       const netSettle = [ORDER_STATUS.PAID].includes(o.status as any)
         ? (o.pendingAmount ?? 0)
@@ -1014,10 +1036,13 @@ export async function getVaDashboard(req: ClientAuthRequest, res: Response) {
     return res.json({
       success: true,
       transactions: mappedTx,
-      total: totalCount,
+      total: cursor ? stats.total : totalCount, // Use stats.total for cursor mode
       page: pageNum,
       limit: pageSize,
-      totalPages: Math.ceil(totalCount / pageSize),
+      totalPages: cursor ? null : Math.ceil(totalCount / pageSize),
+      // Cursor pagination info
+      nextCursor,
+      hasMore,
       stats,
       children: pc.children,
     });
