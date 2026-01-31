@@ -197,7 +197,8 @@ export async function processWithdrawalCallback(
   reason?: string;
   newStatus?: string;
 }> {
-  const withdrawal = await prisma.withdrawRequest.findUnique({
+  // Try finding by id first
+  let wd = await prisma.withdrawRequest.findUnique({
     where: { id: withdrawalId },
     select: {
       id: true,
@@ -205,12 +206,13 @@ export async function processWithdrawalCallback(
       status: true,
       amount: true,
       partnerClientId: true,
+      balanceDeducted: true,
     },
   });
 
-  if (!withdrawal) {
-    // Try finding by refId
-    const byRefId = await prisma.withdrawRequest.findFirst({
+  // If not found by id, try finding by refId
+  if (!wd) {
+    wd = await prisma.withdrawRequest.findFirst({
       where: { refId: withdrawalId },
       select: {
         id: true,
@@ -218,21 +220,27 @@ export async function processWithdrawalCallback(
         status: true,
         amount: true,
         partnerClientId: true,
+        balanceDeducted: true,
       },
     });
     
-    if (!byRefId) {
+    if (!wd) {
       logger.warn('[Ledger] Withdrawal not found for callback', { withdrawalId });
       return { processed: false, reason: 'WITHDRAWAL_NOT_FOUND' };
     }
+    
+    logger.info('[Ledger] Withdrawal found by refId', { 
+      searchId: withdrawalId, 
+      foundId: wd.id,
+      foundRefId: wd.refId 
+    });
   }
 
-  const wd = withdrawal!;
   const newStatus = mapDisbursementStatus(statusCode);
 
-  // Check if already in final state
+  // Check if already in final state - idempotency
   if (['COMPLETED', 'FAILED'].includes(wd.status)) {
-    logger.info('[Ledger] Withdrawal already in final state', {
+    logger.info('[Ledger] Withdrawal already in final state (idempotent)', {
       withdrawalId: wd.id,
       currentStatus: wd.status,
       incomingStatus: newStatus,
@@ -253,9 +261,11 @@ export async function processWithdrawalCallback(
 
   logger.info('[Ledger] Withdrawal status updated from callback', {
     withdrawalId: wd.id,
+    refId: wd.refId,
     oldStatus: wd.status,
     newStatus,
     statusCode,
+    balanceDeducted: wd.balanceDeducted,
   });
 
   return { processed: true, newStatus };
