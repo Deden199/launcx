@@ -9,15 +9,19 @@ import styles from './DocsPage.module.css'
  * Provider-agnostic documentation for partner clients.
  * 
  * IMPORTANT: This documentation is client-facing.
- * - Do NOT expose internal provider names (DanaRapay, etc.)
+ * - Do NOT expose internal provider names
  * - Do NOT expose internal callback paths
  * - Use generic endpoints only
+ * - Focus on VA for initial launch
  */
 
 const IntegrationDocs: NextPage & { disableLayout?: boolean } = () => (
   <main className={styles.container}>
     {/* ─────────────────────────────────────────────── TITLE */}
     <h1 className={styles.heading1}>Launcx API Integration Guide</h1>
+    <p className={styles.bodyText} style={{ marginTop: '-1rem', color: '#888' }}>
+      Virtual Account Payment Gateway
+    </p>
 
     {/* ──────────────────────────────── ENVIRONMENT & BASE URL */}
     <section className={styles.section}>
@@ -61,92 +65,16 @@ api.interceptors.request.use(cfg => {
 export default api`}</code></pre>
     </section>
 
-    {/* ─────────────────────────────────── 2. Payment Methods */}
+    {/* ─────────────────────────────────── 2. Virtual Account (VA) */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>2. Payment Methods</h2>
-      <p className={styles.bodyText}>
-        Launcx mendukung beberapa metode pembayaran:
-      </p>
-      <ul className={styles.list}>
-        <li><strong>QRIS</strong> – Quick Response Code Indonesia Standard</li>
-        <li><strong>Virtual Account (VA)</strong> – Transfer bank via nomor VA</li>
-      </ul>
-      <p className={styles.bodyText}>
-        Provider backend dipilih otomatis oleh Launcx berdasarkan konfigurasi tenant Anda.
-        Anda tidak perlu mengetahui provider mana yang digunakan.
-      </p>
-    </section>
-
-    {/* ─────────────────────────────────── 3. QRIS Payment */}
-    <section className={styles.section}>
-      <h2 className={styles.heading2}>3. QRIS Payment</h2>
-      <p className={styles.bodyText}>
-        Endpoint: <code>POST /payments</code> mendukung dua flow:
-      </p>
-
-      {/* Embed Flow */}
-      <h3 className={styles.heading3}>3.1 Embed Flow</h3>
-      <pre className={styles.codeBlock}><code>{`POST /api/v1/payments
-Headers:
-  Content-Type: application/json
-  X-API-Key: <YOUR_API_KEY>
-  X-Timestamp: <Unix TS ms>
-
-Body:
-{
-  "price": 50000,
-  "playerId": "user_123",
-  "flow": "embed"
-}`}</code></pre>
-      <p className={styles.bodyText}>Response <code>201 Created</code>:</p>
-      <pre className={styles.codeBlock}><code>{`{
-  "success": true,
-  "data": {
-    "orderId": "685s6eb9263c75af53ba84b1",
-    "checkoutUrl": "https://{LAUNCX_DOMAIN}/checkout/{orderId}",
-    "qrPayload": "0002010102122667...47B8",
-    "playerId": "user_123",
-    "totalAmount": 50000,
-    "expiredTs": "2025-01-30T15:30:00Z"
-  }
-}`}</code></pre>
-
-      {/* Redirect Flow */}
-      <h3 className={styles.heading3}>3.2 Redirect Flow</h3>
-      <pre className={styles.codeBlock}><code>{`POST /api/v1/payments
-Body:
-{
-  "price": 50000,
-  "playerId": "user_123",
-  "flow": "redirect"
-}`}</code></pre>
-      <p className={styles.bodyText}>Response <code>303 See Other</code>:</p>
-      <pre className={styles.codeBlock}><code>{`HTTP/1.1 303 See Other
-Location: https://{LAUNCX_DOMAIN}/checkout/685e6f36263c75af53ba84b3`}</code></pre>
-
-      <h4 className={styles.heading3}>cURL Example</h4>
-      <pre className={styles.codeBlock}><code>{`TS=$(date +%s000)
-
-curl -X POST $LAUNCX_BASE_URL/payments \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: <YOUR_API_KEY>" \\
-  -H "X-Timestamp: $TS" \\
-  -d '{
-    "price": 50000,
-    "playerId": "user_123"
-  }'`}</code></pre>
-    </section>
-
-    {/* ─────────────────────────────────── 4. Virtual Account (VA) */}
-    <section className={styles.section}>
-      <h2 className={styles.heading2}>4. Virtual Account (VA)</h2>
+      <h2 className={styles.heading2}>2. Virtual Account (VA)</h2>
       <p className={styles.bodyText}>
         Virtual Account memungkinkan customer melakukan pembayaran via transfer bank.
         Provider VA dipilih otomatis oleh Launcx.
       </p>
 
-      {/* 4.1 Create VA */}
-      <h3 className={styles.heading3}>4.1 Create VA</h3>
+      {/* 2.1 Create VA */}
+      <h3 className={styles.heading3}>2.1 Create VA</h3>
       <pre className={styles.codeBlock}><code>{`POST /api/v1/payments/va
 Headers:
   Content-Type: application/json
@@ -225,8 +153,8 @@ curl -X POST $LAUNCX_BASE_URL/payments/va \\
     "referenceId": "TRX-001"
   }'`}</code></pre>
 
-      {/* 4.2 Get VA Info */}
-      <h3 className={styles.heading3}>4.2 Get VA Info</h3>
+      {/* 2.2 Get VA Info */}
+      <h3 className={styles.heading3}>2.2 Get VA Info</h3>
       <pre className={styles.codeBlock}><code>{`GET /api/v1/payments/va/{vaId}
 Headers:
   X-API-Key: <YOUR_API_KEY>
@@ -247,8 +175,8 @@ Headers:
   }
 }`}</code></pre>
 
-      {/* 4.3 Update VA */}
-      <h3 className={styles.heading3}>4.3 Update VA</h3>
+      {/* 2.3 Update VA */}
+      <h3 className={styles.heading3}>2.3 Update VA</h3>
       <pre className={styles.codeBlock}><code>{`PUT /api/v1/payments/va/{vaId}
 Headers:
   Content-Type: application/json
@@ -261,8 +189,8 @@ Body:
   "displayName": "Jane Doe"
 }`}</code></pre>
 
-      {/* 4.4 Bank Codes */}
-      <h3 className={styles.heading3}>4.4 Supported Banks</h3>
+      {/* 2.4 Bank Codes */}
+      <h3 className={styles.heading3}>2.4 Supported Banks</h3>
       <table className={styles.table}>
         <thead>
           <tr><th>Bank Code</th><th>Bank Name</th></tr>
@@ -280,14 +208,14 @@ Body:
       </p>
     </section>
 
-    {/* ─────────────────────────────────── 5. Transaction Status */}
+    {/* ─────────────────────────────────── 3. Transaction Status */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>5. Transaction Status</h2>
+      <h2 className={styles.heading2}>3. Transaction Status</h2>
       <p className={styles.bodyText}>
         Berikut adalah status transaksi yang akan Anda terima:
       </p>
       
-      <h3 className={styles.heading3}>5.1 Payment Status</h3>
+      <h3 className={styles.heading3}>3.1 Payment Status</h3>
       <table className={styles.table}>
         <thead>
           <tr><th>Status</th><th>Description</th></tr>
@@ -301,7 +229,7 @@ Body:
         </tbody>
       </table>
 
-      <h3 className={styles.heading3}>5.2 Settlement Status</h3>
+      <h3 className={styles.heading3}>3.2 Settlement Status</h3>
       <table className={styles.table}>
         <thead>
           <tr><th>Status</th><th>Description</th></tr>
@@ -314,47 +242,22 @@ Body:
       </table>
     </section>
 
-    {/* ─────────────────────────────────── 6. Callbacks */}
+    {/* ─────────────────────────────────── 4. Callbacks */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>6. Callbacks</h2>
+      <h2 className={styles.heading2}>4. Callbacks</h2>
       <p className={styles.bodyText}>
         Launcx akan mengirim HTTP POST ke callback URL Anda saat status transaksi berubah.
       </p>
       
-      <h3 className={styles.heading3}>6.1 Register Callback URL</h3>
+      <h3 className={styles.heading3}>4.1 Register Callback URL</h3>
       <p className={styles.bodyText}>
         Daftarkan endpoint Anda melalui Client Dashboard sebelum menerima callback.
       </p>
-      <pre className={styles.codeBlock}><code>{`POST /api/v1/client/callback-url
-Authorization: Bearer <YOUR_JWT_TOKEN>
-Content-Type: application/json
 
-Body:
-{
-  "url": "https://your-server.com/api/launcx-callback"
-}`}</code></pre>
-
-      <h3 className={styles.heading3}>6.2 Callback Payload</h3>
+      <h3 className={styles.heading3}>4.2 Callback Payload</h3>
       <p className={styles.bodyText}>
-        Format callback yang <strong>unified</strong> untuk semua metode pembayaran (QRIS & VA):
+        Format callback untuk transaksi VA:
       </p>
-      <pre className={styles.codeBlock}><code>{`{
-  "event": "payment.updated",
-  "data": {
-    "orderId": "685d4578f2745f068c635f17",
-    "channel": "QRIS",
-    "status": "SETTLED",
-    "settlementStatus": "SUCCESS",
-    "grossAmount": 50000,
-    "fee": 500,
-    "netAmount": 49500,
-    "customerId": "user_123",
-    "occurredAt": "2025-01-30T14:30:00Z",
-    "nonce": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}`}</code></pre>
-
-      <p className={styles.bodyText}>Untuk transaksi <strong>VA</strong>, payload akan menyertakan field tambahan:</p>
       <pre className={styles.codeBlock}><code>{`{
   "event": "payment.updated",
   "data": {
@@ -374,7 +277,7 @@ Body:
   }
 }`}</code></pre>
 
-      <h3 className={styles.heading3}>6.3 Callback Events</h3>
+      <h3 className={styles.heading3}>4.3 Callback Events</h3>
       <table className={styles.table}>
         <thead>
           <tr><th>Event</th><th>Description</th></tr>
@@ -385,10 +288,10 @@ Body:
         </tbody>
       </table>
 
-      <h3 className={styles.heading3}>6.4 Signature Verification</h3>
+      <h3 className={styles.heading3}>4.4 Signature Verification</h3>
       <p className={styles.bodyText}>
         Setiap callback menyertakan signature di header <code>X-Callback-Signature</code>.
-        <strong>Wajib</strong> verifikasi signature untuk keamanan.
+        <strong> Wajib</strong> verifikasi signature untuk keamanan.
       </p>
       <pre className={styles.codeBlock}><code>{`// Node.js signature verification
 import crypto from 'crypto'
@@ -431,30 +334,23 @@ app.post('/api/launcx-callback', express.json(), (req, res) => {
   return res.json({ success: true })
 })`}</code></pre>
 
-      <h3 className={styles.heading3}>6.5 Callback Security Best Practices</h3>
+      <h3 className={styles.heading3}>4.5 Callback Security Best Practices</h3>
       <ul className={styles.list}>
         <li><strong>Always verify signature</strong> - Jangan proses callback tanpa verifikasi</li>
         <li><strong>Use HTTPS</strong> - Callback URL wajib HTTPS</li>
         <li><strong>Idempotency</strong> - Handle duplicate callback dengan cek <code>nonce</code></li>
         <li><strong>Respond quickly</strong> - Respond 200 OK dalam 5 detik, proses async jika perlu</li>
       </ul>
-
-      <h3 className={styles.heading3}>6.6 Retry Callback</h3>
-      <p className={styles.bodyText}>
-        Jika callback gagal, Anda bisa trigger ulang dari Dashboard atau via API:
-      </p>
-      <pre className={styles.codeBlock}><code>{`POST /api/v1/client/callbacks/{orderId}/retry
-Authorization: Bearer <YOUR_JWT_TOKEN>`}</code></pre>
     </section>
 
-    {/* ─────────────────────────────────── 7. Withdrawal */}
+    {/* ─────────────────────────────────── 5. Withdrawal */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>7. Withdrawal</h2>
+      <h2 className={styles.heading2}>5. Withdrawal</h2>
       <p className={styles.bodyText}>
         Tarik saldo Anda ke rekening bank melalui Dashboard atau API.
       </p>
       
-      <h3 className={styles.heading3}>7.1 Create Withdrawal</h3>
+      <h3 className={styles.heading3}>5.1 Create Withdrawal</h3>
       <pre className={styles.codeBlock}><code>{`POST /api/v1/client/withdrawals
 Authorization: Bearer <YOUR_JWT_TOKEN>
 Content-Type: application/json
@@ -467,7 +363,7 @@ Body:
   "accountName": "John Doe"
 }`}</code></pre>
 
-      <h3 className={styles.heading3}>7.2 Withdrawal Status</h3>
+      <h3 className={styles.heading3}>5.2 Withdrawal Status</h3>
       <table className={styles.table}>
         <thead>
           <tr><th>Status</th><th>Description</th></tr>
@@ -480,9 +376,9 @@ Body:
       </table>
     </section>
 
-    {/* ─────────────────────────────────── 8. Error Codes */}
+    {/* ─────────────────────────────────── 6. Error Codes */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>8. Error Responses</h2>
+      <h2 className={styles.heading2}>6. Error Responses</h2>
       <pre className={styles.codeBlock}><code>{`{
   "success": false,
   "error": "Error message",
@@ -502,22 +398,11 @@ Body:
       </table>
     </section>
 
-    {/* ─────────────────────────────────── 9. Integration Flow */}
+    {/* ─────────────────────────────────── 7. Integration Flow */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>9. Integration Flow</h2>
+      <h2 className={styles.heading2}>7. Integration Flow</h2>
       
-      <h3 className={styles.heading3}>9.1 QRIS Flow</h3>
-      <ol className={styles.list}>
-        <li>Login ke Dashboard & dapatkan <code>API Key</code></li>
-        <li>Register Callback URL di Dashboard</li>
-        <li>Create Order via <code>POST /payments</code></li>
-        <li>Tampilkan QR Code ke customer (embed) atau redirect ke checkout</li>
-        <li>Customer scan & bayar</li>
-        <li>Terima Callback dengan status <code>PAID</code> / <code>SETTLED</code></li>
-        <li>Verify signature & update status di sistem Anda</li>
-      </ol>
-
-      <h3 className={styles.heading3}>9.2 VA Flow</h3>
+      <h3 className={styles.heading3}>VA Payment Flow</h3>
       <ol className={styles.list}>
         <li>Login ke Dashboard & dapatkan <code>API Key</code></li>
         <li>Register Callback URL di Dashboard</li>
@@ -529,11 +414,11 @@ Body:
       </ol>
     </section>
 
-    {/* ─────────────────────────────────── 10. SDK */}
+    {/* ─────────────────────────────────── 8. SDK */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>10. SDK / Code Examples</h2>
+      <h2 className={styles.heading2}>8. SDK / Code Examples</h2>
       
-      <h3 className={styles.heading3}>10.1 Node.js / TypeScript Client</h3>
+      <h3 className={styles.heading3}>8.1 Node.js / TypeScript Client</h3>
       <pre className={styles.codeBlock}><code>{`// launcx-client.ts
 import axios, { AxiosInstance } from 'axios'
 
@@ -551,12 +436,6 @@ interface CreateVAParams {
   expirationMinutes?: number
   displayName: string
   referenceId?: string
-}
-
-interface CreateQRISParams {
-  price: number
-  playerId: string
-  flow?: 'embed' | 'redirect'
 }
 
 class LauncxClient {
@@ -578,12 +457,6 @@ class LauncxClient {
     })
   }
 
-  // ─── QRIS ───────────────────────────────────────
-  async createQRIS(params: CreateQRISParams) {
-    const { data } = await this.client.post('/payments', params)
-    return data
-  }
-
   // ─── VA ─────────────────────────────────────────
   async createVA(params: CreateVAParams) {
     const { data } = await this.client.post('/payments/va', params)
@@ -603,7 +476,7 @@ class LauncxClient {
 
 export default LauncxClient`}</code></pre>
 
-      <h3 className={styles.heading3}>10.2 Usage Example</h3>
+      <h3 className={styles.heading3}>8.2 Usage Example</h3>
       <pre className={styles.codeBlock}><code>{`import LauncxClient from './launcx-client'
 
 const launcx = new LauncxClient({
@@ -631,7 +504,7 @@ async function createPayment(userId: string, amount: number) {
   return result.data
 }`}</code></pre>
 
-      <h3 className={styles.heading3}>10.3 Callback Handler</h3>
+      <h3 className={styles.heading3}>8.3 Callback Handler</h3>
       <pre className={styles.codeBlock}><code>{`import express from 'express'
 import crypto from 'crypto'
 
@@ -658,7 +531,7 @@ router.post('/launcx-callback', express.json(), async (req, res) => {
   }
 
   const { event, data } = req.body
-  const { orderId, status, settlementStatus, channel, netAmount, customerId, nonce } = data
+  const { orderId, status, settlementStatus, vaNumber, bankName, netAmount, customerId, nonce } = data
 
   // 2. Check idempotency (prevent duplicate processing)
   const alreadyProcessed = await checkNonceProcessed(nonce)
@@ -667,7 +540,8 @@ router.post('/launcx-callback', express.json(), async (req, res) => {
   }
 
   // 3. Process based on status
-  console.log(\`[\${channel}] Order \${orderId}: \${status} (settlement: \${settlementStatus})\`)
+  console.log(\`[VA] Order \${orderId}: \${status} (settlement: \${settlementStatus})\`)
+  console.log(\`VA: \${vaNumber} (\${bankName}), Amount: \${netAmount}\`)
 
   if (status === 'SETTLED' && settlementStatus === 'SUCCESS') {
     // Payment fully settled - update your system
@@ -689,24 +563,23 @@ router.post('/launcx-callback', express.json(), async (req, res) => {
 export default router`}</code></pre>
     </section>
 
-    {/* ─────────────────────────────────── 11. Dashboard */}
+    {/* ─────────────────────────────────── 9. Dashboard */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>11. Client Dashboard</h2>
+      <h2 className={styles.heading2}>9. Client Dashboard</h2>
       <p className={styles.bodyText}>
         Akses Dashboard di <code>https://{'{LAUNCX_DOMAIN}'}/client/dashboard</code>. Fitur:
       </p>
       <ul className={styles.list}>
-        <li><strong>Transaction Dashboard</strong> - Monitor semua transaksi (QRIS & VA)</li>
+        <li><strong>Transaction Dashboard</strong> - Monitor semua transaksi VA</li>
         <li><strong>Balance</strong> - Lihat saldo aktif dan pending</li>
         <li><strong>Withdrawal</strong> - Request penarikan dana</li>
         <li><strong>Settings</strong> - Konfigurasi callback URL dan API keys</li>
-        <li><strong>Reports</strong> - Download laporan transaksi</li>
       </ul>
     </section>
 
-    {/* ─────────────────────────────────── 12. Support */}
+    {/* ─────────────────────────────────── 10. Support */}
     <section className={styles.section}>
-      <h2 className={styles.heading2}>12. Support</h2>
+      <h2 className={styles.heading2}>10. Support</h2>
       <p className={styles.bodyText}>
         Untuk bantuan teknis, hubungi tim support Launcx melalui Dashboard atau email.
       </p>
