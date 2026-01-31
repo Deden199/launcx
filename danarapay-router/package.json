@@ -1,0 +1,34 @@
+{
+  "name": "danarapay-router",
+  "version": "1.0.0",
+  "description": "DanaRapay Payment Router - VA, QRIS, Disbursement Integration",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "ioredis": "^5.3.2",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.3.1",
+    "pino": "^8.16.0",
+    "pino-pretty": "^10.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.6",
+    "typescript": "^5.3.2",
+    "ts-node-dev": "^2.0.0",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
