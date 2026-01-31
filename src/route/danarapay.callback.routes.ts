@@ -167,6 +167,7 @@ danarapayRouter.post(
 danarapayRouter.post(
   '/disbursement/callback',
   flexibleJsonParser,
+  callbackAuditMiddleware, // Gate 4: Audit mode - logs all callbacks
   danarapayDisbursementCallback
 );
 
