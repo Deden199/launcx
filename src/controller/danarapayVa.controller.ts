@@ -419,7 +419,8 @@ import {
   processWithdrawalCallback, 
   processWithdrawalBalanceDeduction,
   refundFailedWithdrawal,
-  mapDisbursementStatus 
+  DISBURSEMENT_CODES,
+  isDisbursementFinal,
 } from '../service/ledger.service';
 
 /**
@@ -431,10 +432,11 @@ import {
  * Balance deduction is handled by ledger service.
  * 
  * DanaRapay status codes (Source of Truth):
- * - 000: Success
- * - 101: In Progress  
- * - 300: Failed
- * - 301: Pending
+ * - 000: Success (Final) → COMPLETED, trigger balance deduction
+ * - 101/102: In Progress → PROCESSING
+ * - 301/504: Pending → PENDING
+ * - 300/302/303/304/305: Failed (Final) → FAILED, trigger refund if needed
+ * - 999/500: System Error → PENDING (need manual check)
  */
 export async function danarapayDisbursementCallback(req: Request, res: Response) {
   const startTime = Date.now();
