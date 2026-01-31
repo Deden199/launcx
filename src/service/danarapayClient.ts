@@ -152,6 +152,30 @@ export interface DanarapayRemitResult {
   raw: any;
 }
 
+// ===================== BALANCE TYPES =====================
+
+export interface DanarapayBalanceResult {
+  success: boolean;
+  status?: { code: string; message: string };
+  /** Total balance amount */
+  balance: number;
+  /** Overdraft balance amount */
+  overdraftBalance: number;
+  /** Overbooking balance amount */
+  overbookingBalance: number;
+  /** Pending balance amount */
+  pendingBalance: number;
+  /** Available balance amount */
+  availableBalance: number;
+  /** Frozen balance amount */
+  freezeBalance: number;
+  /** Hold balance amount */
+  holdBalance: number;
+  /** Timestamp of the balance check */
+  timestamp?: string;
+  raw: any;
+}
+
 // ===================== CALLBACK TYPES =====================
 
 export interface DanarapayVaCallbackPayload {
