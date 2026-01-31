@@ -413,6 +413,124 @@ export async function danarapayVaCallback(req: Request, res: Response) {
   }
 }
 
+// ===================== DISBURSEMENT CALLBACK HANDLER =====================
+
+import { 
+  processWithdrawalCallback, 
+  processWithdrawalBalanceDeduction,
+  refundFailedWithdrawal,
+  mapDisbursementStatus 
+} from '../service/ledger.service';
+
+/**
+ * DanaRapay Disbursement Callback Handler
+ * POST /api/v1/payments/danarapay/disbursement/callback
+ * 
+ * Callback from DanaRapay after disbursement status changes.
+ * This handler ONLY updates withdrawal status.
+ * Balance deduction is handled by ledger service.
+ * 
+ * DanaRapay status codes (Source of Truth):
+ * - 000: Success
+ * - 101: In Progress  
+ * - 300: Failed
+ * - 301: Pending
+ */
+export async function danarapayDisbursementCallback(req: Request, res: Response) {
+  const startTime = Date.now();
+
+  try {
+    const body = getParsedBody(req);
+
+    logger.info('[DanaRpay Disbursement] Callback received', {
+      partner_trx_id: body.partner_trx_id,
+      trx_id: body.trx_id,
+      status_code: body.status?.code,
+      status_message: body.status?.message,
+      amount: body.amount,
+    });
+
+    // Validate required fields
+    const partnerTrxId = body.partner_trx_id;
+    const statusCode = body.status?.code;
+
+    if (!partnerTrxId) {
+      logger.warn('[DanaRpay Disbursement] Missing partner_trx_id');
+      return res.status(400).json({ success: false, error: 'Missing partner_trx_id' });
+    }
+
+    if (!statusCode) {
+      logger.warn('[DanaRpay Disbursement] Missing status code');
+      return res.status(400).json({ success: false, error: 'Missing status code' });
+    }
+
+    // ACK quickly
+    res.status(200).json({ success: true, message: 'Callback received' });
+
+    // Process in background
+    setImmediate(async () => {
+      try {
+        // Update withdrawal status - ONLY status, NO balance change
+        const result = await processWithdrawalCallback(partnerTrxId, statusCode, body);
+
+        if (result.processed) {
+          // If status is now COMPLETED, trigger ledger to deduct balance
+          if (result.newStatus === 'COMPLETED') {
+            try {
+              const ledgerResult = await processWithdrawalBalanceDeduction(partnerTrxId);
+              logger.info('[DanaRpay Disbursement] Ledger balance deduction triggered', {
+                withdrawalId: partnerTrxId,
+                processed: ledgerResult.processed,
+                balanceChange: ledgerResult.balanceChange,
+                reason: ledgerResult.reason,
+              });
+            } catch (ledgerErr: any) {
+              logger.error('[DanaRpay Disbursement] Ledger processing failed', {
+                withdrawalId: partnerTrxId,
+                error: ledgerErr?.message,
+              });
+            }
+          }
+          
+          // If FAILED, refund any pre-deducted balance (backward compatibility)
+          if (result.newStatus === 'FAILED') {
+            try {
+              await refundFailedWithdrawal(partnerTrxId);
+            } catch (refundErr: any) {
+              logger.error('[DanaRpay Disbursement] Refund failed', {
+                withdrawalId: partnerTrxId,
+                error: refundErr?.message,
+              });
+            }
+          }
+        }
+
+        logger.info('[DanaRpay Disbursement] Callback processed', {
+          partner_trx_id: partnerTrxId,
+          statusCode,
+          newStatus: result.newStatus,
+          processed: result.processed,
+          reason: result.reason,
+          durationMs: Date.now() - startTime,
+        });
+      } catch (bgErr: any) {
+        logger.error('[DanaRpay Disbursement] Background processing error', {
+          partner_trx_id: partnerTrxId,
+          error: bgErr?.message ?? bgErr,
+        });
+      }
+    });
+  } catch (err: any) {
+    logger.error('[DanaRpay Disbursement] Callback handler error', {
+      error: err?.message ?? err,
+    });
+
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: 'Internal error' });
+    }
+  }
+}
+
 // ===================== CREATE VA ENDPOINT =====================
 
 interface CreateVaRequestBody {
