@@ -319,6 +319,41 @@ DANARAPAY_API_KEY=<your_api_key>
   - Warning indicator when balance is low
   - "Tidak tersedia" when DanaRapay not configured
 
+### E2E Test Results - DanaRapay Integration (2026-01-31)
+
+**Test Environment:**
+- Database: MongoDB Atlas Staging (`laucxdb`)
+- DanaRapay: Staging API (`https://api-stg.danarapay.com`)
+- Credentials: `launcx` / `8960dbfc-xxxx-xxxx-xxxx-xxxxxxxx`
+
+**Test Account:**
+```
+Email: e2e@launcx.id
+Password: Test@12345
+PartnerClient ID: 41176573-d9e7-49cc-af5e-fd1ad40bd5a9
+SubMerchant ID: 697deb62afa4bd9a2584b617
+```
+
+**E2E Flow Tested:**
+1. ✅ VA Creation (BRI - 002) - VA number generated successfully
+2. ✅ Payment Simulation - Payment received and processed
+3. ✅ Settlement Processing - Balance credited after SETTLED status
+4. ✅ Provider Balance API - Returns DanaRapay account balance
+5. ✅ Account Validation - DanaRapay account inquiry works
+6. ✅ Withdrawal Request - Disbursement sent via /api/remit
+7. ✅ Withdrawal Status - PENDING → waiting for callback
+
+**Provider Balance Response:**
+```json
+{
+  "provider": "danarapay",
+  "available": true,
+  "balance": 9958745,      // Available for withdrawal
+  "onHold": 10000000,      // Pending/hold/freeze combined
+  "timestamp": "31-01-2026 12:20:24"
+}
+```
+
 ---
 
 Last Updated: 2026-01-31
