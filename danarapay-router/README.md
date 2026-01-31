@@ -41,9 +41,13 @@ launcx-core ←→ danarapay-router ←→ DanaRapay API
 - `POST /api/inquiry/account` - Validate bank account
 - `GET /api/inquiry/banks` - List supported banks
 
-### Callbacks (from DanaRapay)
-- `POST /api/callback/va` - VA payment callback
-- `POST /api/callback/qris` - QRIS payment callback
+### Callbacks (from DanaRapay) - SECURED
+- `POST /api/callback/va/:token` - VA payment callback
+- `POST /api/callback/qris/:token` - QRIS payment callback
+
+**Security Layers:**
+1. IP Whitelist (DANARAPAY_IP_WHITELIST) - requests from non-whitelisted IPs are rejected
+2. URL Token (CALLBACK_SECRET_TOKEN) - :token in URL must match env variable
 
 ### Simulation (Staging only)
 - `POST /api/callback/simulate/va` - Simulate VA payment
@@ -100,13 +104,40 @@ ROUTER_API_KEY=your_router_api_key
 # Disbursement Polling
 DISBURSEMENT_POLL_INTERVAL_MS=30000
 DISBURSEMENT_POLL_MAX_ATTEMPTS=100
+
+# Callback Security (REQUIRED)
+CALLBACK_SECRET_TOKEN=your_strong_random_token
+DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53,10.0.0.0/8
 ```
+
+## Callback Security
+
+### IP Whitelist
+Configure `DANARAPAY_IP_WHITELIST` with comma-separated IP addresses or CIDR ranges:
+```bash
+DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53,10.0.0.0/8
+```
+
+**IMPORTANT:** If whitelist is empty, ALL callbacks are DENIED (secure by default).
+
+### Secret Token
+Generate a strong random token:
+```bash
+openssl rand -base64 32 | tr -d '/+='
+```
+
+The token is part of the callback URL path for additional security.
 
 ## DanaRapay Callback URLs
 
-Set these in DanaRapay dashboard:
-- VA Callback: `https://your-domain/api/callback/va`
-- QRIS Callback: `https://your-domain/api/callback/qris`
+Set these in DanaRapay dashboard (replace `YOUR_SECRET_TOKEN` with actual token):
+- VA Callback: `https://your-domain/api/callback/va/YOUR_SECRET_TOKEN`
+- QRIS Callback: `https://your-domain/api/callback/qris/YOUR_SECRET_TOKEN`
+
+**Example with production domain:**
+```
+https://s2.launcx.com/api/callback/va/bZuaFqrmgNcuSlWbm0WQDCJMVmElhNa1CPpsJytYJ0
+```
 
 ## Development
 
