@@ -268,10 +268,13 @@ model Order {
   @@index([partnerClientId])
   @@index([createdAt])
   @@index([status])
+  @@index([channel])
   @@index([subMerchantId, status, createdAt])
   @@index([userId])
   @@index([pgRefId])
   @@index([partnerClientId, status, createdAt])
+  @@index([partnerClientId, channel, status])
+  @@index([partnerClientId, channel, createdAt])
   @@index([merchantId, createdAt])
 }
 
