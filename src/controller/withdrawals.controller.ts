@@ -1399,11 +1399,26 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       piroClient = new PiroClient(piroCfg)
     } else if (sourceProvider === 'danarapay') {
       // DanaRapay disbursement/remit provider
-      const raw = sub.credentials as { baseUrl: string; username: string; apiKey: string }
-      danarapayCfg = {
-        baseUrl: raw.baseUrl,
-        username: raw.username,
-        apiKey: raw.apiKey,
+      // First check sub.credentials, then fall back to global config
+      const raw = sub.credentials as { baseUrl?: string; username?: string; apiKey?: string; useGlobalCredentials?: boolean } | null
+      
+      if (raw?.useGlobalCredentials || !raw?.baseUrl || !raw?.username || !raw?.apiKey) {
+        // Use global credentials from config
+        const globalCfg = config.api.danarapay
+        if (!globalCfg?.baseUrl || !globalCfg?.username || !globalCfg?.apiKey) {
+          return res.status(500).json({ error: 'DanaRapay credentials not configured' })
+        }
+        danarapayCfg = {
+          baseUrl: globalCfg.baseUrl,
+          username: globalCfg.username,
+          apiKey: globalCfg.apiKey,
+        }
+      } else {
+        danarapayCfg = {
+          baseUrl: raw.baseUrl,
+          username: raw.username,
+          apiKey: raw.apiKey,
+        }
       }
       providerCfg = danarapayCfg
       danarapayClient = new DanarapayClient(danarapayCfg)
@@ -2012,11 +2027,26 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       piroClient = new PiroClient(piroCfg)
     } else if (sourceProvider === 'danarapay') {
       // DanaRapay disbursement/remit provider
-      const raw = sub.credentials as { baseUrl: string; username: string; apiKey: string }
-      danarapayCfg = {
-        baseUrl: raw.baseUrl,
-        username: raw.username,
-        apiKey: raw.apiKey,
+      // First check sub.credentials, then fall back to global config
+      const raw = sub.credentials as { baseUrl?: string; username?: string; apiKey?: string; useGlobalCredentials?: boolean } | null
+      
+      if (raw?.useGlobalCredentials || !raw?.baseUrl || !raw?.username || !raw?.apiKey) {
+        // Use global credentials from config
+        const globalCfg = config.api.danarapay
+        if (!globalCfg?.baseUrl || !globalCfg?.username || !globalCfg?.apiKey) {
+          return res.status(500).json({ error: 'DanaRapay credentials not configured' })
+        }
+        danarapayCfg = {
+          baseUrl: globalCfg.baseUrl,
+          username: globalCfg.username,
+          apiKey: globalCfg.apiKey,
+        }
+      } else {
+        danarapayCfg = {
+          baseUrl: raw.baseUrl,
+          username: raw.username,
+          apiKey: raw.apiKey,
+        }
       }
       providerCfg = danarapayCfg
       danarapayClient = new DanarapayClient(danarapayCfg)
