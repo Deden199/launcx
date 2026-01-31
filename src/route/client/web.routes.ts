@@ -43,6 +43,9 @@ r.get('/dashboard', getClientDashboard)
 r.get('/dashboard/export', exportClientTransactions)
 r.post('/callbacks/:id/retry', retryTransactionCallback)
 
+// Provider balance (DanaRapay guardrail)
+r.get('/provider-balance', getProviderBalance)
+
 // VA Dashboard (dedicated for VA DanaRapay)
 r.get('/va-dashboard', getVaDashboard)
 r.get('/va-active', getActiveVaList)
