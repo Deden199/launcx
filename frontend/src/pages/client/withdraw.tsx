@@ -404,7 +404,7 @@ export default function WithdrawPage() {
         )}
 
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-4">
           {/* Sub-wallets */}
           <div className="md:col-span-2 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-3">
             <div className="mb-2 text-sm text-neutral-400">Sub-wallets</div>
@@ -425,6 +425,56 @@ export default function WithdrawPage() {
                 </button>
               )) : <div className="text-sm text-neutral-500">Tidak ada sub-wallet.</div>}
             </div>
+          </div>
+
+          {/* Provider Balance (DanaRapay) */}
+          <div 
+            data-testid="provider-balance-card"
+            className={`rounded-2xl border p-4 flex items-center gap-3 ${
+              providerBalance?.available 
+                ? providerBalance.balance < 1000000 
+                  ? 'border-amber-900/40 bg-amber-950/40' 
+                  : 'border-emerald-900/40 bg-emerald-950/40'
+                : 'border-neutral-800 bg-neutral-900/60'
+            }`}
+          >
+            {providerBalanceLoading ? (
+              <div className="animate-pulse flex items-center gap-3 w-full">
+                <div className="h-6 w-6 rounded bg-neutral-700" />
+                <div className="flex-1">
+                  <div className="h-3 w-20 rounded bg-neutral-700 mb-2" />
+                  <div className="h-5 w-28 rounded bg-neutral-700" />
+                </div>
+              </div>
+            ) : providerBalance?.available ? (
+              <>
+                <Wallet className={`opacity-70 ${providerBalance.balance < 1000000 ? 'text-amber-400' : 'text-emerald-400'}`} />
+                <div>
+                  <div className="text-sm text-neutral-400 flex items-center gap-1">
+                    Provider Balance
+                    {providerBalance.balance < 1000000 && (
+                      <AlertTriangle size={14} className="text-amber-400" />
+                    )}
+                  </div>
+                  <div className={`text-lg font-semibold ${providerBalance.balance < 1000000 ? 'text-amber-300' : 'text-emerald-300'}`}>
+                    Rp {providerBalance.balance.toLocaleString()}
+                  </div>
+                  {providerBalance.onHold > 0 && (
+                    <div className="text-xs text-neutral-500">
+                      On Hold: Rp {providerBalance.onHold.toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <Wallet className="opacity-40 text-neutral-500" />
+                <div>
+                  <div className="text-sm text-neutral-500">Provider Balance</div>
+                  <div className="text-sm text-neutral-600">Tidak tersedia</div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Pending */}
