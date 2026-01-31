@@ -412,6 +412,16 @@ model WithdrawRequest {
   withdrawFeeFlat    Float
   partnerClient      PartnerClient      @relation(fields: [partnerClientId], references: [id])
   subMerchant        sub_merchant       @relation("SubMerchantWithdrawals", fields: [subMerchantId], references: [id])
+  
+  // DanaRapay disbursement tracking
+  disbursementPayload Json?             // Raw callback from DanaRapay
+  
+  // Ledger tracking - DanaRapay as Source of Truth
+  // Balance only deducted when status=COMPLETED and balanceDeducted=true
+  balanceDeducted    Boolean?           @default(false)
+  balanceDeductedAt  DateTime?
+  balanceRefunded    Boolean?           @default(false)
+  balanceRefundedAt  DateTime?
 
   @@index([partnerClientId])
   @@index([createdAt])
@@ -420,6 +430,7 @@ model WithdrawRequest {
   @@index([subMerchantId, status, createdAt])
   @@index([partnerClientId, status, createdAt])
   @@index([partnerClientId, createdAt])
+  @@index([status, balanceDeducted])
 }
 
 model SubMerchantBalance {
