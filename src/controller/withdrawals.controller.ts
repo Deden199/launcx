@@ -1321,6 +1321,16 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       piroCfg = picked.config as PiroConfig
       providerCfg = piroCfg
       piroClient = new PiroClient(piroCfg)
+    } else if (sourceProvider === 'danarapay') {
+      // DanaRapay disbursement/remit provider
+      const raw = sub.credentials as { baseUrl: string; username: string; apiKey: string }
+      danarapayCfg = {
+        baseUrl: raw.baseUrl,
+        username: raw.username,
+        apiKey: raw.apiKey,
+      }
+      providerCfg = danarapayCfg
+      danarapayClient = new DanarapayClient(danarapayCfg)
     } else {
       const raw = sub.credentials as unknown as Ing1Config
       ingCfg = {
@@ -1836,6 +1846,16 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       piroCfg = picked.config as PiroConfig
       providerCfg = piroCfg
       piroClient = new PiroClient(piroCfg)
+    } else if (sourceProvider === 'danarapay') {
+      // DanaRapay disbursement/remit provider
+      const raw = sub.credentials as { baseUrl: string; username: string; apiKey: string }
+      danarapayCfg = {
+        baseUrl: raw.baseUrl,
+        username: raw.username,
+        apiKey: raw.apiKey,
+      }
+      providerCfg = danarapayCfg
+      danarapayClient = new DanarapayClient(danarapayCfg)
     } else {
       const raw = sub.credentials as unknown as Ing1Config
       ingCfg = {
