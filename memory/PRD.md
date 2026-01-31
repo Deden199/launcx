@@ -190,9 +190,14 @@ DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
 
 ### Gate 4: Callback Security
 - **File**: `/app/src/middleware/callbackSecurity.ts`
-- **Implementation**: Audit mode active (logs all callbacks)
-- **Features**: Token verification, IP whitelist (optional), HMAC signature validation
-- **Test Status**: ✅ PASSED (Audit Mode)
+- **Implementation**: ENFORCED with `callbackSecurityMiddleware({ requireToken: true })`
+- **Token**: `CALLBACK_SECRET_TOKEN` in `.env`
+- **Behavior**:
+  - Valid token → 200 (callback processed)
+  - Missing token → 401 `TOKEN_MISSING`
+  - Wrong token → 401 `TOKEN_INVALID`
+  - Invalid requests do NOT trigger ledger or change status
+- **Test Status**: ✅ PASSED
 
 ---
 
