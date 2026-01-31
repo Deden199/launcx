@@ -246,29 +246,6 @@ export async function processOrderSettlement(orderId: string): Promise<{
     return { processed: false, reason: `TRANSACTION_ERROR: ${err.message}` };
   }
 }
-    });
-
-    // Credit client balance
-    await tx.partnerClient.update({
-      where: { id: order.partnerClientId! },
-      data: {
-        balance: { increment: settlementAmount },
-      },
-    });
-
-    logger.info('[Ledger] Settlement processed - balance credited', {
-      orderId,
-      partnerClientId: order.partnerClientId,
-      settlementAmount,
-      channel: order.channel,
-    });
-  });
-
-  return { 
-    processed: true, 
-    balanceChange: settlementAmount 
-  };
-}
 
 /**
  * Process pending settlements
