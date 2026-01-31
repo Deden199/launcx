@@ -47,7 +47,7 @@ export async function cacheSet(key: string, value: any, ttlSeconds: number = 60)
 /**
  * Get TTL from environment or use default
  */
-export function getTTL(key: 'dashboard' | 'submerchants' | 'withdrawals', defaultTTL: number = 60): number {
+export function getTTL(key: 'dashboard' | 'submerchants' | 'withdrawals' | 'overview', defaultTTL: number = 60): number {
   const envKey = `CACHE_${key.toUpperCase()}_TTL`
   const envValue = process.env[envKey]
   return envValue ? parseInt(envValue, 10) : defaultTTL
@@ -58,7 +58,7 @@ export function getTTL(key: 'dashboard' | 'submerchants' | 'withdrawals', defaul
  */
 export async function cacheWrapper<T>(
   key: string,
-  ttlType: 'dashboard' | 'submerchants' | 'withdrawals',
+  ttlType: 'dashboard' | 'submerchants' | 'withdrawals' | 'overview',
   fetchFn: () => Promise<T>
 ): Promise<T> {
   // Try to get from cache
