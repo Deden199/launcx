@@ -953,7 +953,7 @@ export async function validateAccount(req: ClientAuthRequest, res: Response) {
   } = req.body as {
     account_number: string
     bank_code: string
-    sourceProvider?: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+    sourceProvider?: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis' | 'danarapay'
     amount?: number
     branch_code?: string
     internal_bank_code?: string
@@ -1109,7 +1109,7 @@ export async function validateAccountS2S(req: ApiKeyRequest, res: Response) {
   } = req.body as {
     account_number: string
     bank_code: string
-    sourceProvider?: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+    sourceProvider?: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis' | 'danarapay'
     amount?: number
     branch_code?: string
     internal_bank_code?: string
