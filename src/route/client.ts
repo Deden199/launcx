@@ -10,6 +10,7 @@ import {
   listWithdrawals,
   retryWithdrawal
 } from '../controller/withdrawals.controller'
+import { getProviderBalance } from '../controller/providerBalance.controller'
 
 const r = Router()
 
