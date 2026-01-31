@@ -260,4 +260,155 @@ paymentRouter.post(
  *         description: Retry processed
  */
 
+// =====================================================================
+// PROVIDER-AGNOSTIC VA ROUTES (Client-Facing)
+// These routes map to internal DanaRapay controller but expose
+// generic endpoints to clients without revealing the provider.
+// =====================================================================
+
+import {
+  createDanarapayVa,
+  getDanarapayVaInfo,
+  updateDanarapayVa,
+  getDanarapayVaBanks,
+} from '../controller/danarapayVa.controller';
+
+/**
+ * @openapi
+ * /va:
+ *   post:
+ *     summary: Create Virtual Account
+ *     description: Create a new VA for customer payment. Provider is selected automatically.
+ *     tags:
+ *       - Virtual Account
+ *     security:
+ *       - apiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - customerId
+ *               - bankCode
+ *               - displayName
+ *             properties:
+ *               customerId:
+ *                 type: string
+ *                 description: Unique customer identifier
+ *               bankCode:
+ *                 type: string
+ *                 description: Bank code (002=BRI, 008=Mandiri, 009=BNI, 013=Permata, 022=CIMB)
+ *               amount:
+ *                 type: number
+ *                 description: Payment amount (required if isOpen=false)
+ *               isOpen:
+ *                 type: boolean
+ *                 description: Open amount VA (default true)
+ *               isSingleUse:
+ *                 type: boolean
+ *                 description: Close VA after payment (default false)
+ *               expirationMinutes:
+ *                 type: number
+ *                 description: Expiration time in minutes (default 1440)
+ *               displayName:
+ *                 type: string
+ *                 description: Name displayed to customer
+ *               referenceId:
+ *                 type: string
+ *                 description: Your transaction reference ID
+ *     responses:
+ *       200:
+ *         description: VA created successfully
+ */
+paymentRouter.post(
+  '/va',
+  redisRateLimit({ windowMs: 60000, max: 100 }),
+  apiKeyAuth,
+  createDanarapayVa
+);
+
+/**
+ * @openapi
+ * /va/{vaId}:
+ *   get:
+ *     summary: Get Virtual Account Info
+ *     description: Retrieve VA details by ID
+ *     tags:
+ *       - Virtual Account
+ *     security:
+ *       - apiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: vaId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: VA details
+ */
+paymentRouter.get(
+  '/va/:vaId',
+  apiKeyAuth,
+  getDanarapayVaInfo
+);
+
+/**
+ * @openapi
+ * /va/{vaId}:
+ *   put:
+ *     summary: Update Virtual Account
+ *     description: Update VA amount or display name
+ *     tags:
+ *       - Virtual Account
+ *     security:
+ *       - apiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: vaId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount:
+ *                 type: number
+ *               displayName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: VA updated
+ */
+paymentRouter.put(
+  '/va/:vaId',
+  apiKeyAuth,
+  updateDanarapayVa
+);
+
+/**
+ * @openapi
+ * /va/banks:
+ *   get:
+ *     summary: Get Supported Banks for VA
+ *     description: List of available banks for VA creation
+ *     tags:
+ *       - Virtual Account
+ *     security:
+ *       - apiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of supported banks
+ */
+paymentRouter.get(
+  '/va/banks',
+  apiKeyAuth,
+  getDanarapayVaBanks
+);
+
 export default paymentRouter
