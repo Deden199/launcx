@@ -120,6 +120,38 @@ export interface UpdateVaRequest {
   trx_counter?: number;
 }
 
+// ===================== DISBURSEMENT/REMIT TYPES =====================
+
+export interface DanarapayRemitRequest {
+  /** Partner unique transaction ID (required) - use withdrawRequest.id */
+  partner_trx_id: string;
+  /** Bank code per BI standard (required) - e.g. 014 for BCA */
+  bank_code: string;
+  /** Recipient bank account number (required) */
+  account_number: string;
+  /** Recipient account holder name (required) */
+  account_holder_name: string;
+  /** Amount in IDR (required) */
+  amount: number;
+  /** Optional notes/description */
+  notes?: string;
+}
+
+export interface DanarapayRemitResult {
+  success: boolean;
+  pending: boolean;
+  status?: { code: string; message: string };
+  /** DanaRapay transaction ID */
+  trx_id?: string;
+  partner_trx_id?: string;
+  bank_code?: string;
+  account_number?: string;
+  account_holder_name?: string;
+  amount?: number;
+  notes?: string;
+  raw: any;
+}
+
 // ===================== CALLBACK TYPES =====================
 
 export interface DanarapayVaCallbackPayload {
