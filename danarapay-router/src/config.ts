@@ -60,6 +60,16 @@ export const config = {
     maxAttempts: parseInt(optionalEnv('RETRY_MAX_ATTEMPTS', '3'), 10),
     baseDelayMs: parseInt(optionalEnv('RETRY_BASE_DELAY_MS', '1000'), 10),
   },
+
+  // Callback Security
+  callbackSecretToken: requireEnv('CALLBACK_SECRET_TOKEN'),
+  
+  // DanaRapay IP Whitelist (comma-separated IP/CIDR)
+  // If empty, ALL callbacks will be DENIED (secure by default)
+  danarapayCallbackIps: (() => {
+    const ips = process.env.DANARAPAY_IP_WHITELIST || '';
+    return ips.split(',').map(ip => ip.trim()).filter(ip => ip.length > 0);
+  })(),
 };
 
 // Production URL mapping
