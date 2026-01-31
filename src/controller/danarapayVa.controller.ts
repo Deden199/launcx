@@ -59,26 +59,47 @@ function getParsedBody(req: Request): any {
 
 // ===================== STATUS MAPPING =====================
 
-type InternalStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'EXPIRED' | 'CANCELLED';
+/**
+ * DanaRapay Settlement Status (Source of Truth)
+ * Langsung mapping dari DanaRapay API, tidak buat status internal baru
+ */
+const DANARAPAY_SETTLEMENT_STATUS = {
+  WAITING: 'WAITING',     // Payment detected, belum settle ke account statement
+  SUCCESS: 'SUCCESS',     // Settlement complete, dana sudah di account statement
+} as const;
 
 /**
- * Map DanaRpay VA status to internal status
- * DanaRpay statuses: WAITING_PAYMENT, PAYMENT_DETECTED, EXPIRED, STATIC_TRX_EXPIRED, COMPLETE
+ * Map DanaRapay settlement_status ke internal Order status
+ * - WAITING → PAID (payment detected, menunggu settlement)
+ * - SUCCESS → SETTLED (settlement complete)
+ * 
+ * Backward compatible: status lama tetap valid
  */
-function mapVaStatusToInternal(vaStatus?: string, settlementStatus?: string): InternalStatus {
-  const status = String(vaStatus ?? '').toUpperCase();
+function mapSettlementStatusToOrderStatus(settlementStatus?: string | null): string {
+  const status = String(settlementStatus ?? '').toUpperCase();
   
-  // If settlement_status is SUCCESS, payment is complete
-  if (settlementStatus === 'SUCCESS') {
-    return 'SUCCESS';
+  switch (status) {
+    case DANARAPAY_SETTLEMENT_STATUS.SUCCESS:
+      return 'SETTLED';  // Final: settlement complete
+    case DANARAPAY_SETTLEMENT_STATUS.WAITING:
+      return 'PAID';     // Intermediate: payment detected, waiting settlement
+    default:
+      return 'PAID';     // Default to PAID jika tidak ada settlement_status
   }
+}
+
+/**
+ * Map DanaRapay VA status ke internal status (untuk VA yang belum ada payment)
+ */
+function mapVaStatusToOrderStatus(vaStatus?: string): string {
+  const status = String(vaStatus ?? '').toUpperCase();
   
   switch (status) {
     case 'COMPLETE':
     case 'PAYMENT_DETECTED':
-      return 'SUCCESS';
+      return 'PAID';      // Payment masuk, menunggu settlement
     case 'WAITING_PAYMENT':
-      return 'PENDING';
+      return 'PENDING';   // Belum ada payment
     case 'EXPIRED':
     case 'STATIC_TRX_EXPIRED':
       return 'EXPIRED';
