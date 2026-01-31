@@ -1,0 +1,52 @@
+{
+  "iteration": 3,
+  "timestamp": "2026-01-31T08:40:00.000Z",
+  "test_suite": "Final Go-Live Gaps - 2 Critical Fixes",
+  "gap_1_fail_closed": {
+    "status": "FIXED",
+    "file": "/app/src/middleware/callbackSecurity.ts",
+    "tests": [
+      { "name": "Token set + valid", "expected": 200, "actual": 200, "passed": true },
+      { "name": "Token set + missing", "expected": 401, "actual": 401, "passed": true },
+      { "name": "Token set + wrong", "expected": 401, "actual": 401, "passed": true },
+      { "name": "Token NOT set + requireToken=true", "expected": 500, "actual": 500, "passed": true }
+    ],
+    "behavior": "FAIL-CLOSED - rejects all callbacks when CALLBACK_SECRET_TOKEN not configured"
+  },
+  "gap_2_danarapay_remit": {
+    "status": "FIXED",
+    "files": [
+      "/app/src/service/danarapayClient.ts",
+      "/app/src/controller/withdrawals.controller.ts"
+    ],
+    "tests": [
+      { "name": "Create withdrawal - no debit", "passed": true, "balance": 1000000 },
+      { "name": "PENDING callback - no change", "passed": true, "balance": 1000000 },
+      { "name": "SUCCESS callback - debit once", "passed": true, "balance": 900000 },
+      { "name": "Duplicate callback - blocked", "passed": true, "reason": "ALREADY_DEDUCTED" }
+    ],
+    "db_fields": {
+      "disbursementPayload": {
+        "danarapay_trx_id": "string",
+        "request": "object",
+        "response": "object",
+        "_calledAt": "ISO timestamp"
+      }
+    }
+  },
+  "summary": {
+    "total_tests": 8,
+    "passed": 8,
+    "failed": 0,
+    "ready_for_staging": true
+  },
+  "curl_commands": {
+    "callback_no_token": "curl -X POST 'http://localhost:8002/api/v1/payments/danarapay/va/callback' -H 'Content-Type: application/json' -d '{...}' → 401",
+    "callback_with_token": "curl -X POST ... -H 'X-Callback-Token: TOKEN' → 200",
+    "disbursement_callback": "curl -X POST .../disbursement/callback -H 'X-Callback-Token: TOKEN' → 200"
+  },
+  "run_commands": {
+    "ledger_gates": "cd /app && npx ts-node backend/tests/e2e-ledger-gates.ts",
+    "gap2_danarapay": "cd /app && npx ts-node backend/tests/e2e-gap2-danarapay.ts"
+  }
+}
