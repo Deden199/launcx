@@ -1217,7 +1217,7 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
     internal_bank_code,
   } = req.body as {
     subMerchantId: string
-    sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+    sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis' | 'danarapay'
     account_number: string
     bank_code: string
     account_name_alias?: string
@@ -1750,7 +1750,7 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
     internal_bank_code,
   } = req.body as {
     subMerchantId: string
-    sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis'
+    sourceProvider: 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro' | 'genesis' | 'danarapay'
     account_number: string
     bank_code: string
     account_name_alias?: string
