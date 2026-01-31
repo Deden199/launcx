@@ -287,13 +287,57 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
       metricsWhere.channel = channelFilter;
     }
 
-    // (12) Parallel queries (metrics + list + count + VA stats)
+    // (12) Build cursor-based query for transactions
+    const orderQuery: any = {
+      where: whereOrders,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: pageSize + 1, // Take one extra to determine hasMore
+      // MINIMAL PROJECTION - only fields needed for dashboard display
+      select: {
+        id: true,
+        rrn: true,
+        playerId: true,
+        amount: true,
+        feeLauncx: true,
+        settlementAmount: true,
+        pendingAmount: true,
+        status: true,
+        settlementStatus: true,
+        createdAt: true,
+        paymentReceivedTime: true,
+        channel: true,
+        providerPayload: true,
+        trxExpirationTime: true,
+        // NOTE: qrPayload removed - large field not needed for list view
+      }
+    };
+
+    // Apply cursor if provided (cursor format: "createdAt_id")
+    if (cursor && !searchStr) {
+      const [cursorTime, cursorId] = cursor.split('_');
+      if (cursorTime && cursorId) {
+        orderQuery.where = {
+          ...orderQuery.where,
+          OR: [
+            { createdAt: { lt: new Date(cursorTime) } },
+            {
+              createdAt: new Date(cursorTime),
+              id: { lt: cursorId }
+            }
+          ]
+        };
+      }
+    }
+
+    // (13) Parallel queries: metrics + transactions + count + VA stats + withdrawal stats
     const [
       metricsGrouped,
       orders,
       totalRows,
-      vaStats
+      vaStats,
+      withdrawalStats
     ] = await Promise.all([
+      // Transaction metrics by status
       prismaReadOnly.order.groupBy({
         by: ['status'],
         where: metricsWhere,
@@ -303,24 +347,10 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
           pendingAmount: true
         }
       }),
-      // IMPORTANT: HINDARI decode error -> JANGAN select settlementTime di dashboard
-      prismaReadOnly.order.findMany({
-        where: whereOrders,
-        orderBy: { createdAt: 'desc' },
-        skip: searchStr ? 0 : (pageNum - 1) * pageSize,
-        take: searchStr ? undefined : pageSize,
-        select: {
-          id: true, qrPayload: true, rrn: true, playerId: true,
-          amount: true, feeLauncx: true, settlementAmount: true,
-          pendingAmount: true, status: true, settlementStatus: true, createdAt: true,
-          paymentReceivedTime: true,
-          channel: true,
-          providerPayload: true,
-          // settlementTime sengaja tidak di-select agar tidak crash jika ada dokumen bertipe string
-          trxExpirationTime: true,
-        }
-      }),
-      prismaReadOnly.order.count({ where: whereOrders }),
+      // Transactions with cursor pagination
+      prismaReadOnly.order.findMany(orderQuery),
+      // Total count (only for first page, skip for cursor pagination)
+      cursor ? Promise.resolve(0) : prismaReadOnly.order.count({ where: whereOrders }),
       // VA specific stats
       prismaReadOnly.order.groupBy({
         by: ['status'],
@@ -331,10 +361,29 @@ export async function getClientDashboard(req: ClientAuthRequest, res: Response) 
         },
         _count: { id: true },
         _sum: { amount: true }
+      }),
+      // Withdrawal stats - reflects business flow: Transaction → Balance → Withdrawal
+      prismaReadOnly.withdrawRequest.groupBy({
+        by: ['status'],
+        where: {
+          partnerClientId: { in: clientIds },
+          ...(dateFrom || dateTo ? { createdAt: createdAtFilter } : {})
+        },
+        _count: { id: true },
+        _sum: { amount: true, netAmount: true }
       })
     ]);
 
-    // (13) Metrics extraction
+    // (14) Determine hasMore and nextCursor for cursor pagination
+    const hasMore = orders.length > pageSize;
+    const resultOrders = hasMore ? orders.slice(0, -1) : orders;
+    let nextCursor: string | null = null;
+    if (hasMore && resultOrders.length > 0) {
+      const lastOrder = resultOrders[resultOrders.length - 1];
+      nextCursor = `${lastOrder.createdAt.toISOString()}_${lastOrder.id}`;
+    }
+
+    // (15) Metrics extraction
     const totalPending = metricsGrouped
       .filter(g => g.status === ORDER_STATUS.PAID)
       .reduce((sum, g) => sum + (g._sum.pendingAmount ?? 0), 0);
