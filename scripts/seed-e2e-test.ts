@@ -1,6 +1,9 @@
 // scripts/seed-e2e-test.ts
 // Seed data untuk E2E testing VA Payment → Settlement → Withdrawal dengan DanaRapay
 
+import { config } from 'dotenv';
+config({ path: '.env' }); // Load .env dari root
+
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
