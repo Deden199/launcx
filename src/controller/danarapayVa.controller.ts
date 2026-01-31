@@ -671,7 +671,7 @@ export async function createDanarapayVa(req: Request, res: Response) {
       username_display: usernameDisplay,
       email: body.email,
       full_name: fullName,
-      trx_expiration_time: trxExpirationTime,
+      trx_expiration_time: trxExpirationTimeBody,
       partner_trx_id: partnerTrxId,
       trx_counter: trxCounter,
     };
