@@ -577,6 +577,54 @@ export class DanarapayClient {
     }
   }
 
+  // ===================== ACCOUNT INQUIRY =====================
+  /**
+   * Account inquiry/validation
+   * POST /api/account-inquiry
+   * 
+   * @see https://api-docs.danarapay.com/#tag/Disbursement
+   */
+  async accountInquiry(request: DanarapayAccountInquiryRequest): Promise<DanarapayAccountInquiryResult> {
+    const body = {
+      bank_code: request.bank_code,
+      account_number: request.account_number,
+    };
+
+    try {
+      logger.info('[DanaRpay] ▶ accountInquiry', { 
+        bank_code: request.bank_code, 
+        account_number: request.account_number,
+      });
+      
+      const res = await this.http.post('/api/account-inquiry', body);
+      
+      logger.info('[DanaRpay] ◀ accountInquiry', { status: res.status, data: res.data });
+
+      const data = res.data;
+      const isSuccess = data?.status?.code === '000';
+
+      return {
+        success: isSuccess,
+        status: data?.status,
+        bank_code: data?.bank_code,
+        account_number: data?.account_number,
+        account_name: data?.account_name,
+        timestamp: data?.timestamp,
+        id: data?.id,
+        invoice_id: data?.invoice_id,
+        raw: data,
+      };
+    } catch (err) {
+      const { raw, message, code } = this.extractError(err);
+      logger.error('[DanaRpay] ✖ accountInquiry error', { error: message, code });
+      return {
+        success: false,
+        status: { code: code ?? '999', message: message ?? 'Unknown error' },
+        raw,
+      };
+    }
+  }
+
   /**
    * Check disbursement status
    * GET /api/remit/status/{partner_trx_id}
