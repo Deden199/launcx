@@ -37,6 +37,18 @@ function getClient(): DanarapayClient {
 
 // ===================== HELPERS =====================
 
+/** Map bank code to bank name for client-facing response */
+function getBankName(bankCode: string): string {
+  const bankNames: Record<string, string> = {
+    '002': 'BRI',
+    '008': 'Mandiri',
+    '009': 'BNI',
+    '013': 'Permata',
+    '022': 'CIMB Niaga',
+  };
+  return bankNames[bankCode] || bankCode;
+}
+
 function getParsedBody(req: Request): any {
   const b: any = req.body;
   if (b && typeof b === 'object' && Object.keys(b).length > 0) return b;
