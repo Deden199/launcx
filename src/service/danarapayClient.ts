@@ -483,6 +483,55 @@ export class DanarapayClient {
     }
   }
 
+  // ===================== GET BALANCE =====================
+  /**
+   * Get balance information
+   * GET /api/balance
+   * 
+   * @see https://api-docs.danarapay.com/#tag/Disbursement
+   */
+  async getBalance(): Promise<DanarapayBalanceResult> {
+    try {
+      logger.info('[DanaRpay] ▶ getBalance');
+      
+      const res = await this.http.get('/api/balance');
+      
+      logger.info('[DanaRpay] ◀ getBalance', { status: res.status, data: res.data });
+
+      const data = res.data;
+      const isSuccess = data?.status?.code === '000';
+
+      return {
+        success: isSuccess,
+        status: data?.status,
+        balance: data?.balance ?? 0,
+        overdraftBalance: data?.overdraftBalance ?? 0,
+        overbookingBalance: data?.overbookingBalance ?? 0,
+        pendingBalance: data?.pendingBalance ?? 0,
+        availableBalance: data?.availableBalance ?? 0,
+        freezeBalance: data?.freezeBalance ?? 0,
+        holdBalance: data?.holdBalance ?? 0,
+        timestamp: data?.timeStamp,
+        raw: data,
+      };
+    } catch (err) {
+      const { raw, message, code } = this.extractError(err);
+      logger.error('[DanaRpay] ✖ getBalance error', { error: message, code });
+      return {
+        success: false,
+        status: { code: code ?? '999', message: message ?? 'Unknown error' },
+        balance: 0,
+        overdraftBalance: 0,
+        overbookingBalance: 0,
+        pendingBalance: 0,
+        availableBalance: 0,
+        freezeBalance: 0,
+        holdBalance: 0,
+        raw,
+      };
+    }
+  }
+
   /**
    * Check disbursement status
    * GET /api/remit/status/{partner_trx_id}
