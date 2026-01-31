@@ -2,10 +2,7 @@
 
 ## Overview
 
-Launcx provides a unified payment gateway API supporting multiple payment methods:
-- **QRIS** - Quick Response Code Indonesia Standard
-- **Virtual Account (VA)** - Bank transfer via VA number
-
+Launcx provides a unified Virtual Account (VA) payment gateway API.
 Payment providers are selected automatically by Launcx based on your tenant configuration.
 
 ## Base URLs
@@ -31,43 +28,9 @@ X-Timestamp: <Unix timestamp in milliseconds>
 
 ---
 
-## Endpoints
+## Virtual Account (VA) Endpoints
 
-### QRIS Payment
-
-#### Create QRIS Order
-```
-POST /api/v1/payments
-```
-
-**Request:**
-```json
-{
-  "price": 50000,
-  "playerId": "user_123",
-  "flow": "embed"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "orderId": "685s6eb9263c75af53ba84b1",
-    "checkoutUrl": "https://{DOMAIN}/checkout/{orderId}",
-    "qrPayload": "0002010102122667...",
-    "totalAmount": 50000,
-    "expiredTs": "2025-01-30T15:30:00Z"
-  }
-}
-```
-
----
-
-### Virtual Account (VA)
-
-#### Create VA
+### Create VA
 ```
 POST /api/v1/payments/va
 ```
@@ -96,18 +59,20 @@ POST /api/v1/payments/va
     "bankCode": "008",
     "bankName": "Mandiri",
     "amount": 50000,
+    "customerId": "user_123",
+    "referenceId": "TRX-001",
     "status": "PENDING",
     "expiresAt": "2025-01-31T10:00:00Z"
   }
 }
 ```
 
-#### Get VA Info
+### Get VA Info
 ```
 GET /api/v1/payments/va/{vaId}
 ```
 
-#### Update VA
+### Update VA
 ```
 PUT /api/v1/payments/va/{vaId}
 ```
@@ -122,7 +87,7 @@ PUT /api/v1/payments/va/{vaId}
 
 ---
 
-### Supported Banks
+## Supported Banks
 
 | Code | Bank Name |
 |------|-----------|
@@ -160,30 +125,28 @@ PUT /api/v1/payments/va/{vaId}
 
 Launcx sends HTTP POST to your callback URL when transaction status changes.
 
-### Callback Payload (Unified Format)
+### Callback Payload
 
 ```json
 {
   "event": "payment.updated",
   "data": {
-    "orderId": "685d4578f2745f068c635f17",
-    "channel": "QRIS",
+    "orderId": "19cc351e-cd81-4300-af19-ecac8e3a3144",
+    "channel": "VA",
     "status": "SETTLED",
     "settlementStatus": "SUCCESS",
     "grossAmount": 50000,
     "fee": 500,
     "netAmount": 49500,
     "customerId": "user_123",
+    "vaNumber": "8618830003000000039",
+    "bankCode": "008",
+    "bankName": "Mandiri",
     "occurredAt": "2025-01-30T14:30:00Z",
     "nonce": "550e8400-e29b-41d4-a716-446655440000"
   }
 }
 ```
-
-For VA transactions, additional fields are included:
-- `vaNumber` - VA number
-- `bankCode` - Bank code
-- `bankName` - Bank name (optional)
 
 ### Signature Verification
 
@@ -286,10 +249,6 @@ class LauncxClient {
     })
   }
 
-  async createQRIS(params) {
-    return this.client.post('/payments', params)
-  }
-
   async createVA(params) {
     return this.client.post('/payments/va', params)
   }
@@ -303,6 +262,18 @@ class LauncxClient {
   }
 }
 ```
+
+---
+
+## Integration Flow
+
+1. Login ke Dashboard & dapatkan `API Key`
+2. Register Callback URL di Dashboard
+3. Create VA via `POST /payments/va`
+4. Tampilkan nomor VA & bank ke customer
+5. Customer transfer ke nomor VA
+6. Terima Callback dengan status `PAID` / `SETTLED`
+7. Verify signature & update status di sistem Anda
 
 ---
 
