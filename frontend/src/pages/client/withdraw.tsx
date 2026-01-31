@@ -5,13 +5,13 @@ import apiClient from '@/lib/apiClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import * as XLSX from 'xlsx'
-import { Plus, Clock, FileText, X, CheckCircle, ArrowUpDown } from 'lucide-react'
+import { Plus, Clock, FileText, X, CheckCircle, ArrowUpDown, Wallet, AlertTriangle } from 'lucide-react'
 import { oyCodeMap } from '../../utils/oyCodeMap'
 import { gidiChannelMap } from '../../utils/gidiChannelMap'
 import { resolvePiroBankMeta } from '../../utils/piroBankMap'
 
 type ClientOption = { id: string; name: string }
-type Provider = 'hilogate' | 'oy' | 'gidi' | 'piro' | string
+type Provider = 'hilogate' | 'oy' | 'gidi' | 'piro' | 'danarapay' | string
 
 interface Withdrawal {
   id: string
@@ -36,6 +36,14 @@ interface SubMerchant {
   balance: number
 }
 
+interface ProviderBalance {
+  provider: string
+  available: boolean
+  balance: number
+  onHold: number
+  timestamp: string
+}
+
 function deriveAlias(fullName: string) {
   const parts = fullName.trim().split(' ')
   if (parts.length === 1) return parts[0]
@@ -47,6 +55,10 @@ export default function WithdrawPage() {
   const [balance, setBalance] = useState(0)
   const [pending, setPending] = useState(0)
   const [pageError, setPageError] = useState<string>('')
+
+  // ── Provider Balance (DanaRapay guardrail)
+  const [providerBalance, setProviderBalance] = useState<ProviderBalance | null>(null)
+  const [providerBalanceLoading, setProviderBalanceLoading] = useState(true)
 
   // ── Parent–Child & Subwallets
   const [children, setChildren] = useState<ClientOption[]>([])
@@ -91,6 +103,29 @@ export default function WithdrawPage() {
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
+  }, [])
+
+  // Provider Balance (DanaRapay) - fetch once
+  useEffect(() => {
+    let cancelled = false
+    setProviderBalanceLoading(true)
+    apiClient.get<ProviderBalance>('/client/provider-balance')
+      .then(res => {
+        if (!cancelled && mountedRef.current) {
+          setProviderBalance(res.data)
+        }
+      })
+      .catch(() => {
+        if (!cancelled && mountedRef.current) {
+          setProviderBalance(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled && mountedRef.current) {
+          setProviderBalanceLoading(false)
+        }
+      })
+    return () => { cancelled = true }
   }, [])
 
   // Banks (once)
