@@ -361,8 +361,9 @@ export async function processWithdrawalBalanceDeduction(withdrawalId: string): P
     });
 
     logger.info('[Ledger] Withdrawal balance deducted', {
-      withdrawalId,
-      partnerClientId: withdrawal.partnerClientId,
+      withdrawalId: withdrawal!.id,
+      refId: withdrawal!.refId,
+      partnerClientId: withdrawal!.partnerClientId,
       deductAmount,
     });
   });
@@ -372,24 +373,46 @@ export async function processWithdrawalBalanceDeduction(withdrawalId: string): P
 
 /**
  * Refund withdrawal balance (for FAILED withdrawals that had balance pre-deducted)
- * This handles backward compatibility with old flow
+ * This handles backward compatibility with legacy providers that deducted on create
+ * 
+ * IMPORTANT: Only refund if balanceDeducted=true (was actually deducted)
+ * DanaRapay withdrawals have balanceDeducted=false so won't be refunded (correct behavior)
  */
 export async function refundFailedWithdrawal(withdrawalId: string): Promise<{
   processed: boolean;
   reason?: string;
 }> {
-  const withdrawal = await prisma.withdrawRequest.findUnique({
+  // Try finding by id first, then by refId
+  let withdrawal = await prisma.withdrawRequest.findUnique({
     where: { id: withdrawalId },
     select: {
       id: true,
+      refId: true,
       status: true,
       amount: true,
       partnerClientId: true,
+      balanceDeducted: true,
       balanceRefunded: true,
     },
   });
 
   if (!withdrawal) {
+    withdrawal = await prisma.withdrawRequest.findFirst({
+      where: { refId: withdrawalId },
+      select: {
+        id: true,
+        refId: true,
+        status: true,
+        amount: true,
+        partnerClientId: true,
+        balanceDeducted: true,
+        balanceRefunded: true,
+      },
+    });
+  }
+
+  if (!withdrawal) {
+    logger.warn('[Ledger] Withdrawal not found for refund', { withdrawalId });
     return { processed: false, reason: 'NOT_FOUND' };
   }
 
@@ -397,13 +420,26 @@ export async function refundFailedWithdrawal(withdrawalId: string): Promise<{
     return { processed: false, reason: 'NOT_FAILED' };
   }
 
+  // CRITICAL: Only refund if balance was actually deducted
+  // DanaRapay withdrawals have balanceDeducted=false, so nothing to refund
+  if (!withdrawal.balanceDeducted) {
+    logger.info('[Ledger] No balance to refund (balanceDeducted=false)', {
+      withdrawalId: withdrawal.id,
+      refId: withdrawal.refId,
+    });
+    return { processed: false, reason: 'BALANCE_NOT_DEDUCTED' };
+  }
+
   if (withdrawal.balanceRefunded) {
+    logger.info('[Ledger] Balance already refunded (idempotent)', {
+      withdrawalId: withdrawal.id,
+    });
     return { processed: false, reason: 'ALREADY_REFUNDED' };
   }
 
   await prisma.$transaction(async (tx) => {
     await tx.withdrawRequest.update({
-      where: { id: withdrawalId },
+      where: { id: withdrawal!.id },
       data: { 
         balanceRefunded: true,
         balanceRefundedAt: new Date(),
@@ -411,9 +447,9 @@ export async function refundFailedWithdrawal(withdrawalId: string): Promise<{
     });
 
     await tx.partnerClient.update({
-      where: { id: withdrawal.partnerClientId },
+      where: { id: withdrawal!.partnerClientId },
       data: {
-        balance: { increment: withdrawal.amount },
+        balance: { increment: withdrawal!.amount },
       },
     });
 
