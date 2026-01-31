@@ -33,8 +33,8 @@ const flexibleJsonParser = json({
 });
 
 // ===================== CALLBACK ROUTE (PUBLIC) =====================
-// Gate 4: Callback Security - Audit mode for monitoring
-// To enable full security, use callbackSecurityMiddleware({ requireToken: true })
+// Gate 4: Callback Security - ENFORCED with token verification
+// Invalid requests will be rejected with 401/403
 
 /**
  * @swagger
@@ -48,7 +48,7 @@ const flexibleJsonParser = json({
  *       - User berhasil melakukan pembayaran
  *       - Status settlement berubah (WAITING -> SUCCESS)
  *       
- *       Security: Optional X-Callback-Token header for authentication
+ *       Security: X-Callback-Token header REQUIRED for authentication
  *     tags:
  *       - DanaRpay VA
  *     security: []
@@ -57,7 +57,8 @@ const flexibleJsonParser = json({
  *         name: X-Callback-Token
  *         schema:
  *           type: string
- *         description: Optional callback authentication token
+ *         required: true
+ *         description: Callback authentication token (REQUIRED)
  *     requestBody:
  *       required: true
  *       content:
