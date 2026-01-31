@@ -1949,6 +1949,12 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
       const feePctAmt = (pc.withdrawFeePercent / 100) * amount
       const netAmt = amount - feePctAmt - pc.withdrawFeeFlat
 
+      // Determine if this provider deducts balance on create or via callback
+      // DanaRapay: balance deducted via ledger after callback SUCCESS
+      // Legacy providers: balance deducted on create (hold)
+      const isDanarapayProvider = sourceProvider === 'danarapay'
+      const shouldDeductOnCreate = !isDanarapayProvider
+
       const refId = withdrawRef
       const w = await tx.withdrawRequest.create({
         data: {
@@ -1967,13 +1973,20 @@ export const requestWithdrawS2S = async (req: ApiKeyRequest, res: Response) => {
           bankCode: bank_code,
           bankName,
           branchName,
+          // Ledger tracking
+          balanceDeducted: shouldDeductOnCreate,
+          balanceDeductedAt: shouldDeductOnCreate ? new Date() : null,
         },
       })
 
-      await tx.partnerClient.update({
-        where: { id: partnerClientId },
-        data: { balance: { decrement: amount } },
-      })
+      // Hold saldo - ONLY for legacy providers
+      // DanaRapay: balance deducted via ledger after callback SUCCESS
+      if (shouldDeductOnCreate) {
+        await tx.partnerClient.update({
+          where: { id: partnerClientId },
+          data: { balance: { decrement: amount } },
+        })
+      }
 
       return w
     })
