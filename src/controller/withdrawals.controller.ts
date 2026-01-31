@@ -1664,10 +1664,10 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
         if (!danarapayClient) throw new Error('Missing DanaRapay client configuration')
         
         const remitReq: DanarapayRemitRequest = {
-          partner_trx_id: wr.id,  // Use withdrawal ID as primary reference
-          bank_code: bank_code,
-          account_number: account_number,
-          account_holder_name: wr.accountName,
+          partner_trx_id: wr.refId,  // Use withdrawal refId as primary reference
+          recipient_bank: bank_code,
+          recipient_account: account_number,
+          recipient_name: wr.accountName,
           amount: wr.netAmount ?? amount,
           notes: `Withdraw Rp ${wr.netAmount}`,
         }
@@ -1682,8 +1682,8 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
               danarapay_trx_id: remitResult.trx_id,
               request: {
                 partner_trx_id: remitReq.partner_trx_id,
-                bank_code: remitReq.bank_code,
-                account_number: remitReq.account_number,
+                recipient_bank: remitReq.recipient_bank,
+                recipient_account: remitReq.recipient_account,
                 amount: remitReq.amount,
               },
               response: {
