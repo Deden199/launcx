@@ -4,173 +4,167 @@
 
 Launcx is a payment gateway platform supporting QRIS and Virtual Account (VA) payments for Indonesian merchants.
 
-## Architecture
+## Architecture: DanaRapay as Source of Truth
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    launcx-core (Main Application)                   │
-│  • Node.js/Express Backend + Prisma ORM + Next.js Frontend          │
-│  • Client Dashboard showing business flow:                          │
-│    VA/QRIS → Transaction → Balance → Withdrawal                     │
-└─────────────────────────────────────────────────────────────────────┘
+│                           DanaRapay API                              │
+│                    (Single Source of Truth)                          │
+│                                                                      │
+│  VA Callback:                    Disbursement Callback:              │
+│  - settlement_status = WAITING   - code 000 = SUCCESS                │
+│  - settlement_status = SUCCESS   - code 300 = FAILED                 │
+└───────────────────────────────────────────────────────────────────────┘
                               ↓ ↑
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    danarapay-router (Microservice)                  │
-│  • Dedicated gateway for DanaRapay integration                     │
-│  • Security: IP Whitelist + URL Token                              │
+│                    launcx-core (Main Application)                   │
+│                                                                      │
+│  CALLBACK HANDLERS (status only, NO balance changes):               │
+│  • danarapayVaCallback → updates Order.status, Order.settlementStatus│
+│  • danarapayDisbursementCallback → updates WithdrawRequest.status   │
+│                                                                      │
+│  LEDGER SERVICE (balance changes):                                  │
+│  • processOrderSettlement() → credits balance for SETTLED orders    │
+│  • processWithdrawalBalanceDeduction() → debits balance for SUCCESS │
+│                                                                      │
+│  DASHBOARD:                                                          │
+│  • Shows status based on DanaRapay state                            │
+│  • Balance reflects only SETTLED transactions                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Completed Upgrades (2025-01-31)
+## State Flow: VA (Inbound)
 
-### ✅ P0 - Callback Security for danarapay-router
-- IP Whitelist validation (`DANARAPAY_IP_WHITELIST` env)
-- URL Token validation (`CALLBACK_SECRET_TOKEN` env)
-- Default DENY if whitelist empty
-- CIDR notation support
-
-### ✅ P1 - Query Optimization di Core Controllers
-
-**`clientDashboard.controller.ts` - getClientDashboard:**
-- ✅ Cursor-based pagination (`createdAt + _id`)
-- ✅ Minimal projection (removed `qrPayload` - large field not needed)
-- ✅ Summary withdrawal dalam response (`withdrawalStats`)
-- ✅ Response mencerminkan alur bisnis: VA/QRIS → Transaksi → Saldo → Withdrawal
-
-**`clientDashboard.controller.ts` - getVaDashboard:**
-- ✅ Cursor-based pagination
-- ✅ Minimal projection
-
-**`withdrawals.controller.ts` - listWithdrawals:**
-- ✅ Cursor-based pagination (`createdAt + refId`)
-
-### ✅ P2 - Database Indexes
-Added composite indexes for common query patterns:
-```prisma
-@@index([partnerClientId, channel, status])
-@@index([partnerClientId, channel, createdAt])
+```
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│   VA Created     │───>│  Payment Detected│───>│    Settled       │
+│  status: PENDING │    │  status: PAID    │    │  status: SETTLED │
+│                  │    │  settlement:     │    │  settlement:     │
+│                  │    │    WAITING       │    │    SUCCESS       │
+│  balance: 0      │    │  balance: 0      │    │  balance: +amt   │
+└──────────────────┘    └──────────────────┘    └──────────────────┘
+        │                       │                        │
+        │               DanaRapay Callback 1      DanaRapay Callback 2
+        │               settlement_status=WAITING settlement_status=SUCCESS
+        │                       │                        │
+        └───────────────────────┴────────────────────────┘
+                         Ledger processes SETTLED → balance credited
 ```
 
-### ✅ P3 - API Documentation
-- Updated `/docs` page with Node.js/TypeScript SDK examples
-- Complete callback handler implementation guide
+**Key Rules:**
+- Callback 1 (WAITING): Order status = PAID, balance NOT changed
+- Callback 2 (SUCCESS): Order status = SETTLED, ledger credits balance
+- Balance ONLY increases when `status = SETTLED`
 
 ---
 
-## API Response Structure
+## State Flow: Withdrawal (Outbound)
+
+```
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ Withdrawal       │───>│   Processing     │───>│   Completed      │
+│ Requested        │    │                  │    │                  │
+│ status: PENDING  │    │ status: PROCESSING│   │ status: COMPLETED│
+│ balance: no chg  │    │ balance: no chg  │    │ balance: -amt    │
+└──────────────────┘    └──────────────────┘    └──────────────────┘
+        │                       │                        │
+        │               DanaRapay Callback        DanaRapay Callback
+        │               code 101 (In Progress)   code 000 (Success)
+        │                       │                        │
+        └───────────────────────┴────────────────────────┘
+                         Ledger processes COMPLETED → balance debited
+```
+
+**Key Rules:**
+- Withdrawal created: status = PENDING, balance NOT changed
+- DanaRapay callback determines final status
+- Balance ONLY decreases when `status = COMPLETED` (DanaRapay SUCCESS)
+
+---
+
+## Files Modified/Created
+
+### New Files
+- `/app/src/service/ledger.service.ts` - Balance management based on DanaRapay status
+
+### Modified Files
+- `/app/src/controller/danarapayVa.controller.ts`
+  - Status mapping from DanaRapay settlement_status
+  - Callback only updates status, triggers ledger for SETTLED
+  - Added disbursement callback handler
+  
+- `/app/src/controller/clientDashboard.controller.ts`
+  - Metrics reflect DanaRapay status (waitingSettlement, settled)
+  - VA stats show settlement status breakdown
+  
+- `/app/src/prisma/schema.prisma`
+  - Order: Added `ledgerProcessed`, `ledgerProcessedAt`
+  - WithdrawRequest: Added `balanceDeducted`, `balanceDeductedAt`, `balanceRefunded`, `disbursementPayload`
+
+- `/app/src/route/danarapay.callback.routes.ts`
+  - Added `/disbursement/callback` endpoint
+
+---
+
+## API Response Changes
 
 ### GET /api/v1/client/dashboard
 
-Response reflects business flow: VA/QRIS → Transaction → Balance → Withdrawal
-
 ```json
 {
-  "balance": 1500000,              // Saldo aktif (available for withdrawal)
-  "totalPending": 250000,         // Transaction pending settlement
-  "totalSettlement": 1200000,     // Total settled
-  "totalPaid": 1450000,           // Total paid (including pending)
-  
-  "total": 156,                   // Transaction count
-  "hasMore": true,                // For cursor pagination
-  "nextCursor": "2025-01-31T10:00:00.000Z_abc123",
-  
-  "transactions": [...],
+  "balance": 1500000,              // Only from SETTLED transactions
+  "totalWaitingSettlement": 250000, // PAID status, waiting DanaRapay settlement
+  "totalSettlement": 1200000,      // SETTLED status, in balance
   
   "vaStats": {
     "created": 45,
-    "pending": 3,
-    "success": 40,
-    "expired": 2,
-    "totalAmount": 500000
+    "pending": 3,                  // Waiting payment
+    "waitingSettlement": 5,        // PAID, waiting DanaRapay settlement
+    "settled": 35,                 // SETTLED, in balance
+    "expired": 2
   },
   
-  "withdrawalStats": {            // NEW: Withdrawal summary
-    "pending": 2,
-    "pendingAmount": 200000,
-    "completed": 15,
-    "completedAmount": 1000000,
-    "failed": 1
-  },
-  
-  "children": [...],
-  "vaBanks": [...]
-}
-```
-
-### GET /api/v1/client/withdrawals
-
-Now supports cursor pagination:
-```
-?cursor=2025-01-31T10:00:00.000Z_REF123&limit=20
-```
-
-Response:
-```json
-{
-  "data": [...],
-  "total": 50,
-  "hasMore": true,
-  "nextCursor": "2025-01-31T09:00:00.000Z_REF100"
+  "withdrawalStats": {
+    "pending": 2,                  // Waiting DanaRapay
+    "completed": 15,               // DanaRapay SUCCESS
+    "failed": 1                    // DanaRapay FAILED
+  }
 }
 ```
 
 ---
 
-## Cursor Pagination Format
+## Backward Compatibility
 
-Consistent format across all endpoints: `{createdAt}_{id}`
-
-- **Transactions**: `createdAt_orderId`
-- **Withdrawals**: `createdAt_refId`
-- **VA**: Uses Prisma cursor on `id`
+1. **Existing SETTLED/SUCCESS transactions** - Already in balance, `ledgerProcessed` defaults to true
+2. **New transactions** - Follow new flow with ledger tracking
+3. **Migration not required** - New fields default appropriately
 
 ---
 
-## Files Modified
+## Callback Endpoints
 
-### Core Controllers (Optimized)
-- `/app/src/controller/clientDashboard.controller.ts`
-  - getClientDashboard: cursor pagination, minimal projection, withdrawal stats
-  - getVaDashboard: cursor pagination
-- `/app/src/controller/withdrawals.controller.ts`
-  - listWithdrawals: cursor pagination
+### VA Callback
+`POST /api/v1/payments/danarapay/va/callback`
+- Updates Order.status and Order.settlementStatus
+- Triggers ledger for SETTLED status
 
-### Database Schema
-- `/app/src/prisma/schema.prisma` - Added channel indexes
-
-### Routes
-- `/app/src/route/client/web.routes.ts` - Cleaned up
-
-### Frontend
-- `/app/frontend/src/pages/client/va-dashboard.tsx` - Enhanced UI with cursor pagination
-- `/app/frontend/src/pages/docs.tsx` - Added Node.js examples
+### Disbursement Callback  
+`POST /api/v1/payments/danarapay/disbursement/callback`
+- Updates WithdrawRequest.status
+- Triggers ledger for COMPLETED status
 
 ---
 
-## Remaining Tasks
+## Environment Configuration
 
-### P0 - Before Go-Live
-- [ ] Get DanaRapay production IP whitelist
-- [ ] Set production `CALLBACK_SECRET_TOKEN`
-- [ ] Deploy `danarapay-router` to production
-
-### P1 - Testing
-- [ ] End-to-end test: VA Create → Payment → Callback → Dashboard
-- [ ] Load test cursor pagination with large dataset
-
-### P2 - Future Enhancements
-- [ ] Real-time updates (WebSocket/SSE)
-- [ ] Query performance monitoring
-- [ ] More detailed logging with correlation IDs
-
----
-
-## Test Credentials
-
-- **API Key (test)**: `658986ac-04ea-413e-aa62-0572ce97afef`
-- **Callback Token (test)**: `bZuaFqrmgNcuSlWbm0WQDCJMVmElhNa1CPpsJytYJ0`
+### danarapay-router/.env (if using router)
+```bash
+CALLBACK_SECRET_TOKEN=<token>
+DANARAPAY_IP_WHITELIST=103.150.60.52,103.150.60.53
+```
 
 ---
 
