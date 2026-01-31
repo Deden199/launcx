@@ -1446,10 +1446,9 @@ export const requestWithdraw = async (req: ClientAuthRequest, res: Response) => 
       const netAmt = amount - feePctAmt - pc.withdrawFeeFlat
 
       // f) Determine if this provider deducts balance on create or via callback
-      // DanaRapay: balance deducted via ledger after callback SUCCESS
-      // Legacy providers (hilogate, piro, oy, etc.): balance deducted on create (hold)
-      const isDanarapayProvider = sourceProvider === 'danarapay'
-      const shouldDeductOnCreate = !isDanarapayProvider
+      // Use constant from ledger service for consistency
+      const { isCallbackBasedProvider } = await import('../service/ledger.service')
+      const shouldDeductOnCreate = !isCallbackBasedProvider(sourceProvider)
 
       // g) Buat WithdrawRequest dengan nested connect
       const refId = withdrawRef
