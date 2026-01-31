@@ -54,14 +54,40 @@ openssl rand -hex 32
 
 ## 3. Database Migration
 
-### If using Prisma (recommended):
+### ⚠️ IMPORTANT: Staging vs Production
+
+| Environment | Command | Notes |
+|-------------|---------|-------|
+| **Staging/Dev** | `npx prisma db push` | Quick schema sync, no migration history |
+| **Production** | `npx prisma migrate deploy` | Safe, versioned migrations |
+
+### For Staging/Development:
 ```bash
 # Generate Prisma client
 npx prisma generate
 
 # Push schema to database (creates collections and indexes)
+# ⚠️ Use ONLY for staging/dev - does not create migration history
 npx prisma db push
 ```
+
+### For Production (RECOMMENDED):
+```bash
+# Generate Prisma client
+npx prisma generate
+
+# Create migration (run once during development)
+npx prisma migrate dev --name add_ledger_tracking_fields
+
+# Deploy migration to production (safe, versioned)
+npx prisma migrate deploy
+```
+
+> **Why use `migrate deploy` in production?**
+> - Creates versioned migration files in `/prisma/migrations/`
+> - Tracks what has been applied to avoid "schema drift"
+> - Allows rollback if needed
+> - Safe for team collaboration
 
 ### New Fields Added (since last release):
 ```
