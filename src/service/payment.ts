@@ -468,6 +468,8 @@ const apiResp = await hilClient.createTransaction({
   amount,
 });
 
+logger.info(`[Hilogate] createTransaction response for refId=${refId}: ${JSON.stringify(apiResp.data)}`);
+
 // bentuk respons createTransaction (sesuai implementasi `requestFull`) biasanya:
 // {
 //   code: number,
