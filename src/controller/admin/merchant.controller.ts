@@ -21,6 +21,7 @@ const BALANCE_TTL_MS = 30_000
 import { prisma } from '../../core/prisma';
 import { logAdminAction } from '../../util/adminLog';
 import { ORDER_STATUS } from '../../types/orderStatus';
+import { normalizeProviderKey } from '../../util/gatewayMapping';
 
 // 1. Create merchant (mdr wajib)
 export const createMerchant = async (req: AuthRequest, res: Response) => {
@@ -174,7 +175,8 @@ export const setFeeRate = async (req: AuthRequest, res: Response) => {
 export const connectPG = async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.params.id;
-  const { provider, credentials: inputCreds, fee, name } = req.body;
+    const { provider: providerInput, credentials: inputCreds, fee, name } = req.body;
+    const provider = normalizeProviderKey(providerInput);
 
     // 1) Обязательные поля
     if (!provider || !inputCreds || !name) {
@@ -255,7 +257,7 @@ export const updatePGFee = async (req: AuthRequest, res: Response) => {
    try {
      const merchantId = req.params.id
     const subId       = req.params.subId
-    const { provider, credentials: inputCreds, fee, name, schedule: rawSched } = req.body
+    const { provider: providerInput, credentials: inputCreds, fee, name, schedule: rawSched } = req.body
 
     // 1) Pastikan record ada dan milik merchant yang sama
     const existing = await prisma.sub_merchant.findUnique({
@@ -271,10 +273,14 @@ export const updatePGFee = async (req: AuthRequest, res: Response) => {
 
     // 2) Build objek `data` hanya dari field yang dikirim
     const data: any = {}
-        let currentProvider = existing.provider
+    let currentProvider = existing.provider
 
-    if (provider) {
-      data.provider = provider
+    if (providerInput) {
+      const provider = normalizeProviderKey(providerInput)
+      if (provider) {
+        data.provider = provider
+        currentProvider = provider
+      }
     }
     if (name) {
       data.name = name

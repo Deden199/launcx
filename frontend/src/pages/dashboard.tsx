@@ -738,7 +738,8 @@ export default function DashboardPage() {
                   />
                   <Tooltip
                     contentStyle={{ fontSize: 12 }}
-                    formatter={(v: number, key) => {
+                    formatter={(value, key) => {
+                      const v = typeof value === 'number' ? value : Number(value ?? 0)
                       if (key === 'amount') {
                         return [v.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' }), 'Amount']
                       }
@@ -796,7 +797,10 @@ export default function DashboardPage() {
                   <YAxis tickFormatter={(v: number) => new Intl.NumberFormat('id-ID', { notation: 'compact' }).format(v)} tick={{ fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{ fontSize: 12 }}
-                    formatter={(v: number) => v.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })}
+                    formatter={(value) => {
+                      const v = typeof value === 'number' ? value : Number(value ?? 0)
+                      return v.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' })
+                    }}
                   />
                   <Bar dataKey="value" name="Profit" fill="currentColor" radius={[6, 6, 0, 0]} />
                 </BarChart>

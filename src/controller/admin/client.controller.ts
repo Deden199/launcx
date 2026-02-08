@@ -6,6 +6,7 @@ import { AuthRequest } from '../../middleware/auth'
 import { parseDateSafely } from '../../util/time'
 import { DisbursementStatus } from '@prisma/client'
 import { logAdminAction } from '../../util/adminLog'
+import { normalizeProviderKey } from '../../util/gatewayMapping'
 import { prisma } from '../../core/prisma'
 
 // 1) List all clients with withdraw fee settings
@@ -72,10 +73,11 @@ export const createClient = async (req: AuthRequest, res: Response) => {
       ? req.body.forceSchedule
       : null
 
-        const defaultProvider =
+  const defaultProviderInput =
     typeof req.body.defaultProvider === 'string'
-      ? req.body.defaultProvider.trim().toLowerCase()
+      ? req.body.defaultProvider.trim()
       : 'hilogate'
+  const defaultProvider = normalizeProviderKey(defaultProviderInput) || 'hilogate'
   const allowedDp = ['hilogate', 'oy', 'gv', 'gidi', 'ing1']
   if (!allowedDp.includes(defaultProvider)) {
     return res.status(400).json({ error: `defaultProvider must be one of ${allowedDp.join(', ')}` })
@@ -260,7 +262,7 @@ export const updateClient = async (req: AuthRequest, res: Response) => {
     data.withdrawFeeFlat = wf
   }
   if (defaultProvider != null) {
-    const dp = String(defaultProvider).trim().toLowerCase()
+    const dp = normalizeProviderKey(defaultProvider)
     const allowed = ['hilogate', 'oy', 'gv', 'gidi', 'ing1']
     if (!allowed.includes(dp)) {
       return res.status(400).json({ error: `defaultProvider must be one of ${allowed.join(', ')}` })

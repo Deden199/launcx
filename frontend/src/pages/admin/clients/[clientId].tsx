@@ -6,6 +6,7 @@ import { useRouter } from 'next/router'
 import api from '@/lib/api'
 import { useRequireAuth } from '@/hooks/useAuth'
 import { Loader2, Users, UserCog, Save, AlertCircle, Copy, Check, Wallet } from 'lucide-react'
+import { listGatewayMappings, providerKeyToGatewayId, sanitizeProviderText } from '@/utils/gatewayMapping'
 
 interface Client {
   id: string
@@ -74,7 +75,7 @@ export default function EditClientPage() {
         setWithdrawFeeFlat(c.withdrawFeeFlat)
         setParentClientId(c.parentClientId || '')
         setChildrenIds(c.childrenIds || [])
-        setDefaultProvider(c.defaultProvider || '')
+        setDefaultProvider(providerKeyToGatewayId(c.defaultProvider || ''))
         setForceSchedule(c.forceSchedule || '')
       } catch {
         setError('Gagal memuat data client')
@@ -135,7 +136,7 @@ export default function EditClientPage() {
       return
     }
     if (!defaultProvider) {
-      setError('Default provider harus dipilih')
+      setError('Default gateway harus dipilih')
       return
     }
     setLoading(true)
@@ -157,7 +158,8 @@ export default function EditClientPage() {
       })
       router.push('/admin/clients')
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Gagal menyimpan perubahan')
+      const message = e?.response?.data?.error || 'Gagal menyimpan perubahan'
+      setError(sanitizeProviderText(message) || message)
     } finally {
       setLoading(false)
     }
@@ -275,18 +277,20 @@ export default function EditClientPage() {
               />
             </div>
 
-            {/* Default Provider */}
+            {/* Default Gateway */}
             <div className="space-y-1">
-              <label className="text-sm text-neutral-300">Default Provider</label>
+              <label className="text-sm text-neutral-300">Default Gateway</label>
               <select
                 value={defaultProvider}
                 onChange={e => setDefaultProvider(e.target.value)}
                 className="h-11 w-full rounded-xl border border-neutral-800 bg-neutral-950 px-3 text-sm outline-none focus:border-indigo-700 focus:ring-2 focus:ring-indigo-800"
               >
-                <option value="">-- Select Provider --</option>
-                <option value="hilogate">Hilogate</option>
-                <option value="oy">OY Indonesia</option>
-                <option value="gidi">Gidi</option>
+                <option value="">-- Select Gateway --</option>
+                {listGatewayMappings()
+                  .filter(item => ['hilogate', 'oy', 'gidi'].includes(item.providerKey))
+                  .map(item => (
+                  <option key={item.gatewayId} value={item.gatewayId}>{item.label}</option>
+                ))}
               </select>
             </div>
 

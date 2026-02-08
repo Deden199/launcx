@@ -9,6 +9,7 @@ import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import { FileText, ArrowUpDown, CheckCircle2, AlertTriangle } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { listGatewayMappings, providerKeyToGatewayLabel } from '@/utils/gatewayMapping'
 
 const statusBadgeClasses: Record<string, string> = {
   PENDING: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
@@ -291,7 +292,7 @@ const AdminClientWithdrawPage: NextPage & { disableLayout?: boolean } = () => {
                 <h4 className="text-sm font-semibold text-neutral-200">
                   {w.name ||
                     (w.provider
-                      ? w.provider.charAt(0).toUpperCase() + w.provider.slice(1)
+                      ? providerKeyToGatewayLabel(w.provider)
                       : `Sub-wallet ${w.id.substring(0, 6)}`)}
                 </h4>
                 <p className="mt-2 text-2xl font-semibold text-neutral-50">Rp {w.balance.toLocaleString()}</p>
@@ -318,7 +319,8 @@ const AdminClientWithdrawPage: NextPage & { disableLayout?: boolean } = () => {
                 <option value="">Select sub-wallet</option>
                 {wallets.map(w => (
                   <option key={w.id} value={w.id}>
-                    {w.name || (w.provider ? w.provider.charAt(0).toUpperCase() + w.provider.slice(1) : w.id.slice(0, 6))}
+                    {w.name ||
+                      (w.provider ? providerKeyToGatewayLabel(w.provider) : w.id.slice(0, 6))}
                   </option>
                 ))}
               </select>
@@ -520,9 +522,17 @@ const AdminClientWithdrawPage: NextPage & { disableLayout?: boolean } = () => {
                         <td className="px-4 py-3 text-sm text-neutral-200">{w.accountNumber}</td>
                         <td className="px-4 py-3 text-sm text-neutral-200">{w.accountName}</td>
                         <td className="px-4 py-3 text-sm text-neutral-200">
-                          {w.sourceProvider === 'manual' ? 'Manual Entry' : w.wallet}
+                          {w.sourceProvider === 'manual'
+                            ? 'Manual Entry'
+                            : listGatewayMappings().some(item => item.providerKey === w.wallet)
+                              ? providerKeyToGatewayLabel(w.wallet)
+                              : w.wallet}
                         </td>
-                        <td className="px-4 py-3 text-sm text-neutral-200">{w.sourceProvider ?? '-'}</td>
+                        <td className="px-4 py-3 text-sm text-neutral-200">
+                          {w.sourceProvider === 'manual'
+                            ? 'Manual Entry'
+                            : providerKeyToGatewayLabel(w.sourceProvider ?? undefined)}
+                        </td>
                         <td className="px-4 py-3 text-sm text-neutral-100">Rp {w.amount.toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-neutral-100">
                           Rp {(w.amount - (w.netAmount ?? 0)).toLocaleString()}

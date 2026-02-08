@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '@/lib/api'
 import { useRequireAuth } from '@/hooks/useAuth'
 import { Search, X, Building2, UserPlus, KeyRound, Loader2, CheckCircle2, AlertCircle, Copy, Check } from 'lucide-react'
+import { listGatewayMappings, providerKeyToGatewayId, sanitizeProviderText } from '@/utils/gatewayMapping'
 
 interface Client {
   id: string
@@ -43,7 +44,7 @@ export default function ApiClientsPage() {
   const [newFeePercent, setNewFeePercent] = useState<number>(0.5)
   const [newFeeFlat, setNewFeeFlat] = useState<number>(0)
   const [newParentId, setNewParentId] = useState<string>('')
-  const [newDefaultProvider, setNewDefaultProvider] = useState<string>('hilogate')
+  const [newDefaultProvider, setNewDefaultProvider] = useState<string>(providerKeyToGatewayId('hilogate'))
   const [newForceSchedule, setNewForceSchedule] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -142,10 +143,11 @@ export default function ApiClientsPage() {
       setNewFeePercent(0.5)
       setNewFeeFlat(0)
       setNewParentId('')
-      setNewDefaultProvider('hilogate')
+      setNewDefaultProvider(providerKeyToGatewayId('hilogate'))
       setNewForceSchedule('')
     } catch (e: any) {
-      setErr(e?.response?.data?.error || 'Gagal menambah client')
+      const message = e?.response?.data?.error || 'Gagal menambah client'
+      setErr(sanitizeProviderText(message) || message)
     } finally {
       setSubmitting(false)
     }
@@ -205,9 +207,11 @@ export default function ApiClientsPage() {
               onChange={e => setNewDefaultProvider(e.target.value)}
               className="h-11 w-full rounded-xl border border-neutral-800 bg-neutral-950 px-3 text-sm outline-none focus:border-indigo-700 focus:ring-2 focus:ring-indigo-800"
             >
-              <option value="hilogate">Hilogate</option>
-              <option value="oy">OY Indonesia</option>
-              <option value="gidi">Gidi</option>
+              {listGatewayMappings()
+                .filter(item => ['hilogate', 'oy', 'gidi'].includes(item.providerKey))
+                .map(item => (
+                  <option key={item.gatewayId} value={item.gatewayId}>{item.label}</option>
+                ))}
             </select>
             <select
               value={newForceSchedule}
