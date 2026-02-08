@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../core/prisma';
 import { z } from 'zod';
 import { parseRawCredential, normalizeCredentials } from '../../util/credentials';
+import { normalizeProviderKey } from '../../util/gatewayMapping';
 
 
 const scheduleSchema = z.object({
@@ -46,7 +47,7 @@ export async function createSubMerchant(req: Request, res: Response) {
   // parse dan validasi body
     const name = nameSchema.parse(req.body.name);
 
-  const provider = providerSchema.parse(req.body.provider)
+  const provider = providerSchema.parse(normalizeProviderKey(req.body.provider))
   const rawCreds = parseRawCredential(provider, req.body.credentials)
   const credentials = normalizeCredentials(provider, rawCreds)
   const schedule = scheduleSchema.parse(req.body.schedule)
@@ -85,8 +86,9 @@ export async function updateSubMerchant(req: Request, res: Response) {
         let provider = existing.provider
 
     if (req.body.provider !== undefined) {
-      provider = providerSchema.parse(req.body.provider)
-      data.provider = provider    }
+      provider = providerSchema.parse(normalizeProviderKey(req.body.provider))
+      data.provider = provider
+    }
     if (req.body.name !== undefined) {
       data.name = nameSchema.parse(req.body.name)
     }

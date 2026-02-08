@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import apiClient from '@/lib/apiClient'
+import { sanitizeProviderText } from '@/utils/gatewayMapping'
 
 type LogOrigin = 'callback-job' | 'callback-dead-letter' | 'client-request'
 
@@ -316,6 +317,26 @@ export default function ApiLogPage() {
   const [pageSize, setPageSize] = useState(20)
   const [total, setTotal] = useState(0)
 
+  const maskUrlHost = (value?: string | null) => {
+    if (!value) return value ?? null
+    try {
+      const url = new URL(value)
+      url.hostname = '[MASKED]'
+      return url.toString()
+    } catch {
+      return '[MASKED]'
+    }
+  }
+
+  const sanitizeLog = (log: ApiLog): ApiLog => ({
+    ...log,
+    url: maskUrlHost(log.url),
+    path: sanitizeProviderText(log.path ?? undefined) ?? null,
+    errorMessage: sanitizeProviderText(log.errorMessage ?? undefined) ?? null,
+    responseBody: sanitizeProviderText(log.responseBody ?? undefined) ?? null,
+    payload: sanitizeProviderText(log.payload ?? undefined) ?? null,
+  })
+
   // store as JKT wall time strings
   const [startStr, setStartStr] = useState('')
   const [endStr, setEndStr] = useState('')
@@ -347,11 +368,11 @@ export default function ApiLogPage() {
         const { data: fallback } = await apiClient.get<{ rows: ApiLog[]; total: number }>('/client/api-logs', {
           params: { ...params, page: maxPage },
         })
-        setLogs(fallback.rows || [])
+        setLogs((fallback.rows || []).map(sanitizeLog))
         setTotal(fallback.total ?? nextTotal)
         return
       }
-      setLogs(data.rows || [])
+      setLogs((data.rows || []).map(sanitizeLog))
     } catch (e) {
       console.error('Failed to fetch API logs', e)
       setError('Failed to load logs')

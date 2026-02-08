@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { prisma } from '../core/prisma'
 import { ClientAuthRequest } from '../middleware/clientAuth'
+import { sanitizeLogField, sanitizeLogUrl } from '../util/gatewayMapping'
 
 type LogOrigin = 'callback-job' | 'callback-dead-letter' | 'client-request'
 
@@ -96,12 +97,12 @@ export async function getClientApiLogs(req: ClientAuthRequest, res: Response) {
     ...jobs.map((j): NormalisedLog => ({
       id: j.id,
       origin: 'callback-job',
-      url: j.url,
+      url: sanitizeLogUrl(j.url),
       method: null,
       path: null,
       statusCode: normaliseStatusCode(j.delivered, j.lastError),
-      errorMessage: normaliseError(j.delivered, j.lastError),
-      responseBody: normaliseResponseBody(j.responseBody),
+      errorMessage: sanitizeLogField(normaliseError(j.delivered, j.lastError)),
+      responseBody: sanitizeLogField(normaliseResponseBody(j.responseBody)),
       payload: null,
       createdAt: j.createdAt,
       respondedAt: j.delivered ? j.updatedAt : null,
@@ -109,12 +110,12 @@ export async function getClientApiLogs(req: ClientAuthRequest, res: Response) {
     ...deadLetters.map((d): NormalisedLog => ({
       id: d.id,
       origin: 'callback-dead-letter',
-      url: d.url,
+      url: sanitizeLogUrl(d.url),
       method: null,
       path: null,
       statusCode: d.statusCode ?? null,
-      errorMessage: d.errorMessage ?? null,
-      responseBody: normaliseResponseBody(d.responseBody),
+      errorMessage: sanitizeLogField(d.errorMessage ?? null),
+      responseBody: sanitizeLogField(normaliseResponseBody(d.responseBody)),
       payload: null,
       createdAt: d.createdAt,
       respondedAt: d.createdAt,
@@ -124,11 +125,11 @@ export async function getClientApiLogs(req: ClientAuthRequest, res: Response) {
       origin: 'client-request',
       url: null,
       method: r.method,
-      path: r.path,
+      path: sanitizeLogField(r.path),
       statusCode: r.statusCode,
-      errorMessage: r.errorMessage ?? null,
-      responseBody: r.responseBody ?? null,
-      payload: normaliseResponseBody(r.payload),
+      errorMessage: sanitizeLogField(r.errorMessage ?? null),
+      responseBody: sanitizeLogField(r.responseBody ?? null),
+      payload: sanitizeLogField(normaliseResponseBody(r.payload)),
       createdAt: r.createdAt,
       respondedAt: null,
     })),

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import api from '@/lib/api'
+import { gatewayIdToProviderKey, listGatewayMappings, providerKeyToGatewayId, providerKeyToGatewayLabel, sanitizeProviderText } from '@/utils/gatewayMapping'
 
 type ProviderType = 'hilogate' | 'oy' | 'gidi' | 'ing1' | 'piro'
 
@@ -328,7 +329,7 @@ export function PaymentProvidersPageView({
     }
 
     const payload = {
-      provider,
+      provider: providerKeyToGatewayId(provider),
       name: form.name?.trim?.() ?? '',
       credentials: payloadCreds,
       schedule: {
@@ -348,7 +349,8 @@ export function PaymentProvidersPageView({
       setForm(createEmptyForm(provider))
       fetchEntries()
     } catch (err: any) {
-      setErrorMsg(err.response?.data.error || 'Gagal menyimpan, coba lagi.')
+      const message = err.response?.data.error || 'Gagal menyimpan, coba lagi.'
+      setErrorMsg(sanitizeProviderText(message) || message)
     }
   }
 
@@ -393,7 +395,7 @@ export function PaymentProvidersPageView({
           }}
           disabled={!merchant}
         >
-          + Tambah Provider
+          + Tambah Gateway
         </button>
       </header>
 
@@ -401,7 +403,7 @@ export function PaymentProvidersPageView({
         <table className="providers">
           <thead>
             <tr>
-              <th>Provider</th>
+              <th>Gateway</th>
               <th>Name</th>
               <th>Primary Credential</th>
               <th>Additional Info</th>
@@ -413,7 +415,7 @@ export function PaymentProvidersPageView({
           <tbody>
             {entries.map(e => (
               <tr key={e.id}>
-                <td className="cell-bold">{e.provider}</td>
+                <td className="cell-bold">{providerKeyToGatewayLabel(e.provider)}</td>
                 <td className="cell-bold">{e.name}</td>
                 <td>{resolvePrimaryCredential(e)}</td>
                 <td>{resolveSecondaryInfo(e)}</td>
@@ -437,15 +439,15 @@ export function PaymentProvidersPageView({
       {showForm && (
         <div className="overlay" onClick={() => { setShowForm(false); setEditId(null) }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{editId ? 'Edit Provider' : 'Tambah Provider Baru'}</h3>
+            <h3 className="modal-title">{editId ? 'Edit Gateway' : 'Tambah Gateway Baru'}</h3>
             {errorMsg && <div className="error-banner">{errorMsg}</div>}
             <form>
               <div className="form-group">
-                <label>Provider</label>
+                <label>Gateway</label>
                 <select
-                  value={form.provider}
+                  value={providerKeyToGatewayId(form.provider)}
                   onChange={e => {
-                    const provider = e.target.value as ProviderType
+                    const provider = gatewayIdToProviderKey(e.target.value) as ProviderType
                     setForm(prev => ({
                       ...prev,
                       provider,
@@ -453,11 +455,9 @@ export function PaymentProvidersPageView({
                     }))
                   }}
                 >
-                  <option value="hilogate">Hilogate</option>
-                  <option value="oy">OY</option>
-                  <option value="gidi">Gidi</option>
-                  <option value="ing1">ING1 (Billers)</option>
-                  <option value="piro">Piro</option>
+                  {listGatewayMappings().map(item => (
+                    <option key={item.gatewayId} value={item.gatewayId}>{item.label}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">

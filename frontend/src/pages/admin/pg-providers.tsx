@@ -1,4 +1,4 @@
-/* Admin – CRUD Payment-Gateway Provider */
+/* Admin – CRUD Payment-Gateway */
 import { useEffect, useState } from 'react'
 import api from '@/lib/api'
 import { useRequireAuth } from '@/hooks/useAuth'
@@ -20,10 +20,10 @@ export default function PGProvidersPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-3xl font-bold mb-4">PG Providers</h1>
+      <h1 className="text-3xl font-bold mb-4">PG Gateways</h1>
       <div className="flex mb-6 space-x-2">
         <input value={name} onChange={e => setName(e.target.value)}
-          className="border px-3 py-2 rounded w-60" placeholder="Provider name" />
+          className="border px-3 py-2 rounded w-60" placeholder="Gateway name" />
         <button onClick={add} className="px-4 py-2 bg-blue-600 text-white rounded">Add</button>
       </div>
 

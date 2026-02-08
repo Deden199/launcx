@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { PaymentProvidersPageView, type PaymentProvidersPageProps } from '../../pages/admin/merchants/[merchantId]/index'
+import { providerKeyToGatewayId } from '../../utils/gatewayMapping'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
 const { window } = dom
@@ -133,7 +134,7 @@ test('renders Piro credential fields when provider is selected', async () => {
     />
   )
 
-  const addButton = await findByRole('button', { name: '+ Tambah Provider' })
+  const addButton = await findByRole('button', { name: '+ Tambah Gateway' })
   await waitFor(() => {
     assert.equal((addButton as HTMLButtonElement).hasAttribute('disabled'), false)
   })
@@ -145,11 +146,12 @@ test('renders Piro credential fields when provider is selected', async () => {
   })
 
   const modal = container.querySelector('.modal') as HTMLElement
-  const providerSelect = queryFieldByLabel(modal, 'Provider') as HTMLSelectElement
-  fireEvent.change(providerSelect, { target: { value: 'piro' } })
+  const providerSelect = queryFieldByLabel(modal, 'Gateway') as HTMLSelectElement
+  const piroGatewayId = providerKeyToGatewayId('piro')
+  fireEvent.change(providerSelect, { target: { value: piroGatewayId } })
 
   await waitFor(() => {
-    assert.equal(providerSelect.value, 'piro')
+    assert.equal(providerSelect.value, piroGatewayId)
   })
 
   assert.ok(queryFieldByLabel(modal, 'Merchant ID'))
@@ -210,7 +212,7 @@ test('submits a new Piro sub-merchant entry with trimmed credentials', async () 
 
   const [url, payload] = apiMock.postCalls[0]
   assert.equal(url, '/admin/merchants/merchant-123/pg')
-  assert.equal(payload.provider, 'piro')
+  assert.equal(payload.provider, providerKeyToGatewayId('piro'))
   assert.equal(payload.name, 'Piro Demo')
   assert.deepEqual(payload.schedule, { weekday: true, weekend: false })
   assert.deepEqual(payload.credentials, {
