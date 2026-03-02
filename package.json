@@ -14,7 +14,8 @@
     "reconcile-balances": "ts-node --transpile-only scripts/reconcileBalances.ts",
     "test": "node --test -r ts-node/register test/**/*.test.ts",
     "sync-from-hilogate": "ts-node scripts/sync-from-hilogate.ts",
-    "docs": "ts-node scripts/docs.ts"
+    "docs": "ts-node scripts/docs.ts",
+    "export-sep2025-feb2026": "ts-node --transpile-only scripts/export-transaksi-sep2025-feb2026.ts"
   },
   "author": "",
   "license": "ISC",
