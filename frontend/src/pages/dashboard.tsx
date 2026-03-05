@@ -144,6 +144,9 @@ export default function DashboardPage() {
   const [txs, setTxs] = useState<Tx[]>([])
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(10)
+  const selectedMerchantName = selectedMerchant === 'all'
+    ? 'Semua Client'
+    : merchants.find(m => m.id === selectedMerchant)?.name || 'Semua Client'
 
   useEffect(() => {
     const tok = localStorage.getItem('token')
@@ -448,6 +451,7 @@ export default function DashboardPage() {
             setPage={setPage}
             totalPages={totalPages}
             buildParams={buildTransactionParams}
+            selectedMerchantName={selectedMerchantName}
             onDateChange={(_dates) => undefined}
             disableDateFilter
           />
