@@ -75,6 +75,8 @@ export default function TransactionsTable({
 }: TransactionsTableProps) {
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [isExporting, setIsExporting] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
   const hasData = txs && txs.length > 0
 
   // Ensure a portal root for the datepicker so the popper isn't clipped
@@ -89,12 +91,24 @@ export default function TransactionsTable({
   }, [])
 
   const exportAll = async () => {
+    setIsExporting(true)
+    setDownloadProgress(null)
+
     try {
       const params = buildParams()
       const r = await api.get('/admin/merchants/dashboard/export-all', {
         params,
         responseType: 'blob',
         timeout: 0,
+      await api.get(url, {
+        // ...config lain kamu (params, responseType: 'blob', dll)
+        onDownloadProgress: (progressEvent) => {
+          const total = progressEvent.total
+          if (typeof total === 'number' && total > 0) {
+            const pct = Math.min(100, Math.round((progressEvent.loaded / total) * 100))
+            setDownloadProgress(pct)
+          }
+        },
       })
 
       const from = formatYmdWib(params.date_from)
@@ -117,6 +131,8 @@ export default function TransactionsTable({
       URL.revokeObjectURL(url)
     } catch {
       alert('Gagal export data')
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -264,14 +280,29 @@ export default function TransactionsTable({
           )}
 
           {/* Export */}
-          <div className="flex sm:justify-end">
+          <div className="flex flex-col gap-2 sm:items-end">
             <button
+              type="button"
               onClick={exportAll}
-              className="inline-flex w-full sm:w-auto items-center gap-2 rounded-xl border border-neutral-800 px-3 py-2.5 text-sm font-medium shadow-sm transition hover:bg-neutral-800/60"
+              disabled={isExporting}
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-neutral-800 px-3 py-2.5 text-sm font-medium shadow-sm transition hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-70"
             >
               <FileText size={16} />
-              Export Semua
+              {isExporting ? 'Mengunduh...' : 'Export Semua'}
             </button>
+            {isExporting && (
+              <div className="w-full sm:w-56">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
+                  <div
+                    className="h-full bg-indigo-500 transition-all"
+                    style={{ width: `${downloadProgress ?? 30}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-right text-xs text-neutral-400">
+                  {downloadProgress !== null ? `${downloadProgress}%` : 'Menyiapkan file...'}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
