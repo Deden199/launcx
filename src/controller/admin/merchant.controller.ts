@@ -1206,7 +1206,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
     }
 
     // Fetch orders
-    const ORDER_CHUNK_SIZE = 2000
+    const ORDER_CHUNK_SIZE = 5000
     const WITHDRAWAL_CHUNK_SIZE = 1000
 
     // Prepare workbook stream
