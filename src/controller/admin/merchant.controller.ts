@@ -1211,7 +1211,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
     }
 
     // Fetch orders
-    const CHUNK_SIZE = 1000
+    const CHUNK_SIZE = 5000
 
     // Prepare workbook stream
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1226,14 +1226,15 @@ export async function exportDashboardAll(req: Request, res: Response) {
       'Amount','Fee Launcx','Fee PG','Net Amount','Status'
     ]).commit()
 
-    let skipOrders = 0
+    let lastOrderId: string | undefined
     for (;;) {
       const ordersChunk = await prisma.order.findMany({
         where: whereOrders,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { id: 'desc' },
+        ...(lastOrderId ? { cursor: { id: lastOrderId }, skip: 1 } : {}),
         select: {
-          createdAt: true,
           id: true,
+          createdAt: true,
           rrn: true,
           playerId: true,
           channel: true,
@@ -1248,7 +1249,6 @@ export async function exportDashboardAll(req: Request, res: Response) {
           }
         },
         take: CHUNK_SIZE,
-        skip: skipOrders,
       })
 
       for (const o of ordersChunk) {
@@ -1271,7 +1271,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
           o.status
         ]).commit()
       }
-      skipOrders += ordersChunk.length
+      lastOrderId = ordersChunk[ordersChunk.length - 1]?.id
       if (ordersChunk.length < CHUNK_SIZE) break
     }
 
@@ -1284,24 +1284,6 @@ export async function exportDashboardAll(req: Request, res: Response) {
       whereWD.createdAt = createdAtFilter
     }
 
-    // Fetch withdrawals
-    const withdrawals = await prisma.withdrawRequest.findMany({
-      where: whereWD,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        createdAt: true,
-        refId: true,
-        bankName: true,
-        accountNumber: true,
-        amount: true,
-        netAmount: true,
-        withdrawFeePercent: true,
-        withdrawFeeFlat: true,
-        pgFee: true,
-        status: true
-      }
-    })
-
     // Sheet 2: Withdrawals
     const wdSheet = wb.addWorksheet('Withdrawals')
     wdSheet.addRow([
@@ -1309,12 +1291,14 @@ export async function exportDashboardAll(req: Request, res: Response) {
       'Amount','Withdrawal Fee','PG Fee','Status'
     ]).commit()
 
-    let skipWD = 0
+    let lastWithdrawalId: string | undefined
     for (;;) {
       const withdrawalsChunk = await prisma.withdrawRequest.findMany({
         where: whereWD,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { id: 'desc' },
+        ...(lastWithdrawalId ? { cursor: { id: lastWithdrawalId }, skip: 1 } : {}),
         select: {
+          id: true,
           createdAt: true,
           refId: true,
           bankName: true,
@@ -1327,7 +1311,6 @@ export async function exportDashboardAll(req: Request, res: Response) {
           status: true
         },
         take: CHUNK_SIZE,
-        skip: skipWD,
       })
 
       for (const w of withdrawalsChunk) {
@@ -1345,7 +1328,7 @@ export async function exportDashboardAll(req: Request, res: Response) {
           w.status
         ]).commit()
       }
-      skipWD += withdrawalsChunk.length
+      lastWithdrawalId = withdrawalsChunk[withdrawalsChunk.length - 1]?.id
       if (withdrawalsChunk.length < CHUNK_SIZE) break
     }
 

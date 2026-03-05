@@ -100,8 +100,6 @@ export default function TransactionsTable({
         params,
         responseType: 'blob',
         timeout: 0,
-      await api.get(url, {
-        // ...config lain kamu (params, responseType: 'blob', dll)
         onDownloadProgress: (progressEvent) => {
           const total = progressEvent.total
           if (typeof total === 'number' && total > 0) {
@@ -133,6 +131,7 @@ export default function TransactionsTable({
       alert('Gagal export data')
     } finally {
       setIsExporting(false)
+      setDownloadProgress(null)
     }
   }
 
