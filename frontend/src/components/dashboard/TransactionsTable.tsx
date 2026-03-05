@@ -28,6 +28,7 @@ interface TransactionsTableProps {
   totalPages: number
   buildParams: () => any
   onDateChange: (dates: [Date | null, Date | null]) => void
+  disableDateFilter?: boolean
   onSelectIds?: (ids: string[]) => void
 }
 
@@ -46,6 +47,7 @@ export default function TransactionsTable({
   buildParams,
   onDateChange,
   onSelectIds,
+  disableDateFilter = false,
 }: TransactionsTableProps) {
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -199,30 +201,31 @@ export default function TransactionsTable({
           </div>
 
           {/* Date range */}
-          <div className="relative">
-            <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-60" size={16} />
-            <DatePicker
-              selectsRange
-              startDate={dateRange[0]}
-              endDate={dateRange[1]}
-              onChange={(upd: [Date | null, Date | null] | Date | null) => {
-                const range = (upd as [Date | null, Date | null]) || [null, null]
-                setDateRange(range)
-                onDateChange(range)
-                setPage(1)
-              }}
-              isClearable
-              placeholderText="Filter tanggal…"
-              maxDate={new Date()}
-              dateFormat="dd-MM-yyyy"
-              /* ⬇️ ini kunci anti-kehalang */
-              withPortal
-              popperProps={{ strategy: 'fixed' }}
-              popperClassName="datepicker-popper"
-              calendarClassName="dp-dark"
-              className="w-full h-10 pl-9 pr-3 rounded-xl border border-neutral-800 bg-neutral-900 text-sm text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none"
-            />
-          </div>
+          {!disableDateFilter && (
+            <div className="relative">
+              <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-60" size={16} />
+              <DatePicker
+                selectsRange
+                startDate={dateRange[0]}
+                endDate={dateRange[1]}
+                onChange={(upd: [Date | null, Date | null] | Date | null) => {
+                  const range = (upd as [Date | null, Date | null]) || [null, null]
+                  setDateRange(range)
+                  onDateChange(range)
+                  setPage(1)
+                }}
+                isClearable
+                placeholderText="Filter tanggal…"
+                maxDate={new Date()}
+                dateFormat="dd-MM-yyyy"
+                withPortal
+                popperProps={{ strategy: 'fixed' }}
+                popperClassName="datepicker-popper"
+                calendarClassName="dp-dark"
+                className="w-full h-10 pl-9 pr-3 rounded-xl border border-neutral-800 bg-neutral-900 text-sm text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none"
+              />
+            </div>
+          )}
 
           {/* Export */}
           <div className="flex sm:justify-end">
