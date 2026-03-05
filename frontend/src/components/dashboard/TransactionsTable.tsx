@@ -30,6 +30,29 @@ interface TransactionsTableProps {
   onDateChange: (dates: [Date | null, Date | null]) => void
   disableDateFilter?: boolean
   onSelectIds?: (ids: string[]) => void
+  selectedMerchantName?: string
+}
+
+const WIB_YMD_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Jakarta',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+function slugify(value: string, max = 60) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max)
+}
+
+function formatYmdWib(dateLike?: string) {
+  if (!dateLike) return ''
+  const date = new Date(dateLike)
+  if (Number.isNaN(date.getTime())) return ''
+  return WIB_YMD_FORMATTER.format(date)
 }
 
 export default function TransactionsTable({
@@ -47,10 +70,14 @@ export default function TransactionsTable({
   buildParams,
   onDateChange,
   onSelectIds,
+  selectedMerchantName,
   disableDateFilter = false,
 }: TransactionsTableProps) {
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [isExporting, setIsExporting] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
+  const [downloadedBytes, setDownloadedBytes] = useState(0)
   const hasData = txs && txs.length > 0
 
   // Ensure a portal root for the datepicker so the popper isn't clipped
@@ -65,22 +92,52 @@ export default function TransactionsTable({
   }, [])
 
   const exportAll = async () => {
+    setIsExporting(true)
+    setDownloadProgress(null)
+    setDownloadedBytes(0)
+
     try {
+      const params = buildParams()
       const r = await api.get('/admin/merchants/dashboard/export-all', {
-        params: buildParams(),
+        params,
         responseType: 'blob',
+        timeout: 0,
+        onDownloadProgress: (progressEvent) => {
+          const loaded = progressEvent.loaded || 0
+          setDownloadedBytes(loaded)
+
+          const total = progressEvent.total
+          if (typeof total === 'number' && total > 0) {
+            const pct = Math.min(100, Math.round((loaded / total) * 100))
+            setDownloadProgress(pct)
+          } else {
+            setDownloadProgress(null)
+          }
+        },
       })
+
+      const from = formatYmdWib(params.date_from)
+      const to = formatYmdWib(params.date_to)
+      const datePart = (from && to) ? `${from}_to_${to}` : (from || to || 'all-dates')
+      const clientLabel = (selectedMerchantName || 'Semua Client').trim() || 'Semua Client'
+      const clientSlug = slugify(clientLabel, 40) || 'semua-client'
+      const statusPart = params.status && params.status !== 'all'
+        ? `-${slugify(String(params.status), 24)}`
+        : ''
+
       const blob = new Blob([r.data], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `dashboard-all-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.xlsx`
+      a.download = `dashboard-${clientSlug}${statusPart}-${datePart}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } catch {
       alert('Gagal export data')
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -158,6 +215,9 @@ export default function TransactionsTable({
     )
   }
 
+
+  const downloadedMbText = `${(downloadedBytes / (1024 * 1024)).toFixed(1)} MB`
+
   return (
     // force dark mode for this page
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100 p-4 sm:p-6">
@@ -228,14 +288,31 @@ export default function TransactionsTable({
           )}
 
           {/* Export */}
-          <div className="flex sm:justify-end">
+          <div className="flex flex-col gap-2 sm:items-end">
             <button
+              type="button"
               onClick={exportAll}
-              className="inline-flex w-full sm:w-auto items-center gap-2 rounded-xl border border-neutral-800 px-3 py-2.5 text-sm font-medium shadow-sm transition hover:bg-neutral-800/60"
+              disabled={isExporting}
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-neutral-800 px-3 py-2.5 text-sm font-medium shadow-sm transition hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-70"
             >
               <FileText size={16} />
-              Export Semua
+              {isExporting ? 'Mengunduh...' : 'Export Semua'}
             </button>
+            {isExporting && (
+              <div className="w-full sm:w-56">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
+                  <div
+                    className={`h-full bg-indigo-500 ${downloadProgress === null ? 'animate-pulse' : 'transition-all'}`}
+                    style={{ width: `${downloadProgress ?? 100}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-right text-xs text-neutral-400">
+                  {downloadProgress !== null
+                    ? `${downloadProgress}% (${downloadedMbText})`
+                    : `Memproses di server... (${downloadedMbText})`}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
