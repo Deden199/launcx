@@ -92,7 +92,7 @@ export default function TransactionsTable({
 
   const exportAll = async () => {
     setIsExporting(true)
-    setDownloadProgress(null)
+    setDownloadProgress(5)
 
     try {
       const params = buildParams()
@@ -100,14 +100,20 @@ export default function TransactionsTable({
         params,
         responseType: 'blob',
         timeout: 0,
-      await api.get(url, {
-        // ...config lain kamu (params, responseType: 'blob', dll)
         onDownloadProgress: (progressEvent) => {
           const total = progressEvent.total
           if (typeof total === 'number' && total > 0) {
             const pct = Math.min(100, Math.round((progressEvent.loaded / total) * 100))
             setDownloadProgress(pct)
+            return
           }
+
+          setDownloadProgress((prev) => {
+            const loaded = progressEvent.loaded || 0
+            const estimated = Math.round(Math.log10(loaded + 10) * 18)
+            const next = Math.min(90, Math.max(prev ?? 5, estimated))
+            return Number.isFinite(next) ? next : (prev ?? 5)
+          })
         },
       })
 
@@ -129,10 +135,12 @@ export default function TransactionsTable({
       a.download = `dashboard-${clientSlug}${statusPart}-${datePart}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
+      setDownloadProgress(100)
     } catch {
       alert('Gagal export data')
     } finally {
       setIsExporting(false)
+      setDownloadProgress(null)
     }
   }
 
