@@ -9,7 +9,7 @@ import { Building2, Phone, ChevronRight, Loader2, UserCog } from 'lucide-react'
 type Merchant = {
   id: string
   name: string
-  phoneNumber: string
+  phoneNumber?: string
 }
 
 export default function MerchantsListPage() {
@@ -25,10 +25,15 @@ export default function MerchantsListPage() {
       setError('')
       try {
         const r = await api.get<Merchant[]>('/admin/merchants')
-        setMerchants(r.data || [])
+        setMerchants(Array.isArray(r.data) ? r.data : [])
       } catch {
-        setError('Gagal memuat data merchant.')
-        setMerchants([])
+        try {
+          const fallback = await api.get<Merchant[]>('/admin/merchants/allclient')
+          setMerchants(Array.isArray(fallback.data) ? fallback.data : [])
+        } catch {
+          setError('Gagal memuat data merchant.')
+          setMerchants([])
+        }
       } finally {
         setLoading(false)
       }

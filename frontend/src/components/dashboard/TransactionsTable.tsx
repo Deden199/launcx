@@ -209,6 +209,9 @@ export default function TransactionsTable({
     )
   }
 
+
+  const downloadedMbText = `${(downloadedBytes / (1024 * 1024)).toFixed(1)} MB`
+
   return (
     // force dark mode for this page
     <div className="dark min-h-screen bg-neutral-950 text-neutral-100 p-4 sm:p-6">
