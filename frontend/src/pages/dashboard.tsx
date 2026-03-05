@@ -100,7 +100,7 @@ function getMonthBounds(monthValue: string) {
 }
 
 export default function DashboardPage() {
-  useRequireAuth()
+  const isAuthorized = useRequireAuth()
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([])
@@ -149,19 +149,21 @@ export default function DashboardPage() {
     : merchants.find(m => m.id === selectedMerchant)?.name || 'Semua Client'
 
   useEffect(() => {
+    if (!isAuthorized) return
     const tok = localStorage.getItem('token')
     if (tok) {
       const payload = parseJwt(tok)
       if (payload?.role === 'SUPER_ADMIN') setIsSuperAdmin(true)
     }
-  }, [])
+  }, [isAuthorized])
 
   useEffect(() => {
+    if (!isAuthorized) return
     api
       .get<{ banks: { code: string; name: string }[] }>('/banks')
       .then(res => setBanks(res.data.banks))
       .catch(console.error)
-  }, [])
+  }, [isAuthorized])
 
   function buildBaseParams() {
     const p: any = {}
@@ -340,29 +342,33 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    if (!isAuthorized) return
     setLoadingMerchants(true)
     api
       .get<Merchant[]>('/admin/merchants/allclient')
       .then(res => setMerchants(res.data))
       .catch(err => console.error('fetch merchants error', err))
       .finally(() => setLoadingMerchants(false))
-  }, [])
+  }, [isAuthorized])
 
   useEffect(() => {
+    if (!isAuthorized) return
     fetchAdminWithdrawals()
     fetchWithdrawals()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, selectedMerchant, withdrawStatusFilter])
+  }, [isAuthorized, selectedMonth, selectedMerchant, withdrawStatusFilter])
 
   useEffect(() => {
+    if (!isAuthorized) return
     fetchBalances()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMerchant])
+  }, [isAuthorized, selectedMerchant])
 
   useEffect(() => {
+    if (!isAuthorized) return
     fetchTransactions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, selectedMerchant, search, statusFilter, page, perPage])
+  }, [isAuthorized, selectedMonth, selectedMerchant, search, statusFilter, page, perPage])
 
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-6 bg-neutral-950 text-neutral-100">
