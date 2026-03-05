@@ -77,7 +77,6 @@ export default function TransactionsTable({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
-  const [downloadedBytes, setDownloadedBytes] = useState(0)
   const hasData = txs && txs.length > 0
 
   // Ensure a portal root for the datepicker so the popper isn't clipped
@@ -94,7 +93,6 @@ export default function TransactionsTable({
   const exportAll = async () => {
     setIsExporting(true)
     setDownloadProgress(null)
-    setDownloadedBytes(0)
 
     try {
       const params = buildParams()
@@ -103,15 +101,10 @@ export default function TransactionsTable({
         responseType: 'blob',
         timeout: 0,
         onDownloadProgress: (progressEvent) => {
-          const loaded = progressEvent.loaded || 0
-          setDownloadedBytes(loaded)
-
           const total = progressEvent.total
           if (typeof total === 'number' && total > 0) {
-            const pct = Math.min(100, Math.round((loaded / total) * 100))
+            const pct = Math.min(100, Math.round((progressEvent.loaded / total) * 100))
             setDownloadProgress(pct)
-          } else {
-            setDownloadProgress(null)
           }
         },
       })
@@ -138,6 +131,7 @@ export default function TransactionsTable({
       alert('Gagal export data')
     } finally {
       setIsExporting(false)
+      setDownloadProgress(null)
     }
   }
 
@@ -302,14 +296,12 @@ export default function TransactionsTable({
               <div className="w-full sm:w-56">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
                   <div
-                    className={`h-full bg-indigo-500 ${downloadProgress === null ? 'animate-pulse' : 'transition-all'}`}
-                    style={{ width: `${downloadProgress ?? 100}%` }}
+                    className="h-full bg-indigo-500 transition-all"
+                    style={{ width: `${downloadProgress ?? 30}%` }}
                   />
                 </div>
                 <div className="mt-1 text-right text-xs text-neutral-400">
-                  {downloadProgress !== null
-                    ? `${downloadProgress}% (${downloadedMbText})`
-                    : `Memproses di server... (${downloadedMbText})`}
+                  {downloadProgress !== null ? `${downloadProgress}%` : 'Menyiapkan file...'}
                 </div>
               </div>
             )}
